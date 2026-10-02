@@ -41,7 +41,8 @@ window with search and reset (themes, fonts, terminal) · About · app icon and 
 | Phase 2 — Threads, attention, app shell | ✅ (2026-10-03) — auto-updater is a release check with download link; installing updates in place needs signed releases |
 | Phase 3 — Git, diff and review | ✅ (2026-10-03) |
 | Phase 4 — Navigation, files and layout | ✅ (2026-10-03) — not yet: PDF preview, LSP, in-app shortcut recorder, theme editor, time format; the right dock keeps fixed tabs (Changes, PR, Files, Context, Terminal, Side chat) |
-| Phase 5 — Providers | next (Codex postponed) |
+| Phase 5 — Providers | ✅ (2026-10-03) — shared ACP runtime (Gemini CLI, Cursor Agent, OpenCode, custom ACP command), Pi via the Elyra RPC adapter, provider settings (enable, executable, arguments, env, accounts, version, sign-in), starred model presets, handoff, fork, Claude Code import, Claude subagent mentions. Postponed: **Codex**. Not yet: Devin/Factory Droid/Grok presets (use the custom ACP command), stop-subagent control, CLI update checks, provider ordering, import from Codex/Elyra history |
+| Phase 6 — Orchestration and automation | next |
 
 ## Roadmap
 
@@ -117,7 +118,7 @@ window with search and reset (themes, fonts, terminal) · About · app icon and 
 | Project spaces | Named groups of projects with a switcher | M |
 | Appearance extras | System light/dark follow, density, chat width, theme editor/import, time format | M |
 
-### Phase 5 — Providers
+### Phase 5 — Providers ✅ (Codex postponed)
 
 Prerequisite: a provider trait and a provider-neutral runtime event schema (Synara's
 `providerRuntime.ts`: content deltas, items, requests, tasks, turn diff, token usage,

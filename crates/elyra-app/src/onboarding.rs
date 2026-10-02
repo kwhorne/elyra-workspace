@@ -11,16 +11,13 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, WindowExt as _, 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-const INSTALL_HINTS: [(ProviderKind, &str); 2] = [
-    (
-        ProviderKind::Claude,
-        "npm install -g @anthropic-ai/claude-code && claude",
-    ),
-    (
-        ProviderKind::Elyra,
-        "npm install -g @elyracode/coding-agent",
-    ),
-];
+/// Providers with a known CLI, and how to install each.
+fn install_hints() -> Vec<(ProviderKind, &'static str)> {
+    ProviderKind::ALL
+        .into_iter()
+        .filter_map(|kind| Some((kind, elyra_provider::install_info(kind)?.1)))
+        .collect()
+}
 
 pub struct OnboardingView {
     versions: Vec<(ProviderKind, Option<String>)>,
@@ -28,16 +25,8 @@ pub struct OnboardingView {
 }
 
 fn cli_version(kind: ProviderKind) -> Option<String> {
-    let executable = match kind {
-        ProviderKind::Claude => elyra_provider::claude::find_executable(),
-        ProviderKind::Elyra => elyra_provider::elyra::find_executable(),
-    }?;
-    let output = std::process::Command::new(executable)
-        .arg("--version")
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    Some(text.lines().next().unwrap_or("").trim().to_string()).filter(|v| !v.is_empty())
+    let executable = elyra_provider::find_executable(kind)?;
+    elyra_provider::cli_version(&executable).or_else(|| Some("installed".into()))
 }
 
 impl OnboardingView {
@@ -67,11 +56,11 @@ impl OnboardingView {
 impl Render for OnboardingView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let current_theme = Preferences::global(cx).theme.clone();
-        let providers = INSTALL_HINTS.iter().map(|(kind, hint)| {
+        let providers = install_hints().into_iter().map(|(kind, hint)| {
             let version = self
                 .versions
                 .iter()
-                .find(|(k, _)| k == kind)
+                .find(|(k, _)| *k == kind)
                 .and_then(|(_, v)| v.clone());
             let installed = version.is_some();
             h_flex()

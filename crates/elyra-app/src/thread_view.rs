@@ -278,10 +278,11 @@ impl ThreadView {
             PopupKind::Slash => composer::slash_items(&self.session.read(cx).commands, &query),
             PopupKind::Mention => {
                 self.ensure_file_index(cx);
-                match &self.file_index {
-                    Some(index) => composer::mention_items(index, &query),
-                    None => Vec::new(),
+                let mut items = composer::agent_items(&self.session.read(cx).agents, &query);
+                if let Some(index) = &self.file_index {
+                    items.extend(composer::mention_items(index, &query));
                 }
+                items
             }
         };
         let selected = self
@@ -757,6 +758,27 @@ impl ThreadView {
             })
             .into();
         let models = session.models.clone();
+        let prefs = crate::preferences::Preferences::global(cx);
+        let enabled = prefs.enabled_providers();
+        let custom_launch = prefs
+            .launch(ProviderKind::CustomAcp, None)
+            .executable
+            .is_some();
+        let presets = prefs.starred_models.clone();
+        let accounts: Vec<String> = prefs
+            .provider(provider)
+            .accounts()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let account = session.thread.account.clone();
+        let current_preset = crate::preferences::ModelPreset {
+            provider: provider.as_str().to_string(),
+            model: current_model.clone(),
+            effort: session.thread.effort.clone(),
+        };
+        let starred = prefs.is_starred(&current_preset);
+        let weak_account = self.session.downgrade();
         let effort = session.thread.effort.clone().unwrap_or_default();
         let effort_label: SharedString = caps
             .efforts
@@ -786,8 +808,11 @@ impl ThreadView {
         let weak = self.session.downgrade();
         let (weak_model, weak_effort, weak_mode) = (weak.clone(), weak.clone(), weak.clone());
 
-        h_flex()
-            .w_full()
+        // Options wrap on narrow panels; the meter and Send stay right.
+        let options = h_flex()
+            .flex_1()
+            .min_w_0()
+            .flex_wrap()
             .gap_1()
             .child(
                 Button::new("attach")
@@ -806,9 +831,10 @@ impl ThreadView {
                     .dropdown_caret(!started)
                     .disabled(started)
                     .dropdown_menu(move |mut menu, _, _| {
-                        for kind in ProviderKind::ALL {
+                        for kind in enabled.iter().copied() {
                             let session = weak.clone();
-                            let installed = elyra_provider::is_installed(kind);
+                            let installed = elyra_provider::is_installed(kind)
+                                || (kind == ProviderKind::CustomAcp && custom_launch);
                             let label = if installed {
                                 kind.label().to_string()
                             } else {
@@ -836,6 +862,33 @@ impl ThreadView {
                     .dropdown_caret(true)
                     .dropdown_menu(move |mut menu, _, _| {
                         menu = menu.scrollable(true).max_h(px(420.));
+                        if !presets.is_empty() {
+                            menu = menu.label("Starred");
+                            for preset in &presets {
+                                let kind = ProviderKind::parse(&preset.provider);
+                                let label = format!(
+                                    "★ {} · {}",
+                                    kind.map(|k| k.label()).unwrap_or("?"),
+                                    if preset.model.is_empty() {
+                                        "Default"
+                                    } else {
+                                        &preset.model
+                                    }
+                                );
+                                let other_provider = kind != Some(provider);
+                                let session = weak_model.clone();
+                                let preset = preset.clone();
+                                menu = menu.item(
+                                    PopupMenuItem::new(label)
+                                        .disabled(other_provider && started)
+                                        .on_click(move |_, _, cx| {
+                                            let _ = session
+                                                .update(cx, |s, cx| s.apply_preset(&preset, cx));
+                                        }),
+                                );
+                            }
+                            menu = menu.separator();
+                        }
                         for model in &models {
                             let session = weak_model.clone();
                             let id = model.id.clone();
@@ -849,9 +902,63 @@ impl ThreadView {
                                     }),
                             );
                         }
-                        menu
+                        let preset = current_preset.clone();
+                        menu.separator().item(
+                            PopupMenuItem::new(if starred {
+                                "Unstar this model"
+                            } else {
+                                "Star this model"
+                            })
+                            .on_click(move |_, _, cx| {
+                                let preset = preset.clone();
+                                crate::preferences::update(cx, |p| {
+                                    if p.is_starred(&preset) {
+                                        p.starred_models.retain(|s| {
+                                            !(s.provider == preset.provider
+                                                && s.model == preset.model)
+                                        });
+                                    } else {
+                                        p.starred_models.push(preset);
+                                    }
+                                });
+                            }),
+                        )
                     }),
             )
+            .when(!accounts.is_empty(), |this| {
+                let label: SharedString = account
+                    .clone()
+                    .unwrap_or_else(|| "Default account".into())
+                    .into();
+                this.child(
+                    Button::new("account")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::CircleUser)
+                        .label(label)
+                        .dropdown_caret(!started)
+                        .disabled(started)
+                        .dropdown_menu(move |mut menu, _, _| {
+                            let options =
+                                std::iter::once(None).chain(accounts.iter().cloned().map(Some));
+                            for option in options {
+                                let session = weak_account.clone();
+                                let label =
+                                    option.clone().unwrap_or_else(|| "Default account".into());
+                                menu = menu.item(
+                                    PopupMenuItem::new(label)
+                                        .checked(option == account)
+                                        .on_click(move |_, _, cx| {
+                                            let option = option.clone();
+                                            let _ = session
+                                                .update(cx, |s, cx| s.set_account(option, cx));
+                                        }),
+                                );
+                            }
+                            menu
+                        }),
+                )
+            })
             .when(!efforts.is_empty(), |this| {
                 this.child(
                     Button::new("effort")
@@ -926,8 +1033,10 @@ impl ThreadView {
                             cx.notify();
                         });
                     })),
-            )
-            .child(div().flex_1())
+            );
+        let actions = h_flex()
+            .flex_none()
+            .gap_1()
             .child(context_meter(session, cx))
             .when(busy, |this| {
                 this.child(
@@ -956,7 +1065,13 @@ impl ThreadView {
                         .disabled(!has_text)
                         .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
                 )
-            })
+            });
+        h_flex()
+            .w_full()
+            .gap_1()
+            .items_end()
+            .child(options)
+            .child(actions)
             .into_any_element()
     }
 

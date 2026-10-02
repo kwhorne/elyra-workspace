@@ -2,8 +2,8 @@ use crate::thread_session::ThreadSession;
 use anyhow::Result;
 use chrono::Utc;
 use elyra_core::{
-    Environment, PermissionMode, Project, ProjectId, ProviderKind, Store, Thread, ThreadId,
-    ThreadStatus,
+    Environment, ItemContent, PermissionMode, Project, ProjectId, ProviderKind, Store, Thread,
+    ThreadId, ThreadStatus,
 };
 use gpui_kit::{AppContext as _, Context, Entity};
 use std::collections::HashMap;
@@ -152,6 +152,17 @@ impl AppState {
             .setting("default_provider")?
             .and_then(|p| ProviderKind::parse(&p))
             .unwrap_or(ProviderKind::Claude);
+        // A provider switched off in Settings falls back to the first one on.
+        let prefs = crate::preferences::Preferences::global(cx);
+        let provider = if prefs.provider_enabled(provider) {
+            provider
+        } else {
+            prefs
+                .enabled_providers()
+                .into_iter()
+                .next()
+                .unwrap_or(ProviderKind::Claude)
+        };
         let setting = |key: &str| -> Result<Option<String>> {
             Ok(self
                 .store
@@ -210,6 +221,136 @@ impl AppState {
         session.update(cx, |session, _| session.fork_pending = fork);
         cx.notify();
         Ok(session)
+    }
+
+    /// Copy a thread into a new one that continues on its own. Providers that
+    /// can branch a session do so natively; others get the conversation so
+    /// far as context with the first message.
+    pub fn fork_thread(&mut self, id: ThreadId, cx: &mut Context<Self>) -> Result<ThreadId> {
+        let source = self
+            .thread(id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        let items = self.store.transcript(id)?;
+        let mut thread = self.store.create_thread(
+            source.project_id,
+            source.provider,
+            source.model.clone(),
+            source.permission_mode,
+            source.environment.clone(),
+        )?;
+        thread.title = format!("{} (fork)", source.title);
+        thread.effort = source.effort.clone();
+        thread.account = source.account.clone();
+        thread.notes = source.notes.clone();
+        thread.recap = source.recap.clone();
+        let native =
+            elyra_provider::supports_fork(source.provider) && source.provider_session_id.is_some();
+        if native {
+            thread.provider_session_id = source.provider_session_id.clone();
+        } else if !items.is_empty() {
+            thread.fork_context = Some(transcript_text(&items, 24_000));
+        }
+        self.store.update_thread(&thread)?;
+        self.store.append_items(
+            thread.id,
+            items
+                .into_iter()
+                .filter(|item| {
+                    !matches!(
+                        item.content,
+                        ItemContent::Approval { .. } | ItemContent::Question { .. }
+                    )
+                })
+                .map(|item| (item.content, Some(item.created_at))),
+        )?;
+        let new_id = thread.id;
+        self.threads.insert(0, thread);
+        cx.notify();
+        Ok(new_id)
+    }
+
+    /// Start a thread with another provider in the same project and folder,
+    /// with a recap of this one to send as its first message.
+    pub fn handoff_thread(
+        &mut self,
+        id: ThreadId,
+        provider: ProviderKind,
+        cx: &mut Context<Self>,
+    ) -> Result<(ThreadId, String)> {
+        let source = self
+            .thread(id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        let items = self.store.transcript(id)?;
+        let mut thread = self.store.create_thread(
+            source.project_id,
+            provider,
+            None,
+            source.permission_mode,
+            source.environment.clone(),
+        )?;
+        thread.title = format!("{} → {}", source.title, provider.label());
+        thread.notes = source.notes.clone();
+        self.store.update_thread(&thread)?;
+        let context = match source.recap.as_deref().filter(|r| !r.trim().is_empty()) {
+            Some(recap) => format!(
+                "{recap}\n\nLatest messages:\n{}",
+                transcript_text(&items, 6_000)
+            ),
+            None => transcript_text(&items, 10_000),
+        };
+        let draft = format!(
+            "I'm continuing a task that was started with {}. Here is where it stands:\n\n<handoff>\n{context}\n</handoff>\n\nPlease pick it up from here: ",
+            source.provider.label()
+        );
+        let new_id = thread.id;
+        self.threads.insert(0, thread);
+        cx.notify();
+        Ok((new_id, draft))
+    }
+
+    /// Import a Claude Code session as a thread that resumes it. Returns the
+    /// existing thread when it was imported before.
+    pub fn import_claude_session(
+        &mut self,
+        path: &Path,
+        cx: &mut Context<Self>,
+    ) -> Result<ThreadId> {
+        let session = elyra_provider::claude_history::load_session(path)
+            .ok_or_else(|| anyhow::anyhow!("could not read {}", path.display()))?;
+        let summary = session.summary;
+        if let Some(existing) = self.threads.iter().find(|t| {
+            t.provider == ProviderKind::Claude
+                && t.provider_session_id.as_deref() == Some(summary.session_id.as_str())
+        }) {
+            return Ok(existing.id);
+        }
+        let project = match summary.cwd.as_deref().filter(|cwd| cwd.is_dir()) {
+            Some(cwd) => self.add_project(cwd, cx)?,
+            None => self.scratch_project(cx)?,
+        };
+        let mut thread = self.store.create_thread(
+            project.id,
+            ProviderKind::Claude,
+            None,
+            PermissionMode::default(),
+            Environment::Local,
+        )?;
+        thread.title = summary.title.clone();
+        thread.provider_session_id = Some(summary.session_id.clone());
+        if let Some(updated) = summary.updated {
+            thread.updated_at = updated;
+            thread.created_at = updated;
+        }
+        self.store.update_thread(&thread)?;
+        self.store.append_items(thread.id, session.items)?;
+        let id = thread.id;
+        self.threads.push(thread);
+        self.threads
+            .sort_by_key(|t| std::cmp::Reverse(t.updated_at));
+        cx.notify();
+        Ok(id)
     }
 
     /// Persist a changed thread and keep the sidebar list most-recent first.
@@ -438,8 +579,73 @@ impl AppState {
         });
         let app = cx.weak_entity();
         let models = crate::thread_session::cached_models(&self.store, thread.provider);
-        let session = cx.new(|_| ThreadSession::new(app, thread, project, items, models));
+        // A provider session shared with another thread (fork, side chat)
+        // must branch on first launch rather than continue the original.
+        let shared = thread.provider_session_id.as_ref().is_some_and(|sid| {
+            self.threads
+                .iter()
+                .any(|t| t.id != thread.id && t.provider_session_id.as_ref() == Some(sid))
+        });
+        let session = cx.new(|_| {
+            let mut session = ThreadSession::new(app, thread, project, items, models);
+            session.fork_pending = shared;
+            session
+        });
         self.sessions.insert(id, session.clone());
         Some(session)
     }
+}
+
+/// A plain-text rendering of a transcript for another agent: messages and
+/// one line per tool call, keeping the most recent part within `budget`.
+pub fn transcript_text(items: &[elyra_core::TranscriptItem], budget: usize) -> String {
+    let mut parts: Vec<String> = items
+        .iter()
+        .filter_map(|item| match &item.content {
+            ItemContent::User { text, .. } => Some(format!("User: {}", text.trim())),
+            ItemContent::Assistant {
+                text,
+                parent_tool_use_id: None,
+            } => Some(format!("Assistant: {}", text.trim())),
+            ItemContent::ToolUse {
+                name,
+                input,
+                parent_tool_use_id: None,
+                ..
+            } => Some(format!(
+                "[tool] {name}: {}",
+                crate::transcript::tool_summary(name, input)
+            )),
+            _ => None,
+        })
+        .collect();
+    let mut total = 0;
+    let keep = parts
+        .iter()
+        .rev()
+        .take_while(|part| {
+            total += part.len() + 2;
+            total <= budget
+        })
+        .count()
+        .max(1)
+        .min(parts.len());
+    let dropped = parts.len() - keep;
+    let mut text = parts.split_off(dropped).join("\n\n");
+    if dropped > 0 {
+        text = format!("[{dropped} earlier messages omitted]\n\n{text}");
+    }
+    // A single oversized message is cut, not dropped.
+    if text.len() > budget + 200 {
+        let cut: String = text
+            .chars()
+            .rev()
+            .take(budget)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        text = format!("…{cut}");
+    }
+    text
 }

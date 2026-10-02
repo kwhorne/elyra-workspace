@@ -1,18 +1,96 @@
 //! The Settings window (⌘,): appearance, fonts and terminal behavior.
 
-use crate::preferences::{self, Preferences};
+use crate::preferences::{self, Preferences, ProviderSettings};
 use crate::themes;
+use elyra_core::ProviderKind;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
+use gpui_kit::component::h_flex;
 use gpui_kit::component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
 };
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, TitleBar, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 struct SettingsWindow(Option<AnyWindowHandle>);
 
 impl Global for SettingsWindow {}
+
+/// CLI versions found for each provider (`None` = not found), filled in the
+/// background when Settings opens.
+#[derive(Default)]
+struct ProviderStatus(std::collections::HashMap<ProviderKind, Option<String>>);
+
+impl Global for ProviderStatus {}
+
+fn refresh_provider_status(cx: &mut App) {
+    let launches: Vec<(ProviderKind, Option<std::path::PathBuf>)> = ProviderKind::ALL
+        .into_iter()
+        .map(|kind| {
+            let path = Preferences::global(cx)
+                .launch(kind, None)
+                .executable
+                .or_else(|| elyra_provider::find_executable(kind));
+            (kind, path)
+        })
+        .collect();
+    let job = cx.background_executor().spawn(async move {
+        launches
+            .into_iter()
+            .map(|(kind, path)| {
+                let version = path.map(|path| {
+                    elyra_provider::cli_version(&path).unwrap_or_else(|| path.display().to_string())
+                });
+                (kind, version)
+            })
+            .collect::<std::collections::HashMap<_, _>>()
+    });
+    cx.spawn(async move |cx| {
+        let status = job.await;
+        cx.update(|cx| {
+            cx.set_global(ProviderStatus(status));
+            cx.refresh_windows();
+        });
+    })
+    .detach();
+}
+
+/// Open the provider's sign-in command in Terminal, with its environment.
+fn sign_in(kind: ProviderKind, cx: &mut App) {
+    let Some(command) = elyra_provider::login_command(kind) else {
+        return;
+    };
+    let launch = Preferences::global(cx).launch(kind, None);
+    let command = match &launch.executable {
+        Some(path) => {
+            let rest = command.split_once(' ').map(|(_, rest)| rest).unwrap_or("");
+            format!("{} {rest}", shell_quote(&path.display().to_string()))
+        }
+        None => command.to_string(),
+    };
+    let mut script = String::from("#!/bin/zsh -l\n");
+    for (key, value) in &launch.env {
+        script.push_str(&format!("export {key}={}\n", shell_quote(value)));
+    }
+    script.push_str(&format!(
+        "echo 'Signing in to {}…'\n{command}\n",
+        kind.label()
+    ));
+    let path = std::env::temp_dir().join(format!("elyra-sign-in-{}.command", kind.as_str()));
+    let result = std::fs::write(&path, script).and_then(|()| {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))
+    });
+    match result {
+        Ok(()) => cx.open_with_system(&path),
+        Err(err) => log::error!("sign-in script: {err}"),
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
 
 /// Open the Settings window, or bring the existing one to the front.
 pub fn open(cx: &mut App) {
@@ -26,6 +104,7 @@ pub fn open(cx: &mut App) {
     let mut options = TitleBar::window_options();
     options.window_bounds = Some(WindowBounds::centered(size(px(860.), px(640.)), cx));
     options.window_min_size = Some(size(px(640.), px(420.)));
+    refresh_provider_status(cx);
     match gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| SettingsView)) {
         Ok((handle, _)) => cx.set_global(SettingsWindow(Some(handle))),
         Err(err) => log::error!("opening settings: {err:#}"),
@@ -390,8 +469,139 @@ impl SettingsView {
                 ),
             );
 
-        vec![general, appearance, code, terminal]
+        let mut providers = SettingPage::new("Providers")
+            .icon(IconName::Bot)
+            .resettable(true);
+        for kind in ProviderKind::ALL {
+            providers = providers.group(provider_group(kind, cx));
+        }
+
+        vec![general, appearance, code, terminal, providers]
     }
+}
+
+fn provider_field(
+    kind: ProviderKind,
+    get: impl Fn(&ProviderSettings) -> String + 'static,
+    set: impl Fn(&mut ProviderSettings, String) + 'static,
+) -> SettingField<SharedString> {
+    SettingField::input(
+        move |cx| get(&Preferences::global(cx).provider(kind)).into(),
+        move |value, cx| {
+            preferences::update(cx, |prefs| {
+                let entry = prefs
+                    .providers
+                    .entry(kind.as_str().to_string())
+                    .or_default();
+                set(entry, value.trim().to_string());
+            })
+        },
+    )
+    .default_value(SharedString::default())
+}
+
+fn provider_group(kind: ProviderKind, cx: &App) -> SettingGroup {
+    let custom = kind == ProviderKind::CustomAcp;
+    let acp = elyra_provider::acp::is_acp(kind);
+    let status = cx
+        .try_global::<ProviderStatus>()
+        .and_then(|status| status.0.get(&kind).cloned());
+    let install = elyra_provider::install_info(kind);
+    let mut group = SettingGroup::new()
+        .title(kind.label())
+        .item(SettingItem::new(
+            "Status",
+            SettingField::render(move |_, _, cx| {
+                let (text, ok) = match &status {
+                    None => ("Checking…".to_string(), false),
+                    Some(Some(version)) => (format!("Installed · {version}"), true),
+                    Some(None) if custom => ("Set the command below".to_string(), false),
+                    Some(None) => (
+                        format!("Not found · {}", install.map(|i| i.1).unwrap_or("")),
+                        false,
+                    ),
+                };
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(if ok {
+                                cx.theme().success
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(text),
+                    )
+                    .when(elyra_provider::login_command(kind).is_some(), |this| {
+                        this.child(
+                            Button::new(SharedString::from(format!("sign-in-{}", kind.as_str())))
+                                .small()
+                                .label("Sign in…")
+                                .on_click(move |_, _, cx| sign_in(kind, cx)),
+                        )
+                    })
+            }),
+        ))
+        .item(
+            SettingItem::new(
+                "Enabled",
+                SettingField::switch(
+                    move |cx| !Preferences::global(cx).provider(kind).disabled,
+                    move |value, cx| {
+                        preferences::update(cx, |prefs| {
+                            prefs
+                                .providers
+                                .entry(kind.as_str().to_string())
+                                .or_default()
+                                .disabled = !value;
+                        })
+                    },
+                )
+                .default_value(true),
+            )
+            .description("Offer this provider for new threads."),
+        )
+        .item(
+            SettingItem::new(
+                if custom { "Command" } else { "Executable" },
+                provider_field(kind, |p| p.path.clone(), |p, v| p.path = v),
+            )
+            .description(if custom {
+                "Path of an agent that speaks the Agent Client Protocol over stdio."
+            } else {
+                "Leave empty to find it on PATH."
+            }),
+        );
+    if acp {
+        group = group.item(
+            SettingItem::new(
+                "Arguments",
+                provider_field(kind, |p| p.args.clone(), |p, v| p.args = v),
+            )
+            .description(match elyra_provider::acp::agent(kind) {
+                Some(agent) => format!("Leave empty for `{}`.", agent.args.join(" ")),
+                None => "For example `--acp`.".to_string(),
+            }),
+        );
+    }
+    group
+        .item(
+            SettingItem::new(
+                "Environment",
+                provider_field(kind, |p| p.env.clone(), |p, v| p.env = v),
+            )
+            .description("Extra variables, e.g. `API_KEY=… HTTPS_PROXY=…`."),
+        )
+        .item(
+            SettingItem::new(
+                "Accounts",
+                provider_field(kind, |p| p.accounts.clone(), |p, v| p.accounts = v),
+            )
+            .description(
+                "Named environments to pick per thread, e.g. `work: CLAUDE_CONFIG_DIR=~/.claude-work; personal: CLAUDE_CONFIG_DIR=~/.claude`.",
+            ),
+        )
 }
 
 impl Render for SettingsView {

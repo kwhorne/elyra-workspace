@@ -1674,6 +1674,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel",
+ "chrono",
  "dirs 6.0.0",
  "elyra-core",
  "log",

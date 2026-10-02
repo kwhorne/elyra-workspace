@@ -3,10 +3,12 @@
 
 use crate::app_state::AppState;
 use crate::themes;
+use elyra_core::ProviderKind;
 use elyra_terminal::{CursorShape, TerminalOptions};
 use gpui_kit::component::{Theme, ThemeRegistry};
 use gpui_kit::{App, Global, SharedString, WeakEntity, px};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 const KEY: &str = "preferences";
 
@@ -43,6 +45,91 @@ pub struct Preferences {
     pub chat_width: f32,
     /// "comfortable" or "compact".
     pub density: String,
+    /// Per-provider launch settings, keyed by `ProviderKind::as_str`.
+    pub providers: BTreeMap<String, ProviderSettings>,
+    /// Model presets shown first in the model menu.
+    pub starred_models: Vec<ModelPreset>,
+}
+
+/// How to launch one provider.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProviderSettings {
+    pub disabled: bool,
+    /// Executable path; empty finds it on PATH.
+    pub path: String,
+    /// Launch arguments for ACP agents; empty uses the defaults.
+    pub args: String,
+    /// `KEY=value KEY2=value`.
+    pub env: String,
+    /// `work: KEY=value; personal: KEY=value`.
+    pub accounts: String,
+}
+
+/// A starred provider + model (+ effort) combination.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ModelPreset {
+    pub provider: String,
+    pub model: String,
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
+/// Expand a leading `~/` to the home directory.
+fn expand_home(value: &str) -> String {
+    match (value.strip_prefix("~/"), dirs::home_dir()) {
+        (Some(rest), Some(home)) => home.join(rest).display().to_string(),
+        _ => value.to_string(),
+    }
+}
+
+/// Parse `KEY=value KEY2="two words"` into pairs.
+pub fn parse_env(text: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    let mut rest = text.trim();
+    while !rest.is_empty() {
+        let Some((key, after)) = rest.split_once('=') else {
+            break;
+        };
+        let key = key.trim().to_string();
+        let (value, remaining) = if let Some(quoted) = after.strip_prefix('"') {
+            match quoted.split_once('"') {
+                Some((value, remaining)) => (value.to_string(), remaining),
+                None => (quoted.to_string(), ""),
+            }
+        } else {
+            match after.split_once(char::is_whitespace) {
+                Some((value, remaining)) => (value.to_string(), remaining),
+                None => (after.to_string(), ""),
+            }
+        };
+        if !key.is_empty() && !key.contains(char::is_whitespace) {
+            pairs.push((key, expand_home(&value)));
+        }
+        rest = remaining.trim_start();
+    }
+    pairs
+}
+
+impl ProviderSettings {
+    /// Named accounts and their environment.
+    pub fn accounts(&self) -> Vec<(String, Vec<(String, String)>)> {
+        self.accounts
+            .split(';')
+            .filter_map(|entry| {
+                let (name, env) = entry.split_once(':')?;
+                let name = name.trim();
+                (!name.is_empty()).then(|| (name.to_string(), parse_env(env)))
+            })
+            .collect()
+    }
+}
+
+/// Executable, arguments and environment for starting a provider session.
+pub struct Launch {
+    pub executable: Option<std::path::PathBuf>,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }
 
 impl Default for Preferences {
@@ -69,6 +156,8 @@ impl Default for Preferences {
             light_theme: themes::DEFAULT_LIGHT.into(),
             chat_width: 860.,
             density: "comfortable".into(),
+            providers: BTreeMap::new(),
+            starred_models: Vec::new(),
         }
     }
 }
@@ -107,6 +196,56 @@ impl Preferences {
                     .into_iter()
                     .find(|e| e.app != "Finder" && e.app != "Terminal")
             })
+    }
+
+    pub fn provider(&self, kind: ProviderKind) -> ProviderSettings {
+        self.providers
+            .get(kind.as_str())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Offered in pickers: not switched off, and the custom agent only once
+    /// it has a command.
+    pub fn provider_enabled(&self, kind: ProviderKind) -> bool {
+        let settings = self.provider(kind);
+        !settings.disabled && (kind != ProviderKind::CustomAcp || !settings.path.trim().is_empty())
+    }
+
+    pub fn enabled_providers(&self) -> Vec<ProviderKind> {
+        ProviderKind::ALL
+            .into_iter()
+            .filter(|kind| self.provider_enabled(*kind))
+            .collect()
+    }
+
+    pub fn launch(&self, kind: ProviderKind, account: Option<&str>) -> Launch {
+        let settings = self.provider(kind);
+        let path = settings.path.trim();
+        let mut env = parse_env(&settings.env);
+        if let Some(account) = account
+            && let Some((_, account_env)) = settings
+                .accounts()
+                .into_iter()
+                .find(|(name, _)| name == account)
+        {
+            env.extend(account_env);
+        }
+        Launch {
+            executable: (!path.is_empty()).then(|| expand_home(path).into()),
+            args: settings
+                .args
+                .split_whitespace()
+                .map(str::to_string)
+                .collect(),
+            env,
+        }
+    }
+
+    pub fn is_starred(&self, preset: &ModelPreset) -> bool {
+        self.starred_models
+            .iter()
+            .any(|p| p.provider == preset.provider && p.model == preset.model)
     }
 
     pub fn compact(&self) -> bool {
@@ -344,5 +483,26 @@ mod tests {
         assert_eq!(partial.theme, "Nord");
         assert_eq!(partial.terminal_scrollback, 10_000);
         assert_eq!(partial.terminal_font_family(), partial.mono_font_family);
+    }
+
+    #[test]
+    fn parses_provider_env_and_accounts() {
+        use super::{ProviderSettings, parse_env};
+        assert_eq!(
+            parse_env(r#"A=1  B="two words" C=x=y"#),
+            vec![
+                ("A".to_string(), "1".to_string()),
+                ("B".to_string(), "two words".to_string()),
+                ("C".to_string(), "x=y".to_string()),
+            ]
+        );
+        let settings = ProviderSettings {
+            accounts: "work: CLAUDE_CONFIG_DIR=/w ; personal: CLAUDE_CONFIG_DIR=/p X=1".into(),
+            ..Default::default()
+        };
+        let accounts = settings.accounts();
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(accounts[1].0, "personal");
+        assert_eq!(accounts[1].1.len(), 2);
     }
 }

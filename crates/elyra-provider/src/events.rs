@@ -54,6 +54,8 @@ pub enum ProviderEvent {
     },
     /// Slash commands the provider accepts (skills, prompts, extensions).
     Commands(Vec<SlashCommand>),
+    /// Subagents the user can address with `@agent-<name>`.
+    Agents(Vec<SlashCommand>),
     /// Models the provider offers, discovered at runtime.
     Models(Vec<ModelOption>),
     /// Messages the provider has queued but not yet delivered.

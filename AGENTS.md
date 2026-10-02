@@ -25,6 +25,9 @@ See README.md for the crate map.
   overrides from `keybindings.json` and the ⌘/ sheet all read it); add new ones there.
 - `cc` is pinned to 1.2.x in Cargo.lock because `tree-sitter-sequel` requires `~1.2`;
   `cargo update` may need `-p cc --precise 1.2.67`.
+- ACP adapter tests drive `crates/elyra-provider/tests/mock_acp_agent.py` (needs
+  `python3`); extend the mock when handling new ACP messages.
+- Never post global mouse/keyboard events to test the UI; they reach the user's apps.
 - Occluded windows started with `ELYRA_NO_ACTIVATE` don't repaint, so screenshots
   show the first frame only.
 

@@ -53,6 +53,8 @@ gpui_kit::actions!(
         SelectTab9,
         SplitTerminal,
         SaveFile,
+        ImportThreads,
+        ForkThread,
     ]
 );
 

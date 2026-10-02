@@ -28,8 +28,12 @@ fn thread_menu(
     app: Entity<AppState>,
     thread: Thread,
     path: std::path::PathBuf,
+    window: &mut Window,
+    cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     let id = thread.id;
+    let current_provider = thread.provider;
+    let handoff_workspace = workspace.clone();
     let on = |workspace: &WeakEntity<Workspace>,
               f: fn(&mut Workspace, ThreadId, &mut Window, &mut Context<Workspace>)| {
         let workspace = workspace.clone();
@@ -90,6 +94,35 @@ fn thread_menu(
                 t.read_at = None;
                 t.last_activity_at = Some(Utc::now());
             })),
+    )
+    .separator()
+    .item(
+        PopupMenuItem::new("Fork")
+            .icon(IconName::GitFork)
+            .on_click(on(&workspace, |this, id, window, cx| {
+                this.fork_thread(id, window, cx)
+            })),
+    )
+    .submenu_with_icon(
+        Some(Icon::new(IconName::ArrowRightLeft)),
+        "Continue with",
+        window,
+        cx,
+        move |mut menu, _, cx| {
+            for kind in crate::preferences::Preferences::global(cx).enabled_providers() {
+                if kind == current_provider {
+                    continue;
+                }
+                let workspace = handoff_workspace.clone();
+                menu = menu.item(PopupMenuItem::new(kind.label()).on_click(
+                    move |_, window, cx| {
+                        let _ = workspace
+                            .update(cx, |this, cx| this.handoff_thread(id, kind, window, cx));
+                    },
+                ));
+            }
+            menu
+        },
     )
     .separator()
     .item(
@@ -310,25 +343,29 @@ impl Workspace {
                             .ghost()
                             .xsmall()
                             .icon(IconName::Ellipsis)
-                            .dropdown_menu(move |menu, _, _| {
+                            .dropdown_menu(move |menu, window, cx| {
                                 thread_menu(
                                     menu,
                                     button_workspace.clone(),
                                     button_app.clone(),
                                     button_thread.clone(),
                                     path.clone(),
+                                    window,
+                                    cx,
                                 )
                             }),
                     ),
             )
             .on_click(cx.listener(move |this, _, window, cx| this.activate(id, window, cx)))
-            .context_menu(move |menu, _, _| {
+            .context_menu(move |menu, window, cx| {
                 thread_menu(
                     menu,
                     menu_workspace.clone(),
                     menu_app.clone(),
                     menu_thread.clone(),
                     menu_path.clone(),
+                    window,
+                    cx,
                 )
             })
             .into_any_element()

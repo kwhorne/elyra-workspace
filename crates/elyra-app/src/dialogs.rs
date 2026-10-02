@@ -8,7 +8,9 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -550,6 +552,244 @@ pub fn worktrees(app: Entity<AppState>, window: &mut Window, cx: &mut App) {
         dialog
             .title("Managed worktrees")
             .w(px(560.))
+            .child(list.clone())
+    });
+}
+
+/// Pick Claude Code sessions to import as threads.
+pub struct ImportList {
+    app: Entity<AppState>,
+    workspace: WeakEntity<Workspace>,
+    sessions: Option<Vec<elyra_provider::claude_history::SessionSummary>>,
+    selected: std::collections::HashSet<String>,
+    filter: Entity<InputState>,
+    importing: bool,
+}
+
+impl ImportList {
+    fn imported(&self, session_id: &str, cx: &App) -> bool {
+        self.app.read(cx).threads.iter().any(|t| {
+            t.provider == elyra_core::ProviderKind::Claude
+                && t.provider_session_id.as_deref() == Some(session_id)
+        })
+    }
+
+    fn import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths: Vec<std::path::PathBuf> = self
+            .sessions
+            .iter()
+            .flatten()
+            .filter(|s| self.selected.contains(&s.session_id))
+            .map(|s| s.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        self.importing = true;
+        cx.notify();
+        let mut last = None;
+        let mut errors = Vec::new();
+        for path in paths {
+            match self
+                .app
+                .update(cx, |app, cx| app.import_claude_session(&path, cx))
+            {
+                Ok(id) => last = Some(id),
+                Err(err) => errors.push(format!("{err:#}")),
+            }
+        }
+        self.importing = false;
+        self.selected.clear();
+        if let Some(error) = errors.first() {
+            window.push_notification(Notification::error(error.clone()), cx);
+        }
+        if let Some(id) = last {
+            window.close_dialog(cx);
+            let _ = self
+                .workspace
+                .update(cx, |workspace, cx| workspace.activate(id, window, cx));
+        }
+        cx.notify();
+    }
+}
+
+impl Render for ImportList {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(sessions) = &self.sessions else {
+            return div()
+                .py_6()
+                .text_sm()
+                .text_center()
+                .text_color(cx.theme().muted_foreground)
+                .child("Reading Claude Code history…")
+                .into_any_element();
+        };
+        let query = self.filter.read(cx).value().to_lowercase();
+        let rows: Vec<AnyElement> = sessions
+            .iter()
+            .filter(|s| {
+                query.is_empty()
+                    || s.title.to_lowercase().contains(&query)
+                    || s.cwd
+                        .as_ref()
+                        .is_some_and(|c| c.display().to_string().to_lowercase().contains(&query))
+            })
+            .map(|session| {
+                let sid = session.session_id.clone();
+                let imported = self.imported(&sid, cx);
+                let checked = self.selected.contains(&sid);
+                let folder = session
+                    .cwd
+                    .as_ref()
+                    .and_then(|c| c.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "—".into());
+                let when = session
+                    .updated
+                    .map(|t| crate::workspace::format_age(chrono::Utc::now() - t))
+                    .unwrap_or_default();
+                h_flex()
+                    .id(SharedString::from(format!("import-{sid}")))
+                    .gap_2()
+                    .px_1()
+                    .py_1()
+                    .rounded_md()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .when(!imported, |this| {
+                        this.cursor_pointer()
+                            .hover(|this| this.bg(cx.theme().accent.opacity(0.5)))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !this.selected.remove(&sid) {
+                                    this.selected.insert(sid.clone());
+                                }
+                                cx.notify();
+                            }))
+                    })
+                    .child(
+                        Icon::new(if imported {
+                            IconName::CircleCheck
+                        } else if checked {
+                            IconName::SquareCheck
+                        } else {
+                            IconName::Square
+                        })
+                        .small()
+                        .text_color(if checked {
+                            cx.theme().primary
+                        } else {
+                            cx.theme().muted_foreground
+                        }),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(session.title.clone()),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!(
+                                        "{folder} · {} messages{}",
+                                        session.messages,
+                                        if imported { " · imported" } else { "" }
+                                    )),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(when),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        let count = self.selected.len();
+        v_flex()
+            .gap_2()
+            .child(Input::new(&self.filter).small())
+            .child(
+                v_flex()
+                    .id("import-list")
+                    .h(px(380.))
+                    .overflow_y_scroll()
+                    .children(rows),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Imported threads resume the same Claude Code session."),
+                    )
+                    .child(
+                        Button::new("import-selected")
+                            .primary()
+                            .small()
+                            .loading(self.importing)
+                            .disabled(count == 0)
+                            .label(if count > 1 {
+                                format!("Import {count} sessions")
+                            } else {
+                                "Import".to_string()
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| this.import(window, cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+}
+
+pub fn import_claude_sessions(
+    workspace: WeakEntity<Workspace>,
+    app: Entity<AppState>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let list = cx.new(|cx| {
+        let filter =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Filter by title or folder"));
+        cx.subscribe(&filter, |_, _, _: &InputEvent, cx| cx.notify())
+            .detach();
+        cx.observe(&app, |_, _, cx| cx.notify()).detach();
+        let job = cx.background_executor().spawn(async move {
+            elyra_provider::claude_history::projects_dir()
+                .map(|root| elyra_provider::claude_history::list_sessions(&root, 300))
+                .unwrap_or_default()
+        });
+        cx.spawn(async move |this, cx| {
+            let sessions = job.await;
+            let _ = this.update(cx, |this: &mut ImportList, cx| {
+                this.sessions = Some(sessions);
+                cx.notify();
+            });
+        })
+        .detach();
+        ImportList {
+            app,
+            workspace,
+            sessions: None,
+            selected: Default::default(),
+            filter,
+            importing: false,
+        }
+    });
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog
+            .title("Import from Claude Code")
+            .w(px(620.))
             .child(list.clone())
     });
 }

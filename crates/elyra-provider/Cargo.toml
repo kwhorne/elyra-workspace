@@ -13,3 +13,4 @@ log.workspace = true
 async-channel.workspace = true
 which.workspace = true
 dirs.workspace = true
+chrono.workspace = true

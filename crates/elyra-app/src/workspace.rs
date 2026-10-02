@@ -1055,6 +1055,53 @@ impl Workspace {
         self.open_in_editor(None, window, cx);
     }
 
+    // ---- fork, handoff, import -------------------------------------------
+
+    pub(crate) fn fork_thread(
+        &mut self,
+        id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.app.update(cx, |app, cx| app.fork_thread(id, cx)) {
+            Ok(fork) => self.activate(fork, window, cx),
+            Err(err) => window.push_notification(Notification::error(format!("{err:#}")), cx),
+        }
+    }
+
+    /// Continue a thread with another provider: a new thread with a recap
+    /// ready to send.
+    pub(crate) fn handoff_thread(
+        &mut self,
+        id: ThreadId,
+        provider: elyra_core::ProviderKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self
+            .app
+            .update(cx, |app, cx| app.handoff_thread(id, provider, cx))
+        {
+            Ok((new_id, draft)) => {
+                self.activate(new_id, window, cx);
+                if let Some(view) = self.thread_views.get(&new_id) {
+                    view.update(cx, |view, cx| view.append_to_composer(&draft, window, cx));
+                }
+            }
+            Err(err) => window.push_notification(Notification::error(format!("{err:#}")), cx),
+        }
+    }
+
+    fn on_import_thread(&mut self, _: &ImportThreads, window: &mut Window, cx: &mut Context<Self>) {
+        crate::dialogs::import_claude_sessions(cx.weak_entity(), self.app.clone(), window, cx);
+    }
+
+    fn on_fork_thread(&mut self, _: &ForkThread, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.active {
+            self.fork_thread(id, window, cx);
+        }
+    }
+
     // ---- side chats -----------------------------------------------------
 
     pub(crate) fn side_chat_of(&self, parent: ThreadId, cx: &App) -> Option<ThreadId> {
@@ -1566,6 +1613,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_toggle_terminal_workspace))
             .on_action(cx.listener(Self::on_open_in_editor))
             .on_action(cx.listener(Self::on_new_side_chat))
+            .on_action(cx.listener(Self::on_import_thread))
+            .on_action(cx.listener(Self::on_fork_thread))
             .on_action(cx.listener(Self::on_toggle_split))
             .on_action(cx.listener(Self::on_next_tab))
             .on_action(cx.listener(Self::on_previous_tab))

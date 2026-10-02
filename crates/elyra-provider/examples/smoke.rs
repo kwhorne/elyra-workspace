@@ -1,5 +1,6 @@
 //! Live smoke test of a provider adapter through the AgentSession trait.
-//!   cargo run -p elyra-provider --example smoke -- <claude|elyra> <cwd> "<prompt>"
+//!   cargo run -p elyra-provider --example smoke -- <provider> <cwd> "<prompt>"
+//! For `acp`, set `ACP_COMMAND` to the agent command line.
 //! Prints every provider event; auto-allows permission requests and answers
 //! questions with the first option.
 
@@ -9,8 +10,14 @@ use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
-    let kind =
-        ProviderKind::parse(&args.next().unwrap_or_default()).expect("provider: claude|elyra");
+    let kind = ProviderKind::parse(&args.next().unwrap_or_default())
+        .expect("provider: claude|elyra|gemini|…|acp");
+    let mut command = std::env::var("ACP_COMMAND")
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>()
+        .into_iter();
     let cwd = PathBuf::from(args.next().expect("cwd"));
     let prompt = args.next().expect("prompt");
     let (session, events) = elyra_provider::start_session(
@@ -21,7 +28,9 @@ fn main() -> anyhow::Result<()> {
             effort: None,
             permission_mode: PermissionMode::Ask,
             resume_session_id: None,
-            executable: None,
+            executable: command.next().map(PathBuf::from),
+            args: command.collect(),
+            env: Vec::new(),
             fork: false,
             append_system_prompt: None,
         },

@@ -281,6 +281,32 @@ pub fn mention_items(files: &[String], query: &str) -> Vec<PopupItem> {
         .collect()
 }
 
+/// Subagents matching an `@` query, inserted as `@agent-<name>`.
+pub fn agent_items(agents: &[elyra_provider::SlashCommand], query: &str) -> Vec<PopupItem> {
+    let query = query.strip_prefix("agent-").unwrap_or(query);
+    let mut scored: Vec<(i64, &elyra_provider::SlashCommand)> = agents
+        .iter()
+        .filter_map(|agent| Some((fuzzy_score(&agent.name, query)?, agent)))
+        .collect();
+    scored.sort_by_key(|scored| std::cmp::Reverse(scored.0));
+    scored
+        .into_iter()
+        .take(5)
+        .map(|(_, agent)| PopupItem {
+            label: format!("agent-{}", agent.name),
+            detail: agent
+                .description
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect(),
+            insert: format!("@agent-{} ", agent.name),
+        })
+        .collect()
+}
+
 /// Files and directories under `root`, respecting .gitignore.
 pub fn index_files(root: &Path) -> Vec<String> {
     let mut files = Vec::new();

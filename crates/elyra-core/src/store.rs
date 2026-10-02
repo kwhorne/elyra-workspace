@@ -63,13 +63,18 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE projects ADD COLUMN space TEXT;
     ALTER TABLE projects ADD COLUMN instructions TEXT;
 "#,
+    r#"
+    ALTER TABLE threads ADD COLUMN account TEXT;
+    ALTER TABLE threads ADD COLUMN fork_context TEXT;
+"#,
 ];
 
 const PROJECT_COLUMNS: &str =
     "id, name, path, created_at, pinned, icon, color, space, instructions";
 const THREAD_COLUMNS: &str = "id, project_id, title, provider, model, permission_mode,
     provider_session_id, environment, status, archived, created_at, updated_at, effort,
-    pinned, done, read_at, last_activity_at, parent_id, notes, recap, pinned_items";
+    pinned, done, read_at, last_activity_at, parent_id, notes, recap, pinned_items, account,
+    fork_context";
 
 pub struct Store {
     conn: Connection,
@@ -251,6 +256,8 @@ impl Store {
             notes: None,
             recap: None,
             pinned_items: Vec::new(),
+            account: None,
+            fork_context: None,
             created_at: now,
             updated_at: now,
         };
@@ -282,7 +289,7 @@ impl Store {
                 provider_session_id = ?5, environment = ?6, status = ?7, archived = ?8,
                 updated_at = ?9, effort = ?10, provider = ?11, pinned = ?12, done = ?13,
                 read_at = ?14, last_activity_at = ?15, parent_id = ?16, notes = ?17, recap = ?18,
-                pinned_items = ?19
+                pinned_items = ?19, account = ?20, fork_context = ?21
              WHERE id = ?1",
             params![
                 thread.id.to_string(),
@@ -304,6 +311,8 @@ impl Store {
                 thread.notes,
                 thread.recap,
                 serde_json::to_string(&thread.pinned_items)?,
+                thread.account,
+                thread.fork_context,
             ],
         )?;
         Ok(())
@@ -389,6 +398,41 @@ impl Store {
             ],
         )?;
         Ok(item)
+    }
+
+    /// Append many items in one transaction (imports and forks), keeping
+    /// their original timestamps when given.
+    pub fn append_items(
+        &self,
+        thread_id: ThreadId,
+        items: impl IntoIterator<Item = (ItemContent, Option<DateTime<Utc>>)>,
+    ) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut seq: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(seq), 0) FROM transcript_items WHERE thread_id = ?1",
+            params![thread_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let mut count = 0;
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO transcript_items (id, thread_id, seq, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )?;
+            for (content, created_at) in items {
+                seq += 1;
+                count += 1;
+                insert.execute(params![
+                    new_id().to_string(),
+                    thread_id.to_string(),
+                    seq,
+                    serde_json::to_string(&content)?,
+                    created_at.unwrap_or_else(Utc::now).to_rfc3339(),
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
     }
 
     pub fn update_item(&self, item: &TranscriptItem) -> Result<()> {
@@ -534,6 +578,8 @@ fn thread_from_row(row: &Row) -> rusqlite::Result<Thread> {
             .get::<_, Option<String>>(20)?
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default(),
+        account: row.get(21)?,
+        fork_context: row.get(22)?,
         created_at: parse_time(row, 10)?,
         updated_at: parse_time(row, 11)?,
     })
@@ -635,6 +681,8 @@ mod tests {
         child.parent_id = Some(thread.id);
         child.notes = Some("remember".into());
         child.pinned_items = vec![second.id];
+        child.account = Some("work".into());
+        child.fork_context = Some("earlier".into());
         store.update_thread(&child).unwrap();
         let loaded = store.threads(false).unwrap();
         let loaded = loaded.iter().find(|t| t.id == child.id).unwrap();
@@ -642,9 +690,17 @@ mod tests {
             (
                 loaded.parent_id,
                 loaded.notes.as_deref(),
-                loaded.pinned_items.len()
+                loaded.pinned_items.len(),
+                loaded.account.as_deref(),
+                loaded.fork_context.as_deref(),
             ),
-            (Some(thread.id), Some("remember"), 1)
+            (
+                Some(thread.id),
+                Some("remember"),
+                1,
+                Some("work"),
+                Some("earlier")
+            )
         );
         store.delete_thread(child.id).unwrap();
 

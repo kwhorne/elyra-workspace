@@ -122,11 +122,13 @@ impl ClaudeSession {
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let pending_for_events = pending.clone();
         let mut parser = StreamParser::default();
+        let mut envs: Vec<(&str, &str)> = vec![("CLAUDE_CODE_ENTRYPOINT", "sdk-rust-elyra")];
+        envs.extend(config.env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
         let (process, rx) = JsonlProcess::spawn(
             &executable,
             &args,
             &config.cwd,
-            &[("CLAUDE_CODE_ENTRYPOINT", "sdk-rust-elyra")],
+            &envs,
             move |value| parser.handle(value),
             move |event| match event {
                 ProviderEvent::PermissionRequest(request) => {
@@ -571,6 +573,23 @@ impl StreamParser {
                                                 .as_str()
                                                 .unwrap_or("")
                                                 .to_string(),
+                                        })
+                                    })
+                                    .collect(),
+                            ));
+                        }
+                        if let Some(agents) = body["agents"].as_array() {
+                            events.push(ProviderEvent::Agents(
+                                agents
+                                    .iter()
+                                    .filter_map(|a| {
+                                        Some(SlashCommand {
+                                            name: a["name"].as_str()?.to_string(),
+                                            description: a["description"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string(),
+                                            argument_hint: String::new(),
                                         })
                                     })
                                     .collect(),

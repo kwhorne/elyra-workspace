@@ -41,6 +41,11 @@ pub fn find_executable() -> Option<PathBuf> {
     crate::process::find_executable("elyra")
 }
 
+/// The Pi coding agent speaks the same RPC protocol.
+pub fn find_pi() -> Option<PathBuf> {
+    crate::process::find_executable("pi")
+}
+
 pub struct ElyraSession {
     process: Arc<JsonlProcess>,
     next_id: AtomicU64,
@@ -53,6 +58,25 @@ impl ElyraSession {
             .clone()
             .or_else(find_executable)
             .ok_or_else(|| anyhow!("Elyra (`elyra`) was not found on PATH — install with `npm install -g @elyracode/coding-agent`"))?;
+        Self::start_with(executable, config)
+    }
+
+    /// Start Pi (`pi --mode rpc`).
+    pub fn start_pi(
+        config: SessionConfig,
+    ) -> Result<(Self, async_channel::Receiver<ProviderEvent>)> {
+        let executable = config
+            .executable
+            .clone()
+            .or_else(find_pi)
+            .ok_or_else(|| anyhow!("Pi (`pi`) was not found on PATH — install with `npm install -g @mariozechner/pi-coding-agent`"))?;
+        Self::start_with(executable, config)
+    }
+
+    fn start_with(
+        executable: PathBuf,
+        config: SessionConfig,
+    ) -> Result<(Self, async_channel::Receiver<ProviderEvent>)> {
         let mut args: Vec<String> = vec!["--mode".into(), "rpc".into()];
         if let Some(model) = config.model.as_deref().filter(|m| !m.is_empty()) {
             args.extend(["--model".into(), model.into()]);
@@ -76,7 +100,11 @@ impl ElyraSession {
             &executable,
             &args,
             &config.cwd,
-            &[],
+            &config
+                .env
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect::<Vec<_>>(),
             move |value| parser.handle(value),
             |_| {},
         )?;

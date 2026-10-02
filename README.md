@@ -15,8 +15,16 @@ conversation, and the tools around it — changes, Git and a terminal — in one
 ## Features (MVP)
 
 - Projects and threads in a sidebar, open threads as tabs, restored on restart
-- Providers behind one `AgentSession` trait: **Claude Code** (`claude -p` stream-json)
-  and **Elyra** (`elyra --mode rpc`), chosen per thread
+- Providers behind one `AgentSession` trait, chosen per thread: **Claude Code**
+  (`claude -p` stream-json), **Elyra** and **Pi** (`--mode rpc`), and any
+  [Agent Client Protocol](https://agentclientprotocol.com) agent — **Gemini CLI**,
+  **Cursor Agent**, **OpenCode** built in, plus a custom ACP command
+- Providers settings: enable/disable, executable, arguments, environment variables,
+  named accounts per provider (e.g. separate `CLAUDE_CONFIG_DIR`s), installed version
+  and "Sign in…" in Terminal; starred model presets in the model menu
+- Fork a thread (native session branch where supported, otherwise with the
+  conversation as context), continue a thread with another provider (handoff with
+  recap), import Claude Code sessions (⌘I) that resume where they left off
 - Agent chat: streaming text and reasoning, tool calls with live output, Edit/Write
   diffs, subagents with nested calls, task lists, plan review (approve / keep
   planning), structured questions (AskUserQuestion and Elyra extension dialogs),
@@ -111,6 +119,8 @@ Use `ELYRA_HOME=/some/dir` for an isolated data directory (development, tests) a
 Provider smoke test (real turn, prints neutral events):
 `cargo run -p elyra-provider --example smoke -- elyra <dir> "<prompt>"`
 
+Any ACP agent: `ACP_COMMAND="npx -y @agentclientprotocol/claude-agent-acp" cargo run -p elyra-provider --example smoke -- acp <dir> "<prompt>"`
+
 ## Keyboard
 
 | Shortcut | Action              |
@@ -126,6 +136,8 @@ Provider smoke test (real turn, prints neutral events):
 | ⌘[ / ⌘]  | Back / forward      |
 | ⌘\       | Split chat          |
 | ⌥⌘S      | New side chat       |
+| ⇧⌘K      | Fork thread         |
+| ⌘I       | Import from Claude Code |
 | ⇧⌘E      | Files               |
 | ⇧⌘I      | Context and notes   |
 | ⇧⌘J      | Full-width terminal |

@@ -44,6 +44,8 @@ pub struct ThreadSession {
     /// Latest known token/context usage and session cost.
     pub usage: Usage,
     pub commands: Vec<SlashCommand>,
+    /// Subagents offered as `@agent-<name>` mentions.
+    pub agents: Vec<SlashCommand>,
     pub models: Vec<ModelOption>,
     /// Unsent composer text, kept across tab switches.
     pub draft: String,
@@ -98,6 +100,7 @@ impl ThreadSession {
             tool_progress: HashMap::new(),
             usage,
             commands: Vec::new(),
+            agents: Vec::new(),
             models,
             draft: String::new(),
             provider: None,
@@ -424,13 +427,17 @@ impl ThreadSession {
         if self.provider.is_some() {
             return Ok(());
         }
+        let launch = crate::preferences::Preferences::global(cx)
+            .launch(self.thread.provider, self.thread.account.as_deref());
         let config = SessionConfig {
             cwd: self.working_dir(),
             model: self.thread.model.clone(),
             effort: self.thread.effort.clone(),
             permission_mode: self.thread.permission_mode,
             resume_session_id: self.thread.provider_session_id.clone(),
-            executable: None,
+            executable: launch.executable,
+            args: launch.args,
+            env: launch.env,
             // A side chat's first launch branches from its parent's session.
             fork: self.fork_pending,
             append_system_prompt: self.project.instructions.clone(),
@@ -462,7 +469,16 @@ impl ThreadSession {
         }
     }
 
-    fn deliver(&mut self, prompt: Prompt, cx: &mut Context<Self>) {
+    fn deliver(&mut self, mut prompt: Prompt, cx: &mut Context<Self>) {
+        // A fork that couldn't branch the provider session carries the
+        // earlier conversation into its first message.
+        if let Some(context) = self.thread.fork_context.take() {
+            prompt.text = format!(
+                "<earlier-conversation>\n{context}\n</earlier-conversation>\n\nContinue from the conversation above.\n\n{}",
+                prompt.text
+            );
+            self.save_thread(cx);
+        }
         let result = self
             .ensure_provider(cx)
             .and_then(|()| self.provider.as_ref().unwrap().send(&prompt));
@@ -658,6 +674,7 @@ impl ThreadSession {
         self.thread.provider = provider;
         self.thread.model = None;
         self.thread.effort = None;
+        self.thread.account = None;
         self.commands.clear();
         self.models = self
             .app
@@ -666,6 +683,38 @@ impl ThreadSession {
         self.set_setting("default_provider", provider.as_str(), cx);
         self.save_thread(cx);
         cx.notify();
+    }
+
+    /// Pick a provider account; only before the first message, since a
+    /// session belongs to the account that started it.
+    pub fn set_account(&mut self, account: Option<String>, cx: &mut Context<Self>) {
+        if self.has_started() || self.thread.account == account {
+            return;
+        }
+        self.stop_provider();
+        self.thread.account = account;
+        self.save_thread(cx);
+        cx.notify();
+    }
+
+    /// Apply a starred provider/model/effort preset.
+    pub fn apply_preset(
+        &mut self,
+        preset: &crate::preferences::ModelPreset,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(kind) = ProviderKind::parse(&preset.provider) {
+            if kind != self.thread.provider {
+                if self.has_started() {
+                    return;
+                }
+                self.set_provider(kind, cx);
+            }
+            self.set_model(Some(preset.model.clone()), cx);
+            if preset.effort.is_some() {
+                self.set_effort(preset.effort.clone(), cx);
+            }
+        }
     }
 
     pub fn set_permission_mode(&mut self, mode: PermissionMode, cx: &mut Context<Self>) {
@@ -999,6 +1048,10 @@ impl ThreadSession {
             } => self.complete_turn(is_error, duration_ms, cost_usd, message, cx),
             ProviderEvent::Commands(commands) => {
                 self.commands = commands;
+                cx.notify();
+            }
+            ProviderEvent::Agents(agents) => {
+                self.agents = agents;
                 cx.notify();
             }
             ProviderEvent::Models(models) => {

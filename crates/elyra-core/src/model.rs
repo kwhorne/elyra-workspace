@@ -33,35 +33,59 @@ pub struct Project {
     pub instructions: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
     Claude,
     Elyra,
+    /// Google Gemini CLI over ACP.
+    Gemini,
+    /// Cursor Agent CLI over ACP.
+    Cursor,
+    /// OpenCode over ACP.
+    OpenCode,
+    /// The Pi coding agent (same RPC protocol as Elyra).
+    Pi,
+    /// A user-configured Agent Client Protocol command.
+    CustomAcp,
 }
 
 impl ProviderKind {
-    pub const ALL: [ProviderKind; 2] = [ProviderKind::Claude, ProviderKind::Elyra];
+    pub const ALL: [ProviderKind; 7] = [
+        ProviderKind::Claude,
+        ProviderKind::Elyra,
+        ProviderKind::Gemini,
+        ProviderKind::Cursor,
+        ProviderKind::OpenCode,
+        ProviderKind::Pi,
+        ProviderKind::CustomAcp,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             ProviderKind::Claude => "claude",
             ProviderKind::Elyra => "elyra",
+            ProviderKind::Gemini => "gemini",
+            ProviderKind::Cursor => "cursor",
+            ProviderKind::OpenCode => "opencode",
+            ProviderKind::Pi => "pi",
+            ProviderKind::CustomAcp => "acp",
         }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "claude" => Some(ProviderKind::Claude),
-            "elyra" => Some(ProviderKind::Elyra),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|kind| kind.as_str() == value)
     }
 
     pub fn label(self) -> &'static str {
         match self {
             ProviderKind::Claude => "Claude Code",
             ProviderKind::Elyra => "Elyra",
+            ProviderKind::Gemini => "Gemini CLI",
+            ProviderKind::Cursor => "Cursor Agent",
+            ProviderKind::OpenCode => "OpenCode",
+            ProviderKind::Pi => "Pi",
+            ProviderKind::CustomAcp => "Custom agent (ACP)",
         }
     }
 }
@@ -191,6 +215,11 @@ pub struct Thread {
     pub recap: Option<String>,
     /// Transcript items the user pinned.
     pub pinned_items: Vec<ItemId>,
+    /// Provider account (named environment from provider settings).
+    pub account: Option<String>,
+    /// Conversation context to send ahead of the first prompt, for forks
+    /// that cannot branch the provider's own session.
+    pub fork_context: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

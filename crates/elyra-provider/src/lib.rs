@@ -2,7 +2,9 @@
 //! protocol and translates it into provider-neutral [`ProviderEvent`]s behind
 //! the [`AgentSession`] trait.
 
+pub mod acp;
 pub mod claude;
+pub mod claude_history;
 pub mod elyra;
 mod events;
 mod process;
@@ -24,6 +26,10 @@ pub struct SessionConfig {
     pub resume_session_id: Option<String>,
     /// Override the provider executable.
     pub executable: Option<PathBuf>,
+    /// Override the launch arguments (ACP agents; empty uses the defaults).
+    pub args: Vec<String>,
+    /// Extra environment variables (provider settings and accounts).
+    pub env: Vec<(String, String)>,
     /// Start a new session that branches from `resume_session_id`.
     pub fork: bool,
     /// Extra instructions appended to the provider's system prompt.
@@ -49,8 +55,66 @@ pub struct Capabilities {
 pub fn capabilities(kind: ProviderKind) -> Capabilities {
     match kind {
         ProviderKind::Claude => claude::CAPABILITIES,
-        ProviderKind::Elyra => elyra::CAPABILITIES,
+        ProviderKind::Elyra | ProviderKind::Pi => elyra::CAPABILITIES,
+        ProviderKind::Gemini
+        | ProviderKind::Cursor
+        | ProviderKind::OpenCode
+        | ProviderKind::CustomAcp => acp::CAPABILITIES,
     }
+}
+
+/// Whether a new session can branch from an existing one natively.
+pub fn supports_fork(kind: ProviderKind) -> bool {
+    matches!(
+        kind,
+        ProviderKind::Claude | ProviderKind::Elyra | ProviderKind::Pi
+    )
+}
+
+/// The provider's CLI binary name and an install command.
+pub fn install_info(kind: ProviderKind) -> Option<(&'static str, &'static str)> {
+    match kind {
+        ProviderKind::Claude => Some(("claude", "npm install -g @anthropic-ai/claude-code")),
+        ProviderKind::Elyra => Some(("elyra", "npm install -g @elyracode/coding-agent")),
+        ProviderKind::Pi => Some(("pi", "npm install -g @mariozechner/pi-coding-agent")),
+        ProviderKind::CustomAcp => None,
+        other => acp::agent(other).map(|a| (a.binary, a.install_hint)),
+    }
+}
+
+/// The interactive command that signs in to the provider.
+pub fn login_command(kind: ProviderKind) -> Option<&'static str> {
+    match kind {
+        ProviderKind::Claude => Some("claude /login"),
+        ProviderKind::Elyra => Some("elyra"),
+        ProviderKind::Pi => Some("pi"),
+        ProviderKind::Gemini => Some("gemini"),
+        ProviderKind::Cursor => Some("cursor-agent login"),
+        ProviderKind::OpenCode => Some("opencode auth login"),
+        ProviderKind::CustomAcp => None,
+    }
+}
+
+/// Locate the provider's CLI.
+pub fn find_executable(kind: ProviderKind) -> Option<PathBuf> {
+    match kind {
+        ProviderKind::Claude => claude::find_executable(),
+        ProviderKind::Elyra => elyra::find_executable(),
+        ProviderKind::Pi => elyra::find_pi(),
+        ProviderKind::CustomAcp => None,
+        other => acp::find_executable(other),
+    }
+}
+
+/// `<cli> --version`, first line.
+pub fn cli_version(executable: &std::path::Path) -> Option<String> {
+    let output = std::process::Command::new(executable)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    Some(text.lines().next().unwrap_or("").trim().to_string()).filter(|v| !v.is_empty())
 }
 
 /// A live provider process for one thread. Dropping it terminates the process.
@@ -90,29 +154,59 @@ pub fn start_session(
             let (session, events) = elyra::ElyraSession::start(config)?;
             Ok((Box::new(session), events))
         }
+        ProviderKind::Pi => {
+            let (session, events) = elyra::ElyraSession::start_pi(config)?;
+            Ok((Box::new(session), events))
+        }
+        ProviderKind::Gemini
+        | ProviderKind::Cursor
+        | ProviderKind::OpenCode
+        | ProviderKind::CustomAcp => {
+            let (session, events) = acp::AcpSession::start(kind, config)?;
+            Ok((Box::new(session), events))
+        }
     }
 }
 
 /// Whether the provider's CLI is installed.
 pub fn is_installed(kind: ProviderKind) -> bool {
-    match kind {
-        ProviderKind::Claude => claude::find_executable().is_some(),
-        ProviderKind::Elyra => elyra::find_executable().is_some(),
-    }
+    find_executable(kind).is_some()
 }
 
 /// One-shot text generation with the provider's CLI in print mode (titles,
-/// commit messages). Blocking; run it on a background thread.
+/// commit messages). Blocking; run it on a background thread. Providers
+/// without a print mode fall back to Claude Code, then Elyra.
 pub fn generate_text(kind: ProviderKind, cwd: &std::path::Path, prompt: &str) -> Result<String> {
-    let (executable, args): (PathBuf, Vec<&str>) = match kind {
-        ProviderKind::Claude => (
-            claude::find_executable().ok_or_else(|| anyhow::anyhow!("`claude` not found"))?,
-            vec!["-p", "--output-format", "text", "--model", "haiku", prompt],
-        ),
-        ProviderKind::Elyra => (
-            elyra::find_executable().ok_or_else(|| anyhow::anyhow!("`elyra` not found"))?,
-            vec!["-p", "--no-session", "--no-tools", prompt],
-        ),
+    let mut errors = Vec::new();
+    for kind in [kind, ProviderKind::Claude, ProviderKind::Elyra] {
+        match generate_with(kind, cwd, prompt) {
+            Ok(Some(text)) => return Ok(text),
+            Ok(None) => {}
+            Err(err) => errors.push(format!("{}: {err:#}", kind.label())),
+        }
+    }
+    match errors.into_iter().next() {
+        Some(error) => Err(anyhow::anyhow!(error)),
+        None => Err(anyhow::anyhow!("no installed agent can generate text")),
+    }
+}
+
+/// `Ok(None)` when the provider is missing or has no print mode.
+fn generate_with(
+    kind: ProviderKind,
+    cwd: &std::path::Path,
+    prompt: &str,
+) -> Result<Option<String>> {
+    let Some(executable) = find_executable(kind) else {
+        return Ok(None);
+    };
+    let args: Vec<&str> = match kind {
+        ProviderKind::Claude => vec!["-p", "--output-format", "text", "--model", "haiku", prompt],
+        ProviderKind::Elyra | ProviderKind::Pi => vec!["-p", "--no-session", "--no-tools", prompt],
+        ProviderKind::Gemini => vec!["-p", prompt],
+        ProviderKind::Cursor => vec!["-p", "--output-format", "text", prompt],
+        ProviderKind::OpenCode => vec!["run", prompt],
+        ProviderKind::CustomAcp => return Ok(None),
     };
     let output = std::process::Command::new(executable)
         .args(args)
@@ -124,7 +218,9 @@ pub fn generate_text(kind: ProviderKind, cwd: &std::path::Path, prompt: &str) ->
         "generation failed: {}",
         String::from_utf8_lossy(&output.stderr).trim()
     );
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
 }
 
 /// Clean a generated title: first line, no quotes or trailing period.
