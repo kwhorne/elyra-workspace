@@ -1,0 +1,31 @@
+[package]
+name = "elyra-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Elyra Workspace — a focused desktop workspace for coding agents"
+
+[[bin]]
+name = "elyra"
+path = "src/main.rs"
+
+[dependencies]
+elyra-core.workspace = true
+elyra-provider.workspace = true
+elyra-git.workspace = true
+elyra-terminal.workspace = true
+gpui-kit.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+log.workspace = true
+env_logger.workspace = true
+async-channel.workspace = true
+base64.workspace = true
+ignore.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSString"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSDockTile"] }

@@ -1,0 +1,15 @@
+[package]
+name = "elyra-provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+elyra-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+async-channel.workspace = true
+which.workspace = true
+dirs.workspace = true

@@ -1,0 +1,11 @@
+[package]
+name = "elyra-terminal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+async-channel.workspace = true
+alacritty_terminal.workspace = true

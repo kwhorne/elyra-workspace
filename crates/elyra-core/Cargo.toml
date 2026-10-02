@@ -1,0 +1,15 @@
+[package]
+name = "elyra-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+dirs.workspace = true
+log.workspace = true

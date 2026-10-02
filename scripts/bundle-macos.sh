@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Build "Elyra Workspace.app" (release) with the app icon and bundle metadata.
+#   scripts/bundle-macos.sh            -> target/release/bundle/Elyra Workspace.app
+# Signs ad hoc unless CODESIGN_IDENTITY is set (e.g. "Developer ID Application: ...").
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+NAME="Elyra Workspace"
+BUNDLE_ID="com.gets.elyra-workspace"
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
+APP="$ROOT/target/release/bundle/$NAME.app"
+
+cargo build --release --manifest-path "$ROOT/Cargo.toml" -p elyra-app
+
+rm -rf "$APP"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp "$ROOT/target/release/elyra" "$APP/Contents/MacOS/elyra"
+cp "$ROOT/assets/icon/icon.icns" "$APP/Contents/Resources/AppIcon.icns"
+
+cat > "$APP/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>$NAME</string>
+  <key>CFBundleDisplayName</key><string>$NAME</string>
+  <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
+  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleExecutable</key><string>elyra</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+  <key>NSHumanReadableCopyright</key><string>© $(date +%Y) Knut W. Horne</string>
+</dict>
+</plist>
+PLIST
+
+codesign --force --deep --sign "${CODESIGN_IDENTITY:--}" "$APP"
+echo "Built $APP"

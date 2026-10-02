@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/elyra-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["kwhorne <kh@gets.no>"]
+
+[workspace.dependencies]
+elyra-core = { path = "crates/elyra-core" }
+elyra-provider = { path = "crates/elyra-provider" }
+elyra-git = { path = "crates/elyra-git" }
+elyra-terminal = { path = "crates/elyra-terminal" }
+
+gpui-kit = "0.7.0"
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+dirs = "6"
+log = "0.4"
+env_logger = "0.11"
+smol = "2"
+async-channel = "2"
+which = "7"
+portable-pty = "0.9"
+alacritty_terminal = "0.26"
+base64 = "0.22"
+ignore = "0.4"
+
+[profile.dev]
+debug = "limited"
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

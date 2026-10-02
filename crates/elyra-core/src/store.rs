@@ -1,0 +1,550 @@
+use crate::model::*;
+use anyhow::{Context as _, Result};
+use chrono::{DateTime, Utc};
+use rusqlite::{Connection, OptionalExtension, Row, params};
+use std::path::{Path, PathBuf};
+use uuid::Uuid;
+
+/// Ordered, append-only schema migrations. Never edit a released entry;
+/// add a new one instead.
+const MIGRATIONS: &[&str] = &[
+    r#"
+    CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE threads (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT,
+        permission_mode TEXT NOT NULL,
+        provider_session_id TEXT,
+        environment TEXT NOT NULL,
+        status TEXT NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX threads_project ON threads(project_id, updated_at DESC);
+    CREATE TABLE transcript_items (
+        id TEXT PRIMARY KEY,
+        thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(thread_id, seq)
+    );
+    CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+"#,
+    r#"
+    ALTER TABLE threads ADD COLUMN effort TEXT;
+"#,
+    r#"
+    ALTER TABLE threads ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE threads ADD COLUMN done INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE threads ADD COLUMN read_at TEXT;
+    ALTER TABLE threads ADD COLUMN last_activity_at TEXT;
+    ALTER TABLE projects ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE projects ADD COLUMN icon TEXT;
+    ALTER TABLE projects ADD COLUMN color TEXT;
+"#,
+];
+
+const PROJECT_COLUMNS: &str = "id, name, path, created_at, pinned, icon, color";
+const THREAD_COLUMNS: &str = "id, project_id, title, provider, model, permission_mode,
+    provider_session_id, environment, status, archived, created_at, updated_at, effort,
+    pinned, done, read_at, last_activity_at";
+
+pub struct Store {
+    conn: Connection,
+}
+
+impl Store {
+    pub fn open(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
+        Self::from_connection(conn)
+    }
+
+    pub fn open_in_memory() -> Result<Self> {
+        Self::from_connection(Connection::open_in_memory()?)
+    }
+
+    fn from_connection(conn: Connection) -> Result<Self> {
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "foreign_keys", "ON")?;
+        let mut store = Self { conn };
+        store.migrate()?;
+        Ok(store)
+    }
+
+    fn migrate(&mut self) -> Result<()> {
+        let version: i64 = self
+            .conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        for (index, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(sql)
+                .with_context(|| format!("migration {}", index + 1))?;
+            tx.pragma_update(None, "user_version", (index + 1) as i64)?;
+            tx.commit()?;
+        }
+        Ok(())
+    }
+
+    // ---- projects -------------------------------------------------------
+
+    pub fn add_project(&self, path: &Path) -> Result<Project> {
+        let path = path
+            .canonicalize()
+            .with_context(|| format!("resolving {}", path.display()))?;
+        if let Some(existing) = self.project_by_path(&path)? {
+            return Ok(existing);
+        }
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let project = Project {
+            id: new_id(),
+            name,
+            path,
+            created_at: Utc::now(),
+            pinned: false,
+            icon: None,
+            color: None,
+        };
+        self.conn.execute(
+            "INSERT INTO projects (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                project.id.to_string(),
+                project.name,
+                project.path.to_string_lossy(),
+                project.created_at.to_rfc3339()
+            ],
+        )?;
+        Ok(project)
+    }
+
+    fn project_by_path(&self, path: &Path) -> Result<Option<Project>> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!("SELECT {PROJECT_COLUMNS} FROM projects WHERE path = ?1"),
+                params![path.to_string_lossy()],
+                project_from_row,
+            )
+            .optional()?)
+    }
+
+    pub fn projects(&self) -> Result<Vec<Project>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {PROJECT_COLUMNS} FROM projects ORDER BY name COLLATE NOCASE"
+        ))?;
+        let rows = stmt.query_map([], project_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Point a project at another folder, keeping its threads and history.
+    pub fn relocate_project(&self, id: ProjectId, path: &Path) -> Result<Project> {
+        let path = path
+            .canonicalize()
+            .with_context(|| format!("resolving {}", path.display()))?;
+        if let Some(existing) = self.project_by_path(&path)?
+            && existing.id != id
+        {
+            anyhow::bail!(
+                "{} is already the project \"{}\"",
+                path.display(),
+                existing.name
+            );
+        }
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let updated = self.conn.execute(
+            "UPDATE projects SET path = ?2, name = ?3 WHERE id = ?1",
+            params![id.to_string(), path.to_string_lossy(), name],
+        )?;
+        anyhow::ensure!(updated == 1, "project {id} not found");
+        Ok(self
+            .project_by_path(&path)?
+            .expect("project was just updated"))
+    }
+
+    /// Persist name, pinning and appearance.
+    pub fn update_project(&self, project: &Project) -> Result<()> {
+        self.conn.execute(
+            "UPDATE projects SET name = ?2, pinned = ?3, icon = ?4, color = ?5 WHERE id = ?1",
+            params![
+                project.id.to_string(),
+                project.name,
+                project.pinned,
+                project.icon,
+                project.color
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_project(&self, id: ProjectId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM projects WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    // ---- threads --------------------------------------------------------
+
+    pub fn create_thread(
+        &self,
+        project_id: ProjectId,
+        provider: ProviderKind,
+        model: Option<String>,
+        permission_mode: PermissionMode,
+        environment: Environment,
+    ) -> Result<Thread> {
+        let now = Utc::now();
+        let thread = Thread {
+            id: new_id(),
+            project_id,
+            title: "New thread".into(),
+            provider,
+            model,
+            effort: None,
+            permission_mode,
+            provider_session_id: None,
+            environment,
+            status: ThreadStatus::Idle,
+            archived: false,
+            pinned: false,
+            done: false,
+            read_at: None,
+            last_activity_at: None,
+            created_at: now,
+            updated_at: now,
+        };
+        self.conn.execute(
+            "INSERT INTO threads (id, project_id, title, provider, model, permission_mode,
+                provider_session_id, environment, status, archived, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                thread.id.to_string(),
+                thread.project_id.to_string(),
+                thread.title,
+                thread.provider.as_str(),
+                thread.model,
+                thread.permission_mode.as_str(),
+                thread.provider_session_id,
+                serde_json::to_string(&thread.environment)?,
+                thread.status.as_str(),
+                thread.archived,
+                thread.created_at.to_rfc3339(),
+                thread.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(thread)
+    }
+
+    pub fn update_thread(&self, thread: &Thread) -> Result<()> {
+        self.conn.execute(
+            "UPDATE threads SET title = ?2, model = ?3, permission_mode = ?4,
+                provider_session_id = ?5, environment = ?6, status = ?7, archived = ?8,
+                updated_at = ?9, effort = ?10, provider = ?11, pinned = ?12, done = ?13,
+                read_at = ?14, last_activity_at = ?15
+             WHERE id = ?1",
+            params![
+                thread.id.to_string(),
+                thread.title,
+                thread.model,
+                thread.permission_mode.as_str(),
+                thread.provider_session_id,
+                serde_json::to_string(&thread.environment)?,
+                thread.status.as_str(),
+                thread.archived,
+                thread.updated_at.to_rfc3339(),
+                thread.effort,
+                thread.provider.as_str(),
+                thread.pinned,
+                thread.done,
+                thread.read_at.map(|t| t.to_rfc3339()),
+                thread.last_activity_at.map(|t| t.to_rfc3339()),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn threads(&self, include_archived: bool) -> Result<Vec<Thread>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {THREAD_COLUMNS} FROM threads WHERE archived = 0 OR ?1
+                 ORDER BY updated_at DESC"
+        ))?;
+        let rows = stmt.query_map(params![include_archived], thread_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn archived_threads(&self) -> Result<Vec<Thread>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {THREAD_COLUMNS} FROM threads WHERE archived = 1 ORDER BY updated_at DESC"
+        ))?;
+        let rows = stmt.query_map([], thread_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn delete_thread(&self, id: ThreadId) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM threads WHERE id = ?1", params![id.to_string()])?;
+        Ok(())
+    }
+
+    // ---- transcript -----------------------------------------------------
+
+    pub fn append_item(&self, thread_id: ThreadId, content: ItemContent) -> Result<TranscriptItem> {
+        let seq: i64 = self.conn.query_row(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM transcript_items WHERE thread_id = ?1",
+            params![thread_id.to_string()],
+            |row| row.get(0),
+        )?;
+        let item = TranscriptItem {
+            id: new_id(),
+            thread_id,
+            seq,
+            content,
+            created_at: Utc::now(),
+        };
+        self.conn.execute(
+            "INSERT INTO transcript_items (id, thread_id, seq, content, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                item.id.to_string(),
+                thread_id.to_string(),
+                item.seq,
+                serde_json::to_string(&item.content)?,
+                item.created_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(item)
+    }
+
+    pub fn update_item(&self, item: &TranscriptItem) -> Result<()> {
+        self.conn.execute(
+            "UPDATE transcript_items SET content = ?2 WHERE id = ?1",
+            params![item.id.to_string(), serde_json::to_string(&item.content)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn transcript(&self, thread_id: ThreadId) -> Result<Vec<TranscriptItem>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, thread_id, seq, content, created_at FROM transcript_items
+             WHERE thread_id = ?1 ORDER BY seq",
+        )?;
+        let rows = stmt.query_map(params![thread_id.to_string()], |row| {
+            let content: String = row.get(3)?;
+            Ok(TranscriptItem {
+                id: parse_uuid(row, 0)?,
+                thread_id: parse_uuid(row, 1)?,
+                seq: row.get(2)?,
+                content: serde_json::from_str(&content).unwrap_or(ItemContent::Notice {
+                    text: "Unreadable transcript entry".into(),
+                    is_error: true,
+                }),
+                created_at: parse_time(row, 4)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    // ---- settings -------------------------------------------------------
+
+    pub fn setting(&self, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+}
+
+fn parse_uuid(row: &Row, index: usize) -> rusqlite::Result<Uuid> {
+    let text: String = row.get(index)?;
+    Uuid::parse_str(&text).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(err))
+    })
+}
+
+fn parse_time(row: &Row, index: usize) -> rusqlite::Result<DateTime<Utc>> {
+    let text: String = row.get(index)?;
+    DateTime::parse_from_rfc3339(&text)
+        .map(|time| time.with_timezone(&Utc))
+        .map_err(|err| {
+            rusqlite::Error::FromSqlConversionFailure(
+                index,
+                rusqlite::types::Type::Text,
+                Box::new(err),
+            )
+        })
+}
+
+fn parse_optional_time(row: &Row, index: usize) -> rusqlite::Result<Option<DateTime<Utc>>> {
+    let text: Option<String> = row.get(index)?;
+    Ok(text
+        .and_then(|text| DateTime::parse_from_rfc3339(&text).ok())
+        .map(|time| time.with_timezone(&Utc)))
+}
+
+fn project_from_row(row: &Row) -> rusqlite::Result<Project> {
+    let path: String = row.get(2)?;
+    Ok(Project {
+        id: parse_uuid(row, 0)?,
+        name: row.get(1)?,
+        path: PathBuf::from(path),
+        created_at: parse_time(row, 3)?,
+        pinned: row.get(4)?,
+        icon: row.get(5)?,
+        color: row.get(6)?,
+    })
+}
+
+fn thread_from_row(row: &Row) -> rusqlite::Result<Thread> {
+    let provider: String = row.get(3)?;
+    let permission_mode: String = row.get(5)?;
+    let environment: String = row.get(7)?;
+    let status: String = row.get(8)?;
+    Ok(Thread {
+        id: parse_uuid(row, 0)?,
+        project_id: parse_uuid(row, 1)?,
+        title: row.get(2)?,
+        provider: ProviderKind::parse(&provider).unwrap_or(ProviderKind::Claude),
+        model: row.get(4)?,
+        effort: row.get(12)?,
+        permission_mode: PermissionMode::parse(&permission_mode),
+        provider_session_id: row.get(6)?,
+        environment: serde_json::from_str(&environment).unwrap_or(Environment::Local),
+        status: ThreadStatus::parse(&status),
+        archived: row.get(9)?,
+        pinned: row.get(13)?,
+        done: row.get(14)?,
+        read_at: parse_optional_time(row, 15)?,
+        last_activity_at: parse_optional_time(row, 16)?,
+        created_at: parse_time(row, 10)?,
+        updated_at: parse_time(row, 11)?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_thread_and_transcript_roundtrip() {
+        let store = Store::open_in_memory().unwrap();
+        let dir = std::env::temp_dir();
+        let project = store.add_project(&dir).unwrap();
+        assert_eq!(
+            store.add_project(&dir).unwrap().id,
+            project.id,
+            "path is unique"
+        );
+
+        let mut thread = store
+            .create_thread(
+                project.id,
+                ProviderKind::Claude,
+                None,
+                PermissionMode::Ask,
+                Environment::Local,
+            )
+            .unwrap();
+        thread.title = "Fix bug".into();
+        thread.effort = Some("high".into());
+        thread.pinned = true;
+        thread.last_activity_at = Some(Utc::now());
+        assert!(thread.is_unread());
+        thread.read_at = Some(Utc::now());
+        assert!(!thread.is_unread());
+        thread.provider = ProviderKind::Elyra;
+        thread.provider_session_id = Some("abc".into());
+        store.update_thread(&thread).unwrap();
+        let loaded = store.threads(false).unwrap();
+        assert_eq!(loaded, vec![thread.clone()]);
+
+        store
+            .append_item(thread.id, ItemContent::User { text: "hi".into() })
+            .unwrap();
+        let mut second = store
+            .append_item(
+                thread.id,
+                ItemContent::Assistant {
+                    text: "he".into(),
+                    parent_tool_use_id: None,
+                },
+            )
+            .unwrap();
+        second.content = ItemContent::Assistant {
+            text: "hello".into(),
+            parent_tool_use_id: None,
+        };
+        store.update_item(&second).unwrap();
+        let transcript = store.transcript(thread.id).unwrap();
+        assert_eq!(transcript.len(), 2);
+        assert_eq!(transcript[1], second);
+
+        let other = std::env::temp_dir().join(format!("elyra-relocate-{}", std::process::id()));
+        std::fs::create_dir_all(&other).unwrap();
+        let moved = store.relocate_project(project.id, &other).unwrap();
+        assert_eq!(moved.id, project.id);
+        assert_eq!(moved.path, other.canonicalize().unwrap());
+        assert_eq!(
+            store.threads(false).unwrap().len(),
+            1,
+            "threads stay with the project"
+        );
+        let second = store.add_project(&dir).unwrap();
+        assert!(
+            store.relocate_project(second.id, &other).is_err(),
+            "paths stay unique"
+        );
+        std::fs::remove_dir_all(&other).unwrap();
+
+        let mut renamed = store.projects().unwrap()[0].clone();
+        renamed.name = "Renamed".into();
+        renamed.icon = Some("🚀".into());
+        renamed.pinned = true;
+        store.update_project(&renamed).unwrap();
+        assert_eq!(store.projects().unwrap()[0], renamed);
+
+        let mut archived = store.threads(false).unwrap()[0].clone();
+        archived.archived = true;
+        store.update_thread(&archived).unwrap();
+        assert!(store.threads(false).unwrap().is_empty());
+        assert_eq!(store.archived_threads().unwrap().len(), 1);
+
+        store.remove_project(project.id).unwrap();
+        assert!(store.threads(true).unwrap().is_empty(), "threads cascade");
+    }
+}
