@@ -24,6 +24,8 @@ env_logger.workspace = true
 async-channel.workspace = true
 base64.workspace = true
 ignore.workspace = true
+which.workspace = true
+dirs.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -478,15 +478,35 @@ impl Workspace {
 
     pub(crate) fn render_sidebar(&self, cx: &Context<Self>) -> AnyElement {
         let state = self.app.read(cx);
-        let pinned: Vec<&Thread> = state.threads.iter().filter(|t| t.pinned).collect();
-        let mut projects: Vec<&Project> = state.projects.iter().collect();
+        // Side chats live under their parent thread, not in the sidebar.
+        let pinned: Vec<&Thread> = state
+            .threads
+            .iter()
+            .filter(|t| t.pinned && t.parent_id.is_none())
+            .collect();
+        let mut spaces: Vec<String> = state
+            .projects
+            .iter()
+            .filter_map(|p| p.space.clone())
+            .collect();
+        spaces.sort_by_key(|s| s.to_lowercase());
+        spaces.dedup();
+        let space = self
+            .active_space
+            .clone()
+            .filter(|space| spaces.contains(space));
+        let mut projects: Vec<&Project> = state
+            .projects
+            .iter()
+            .filter(|p| space.is_none() || p.space == space)
+            .collect();
         projects.sort_by_key(|p| (!p.pinned, p.name.to_lowercase()));
         let sections: Vec<AnyElement> = projects
             .iter()
             .map(|project| {
                 let threads: Vec<&Thread> = state
                     .project_threads(project.id)
-                    .filter(|t| !t.pinned)
+                    .filter(|t| !t.pinned && t.parent_id.is_none())
                     .collect();
                 self.project_section(project, &threads, cx)
             })
@@ -525,6 +545,17 @@ impl Workspace {
                             .child("PROJECTS"),
                     )
                     .child(
+                        Button::new("code-review")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::GitPullRequest)
+                            .when(self.review_open, |b| b.primary())
+                            .tooltip("Code review (⇧⌘R)")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.toggle_review(window, cx)),
+                            ),
+                    )
+                    .child(
                         Button::new("new-chat")
                             .ghost()
                             .xsmall()
@@ -537,12 +568,55 @@ impl Workspace {
                             .ghost()
                             .xsmall()
                             .icon(IconName::FolderPlus)
-                            .tooltip("Add project (⌘O)")
+                            .tooltip("Add project (⇧⌘O)")
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.add_project(window, cx)),
                             ),
                     ),
             )
+            .when(!spaces.is_empty(), |this| {
+                let chip = |id: SharedString,
+                            label: String,
+                            value: Option<String>,
+                            cx: &Context<Self>| {
+                    let selected = space == value;
+                    div()
+                        .id(id)
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .text_xs()
+                        .cursor_pointer()
+                        .when(selected, |this| {
+                            this.bg(cx.theme().sidebar_accent)
+                                .text_color(cx.theme().sidebar_accent_foreground)
+                        })
+                        .when(!selected, |this| {
+                            this.text_color(cx.theme().muted_foreground)
+                        })
+                        .hover(|this| this.bg(cx.theme().sidebar_accent.opacity(0.6)))
+                        .child(label)
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.set_space(value.clone(), cx)),
+                        )
+                };
+                this.child(
+                    h_flex()
+                        .px_2()
+                        .pb_1()
+                        .gap_0p5()
+                        .flex_wrap()
+                        .child(chip("space-all".into(), "All".into(), None, cx))
+                        .children(spaces.iter().map(|name| {
+                            chip(
+                                SharedString::from(format!("space-{name}")),
+                                name.clone(),
+                                Some(name.clone()),
+                                cx,
+                            )
+                        })),
+                )
+            })
             .child(
                 div()
                     .id("sidebar-scroll")

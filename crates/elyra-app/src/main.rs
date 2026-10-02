@@ -4,11 +4,19 @@ mod app_icon;
 mod app_state;
 mod changes_view;
 mod composer;
+mod context_view;
 mod dialogs;
+mod editors;
+mod files_view;
 mod lifecycle;
 mod onboarding;
+mod palette;
+mod pr_view;
 mod preferences;
+mod review_inbox;
+mod search;
 mod settings_window;
+mod shortcuts;
 mod sidebar;
 mod terminal_view;
 mod themes;
@@ -106,7 +114,14 @@ fn menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action("New Thread", actions::NewThread),
                 MenuItem::action("New Chat", actions::NewChat),
+                MenuItem::action("New Side Chat", actions::NewSideChat),
                 MenuItem::action("Add Project…", actions::AddProject),
+                MenuItem::action("Open in Editor", actions::OpenInEditor),
+                MenuItem::separator(),
+                MenuItem::action("Find File…", actions::FindFile),
+                MenuItem::action("Search in Files…", actions::SearchInFiles),
+                MenuItem::separator(),
+                MenuItem::action("Manage Worktrees…", actions::ManageWorktrees),
                 MenuItem::separator(),
                 MenuItem::action("Close Tab", actions::CloseTab),
             ],
@@ -115,13 +130,31 @@ fn menus() -> Vec<Menu> {
         Menu {
             name: "View".into(),
             items: vec![
+                MenuItem::action("Command Palette…", actions::CommandPalette),
+                MenuItem::separator(),
                 MenuItem::action("Toggle Sidebar", actions::ToggleSidebar),
                 MenuItem::action("Toggle Tools Panel", actions::ToggleRightPanel),
                 MenuItem::action("Terminal", actions::ShowTerminal),
+                MenuItem::action("Full-Width Terminal", actions::ToggleTerminalWorkspace),
                 MenuItem::action("Changes", actions::ShowChanges),
+                MenuItem::action("Files", actions::ShowFiles),
+                MenuItem::action("Context and Notes", actions::ShowContext),
+                MenuItem::action("Code Review", actions::ShowCodeReview),
+                MenuItem::separator(),
+                MenuItem::action("Split Chat", actions::ToggleSplit),
+                MenuItem::action("Back", actions::GoBack),
+                MenuItem::action("Forward", actions::GoForward),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Light/Dark", actions::ToggleTheme),
             ],
+            disabled: false,
+        },
+        Menu {
+            name: "Help".into(),
+            items: vec![MenuItem::action(
+                "Keyboard Shortcuts",
+                actions::ShowShortcuts,
+            )],
             disabled: false,
         },
     ]

@@ -1,7 +1,7 @@
 use crate::app_state::AppState;
 use chrono::Utc;
 use elyra_core::{
-    ApprovalDecision, Environment, ItemContent, PermissionMode, Project, ProviderKind,
+    ApprovalDecision, Environment, ItemContent, ItemId, PermissionMode, Project, ProviderKind,
     QuestionAnswer, Thread, ThreadStatus, TranscriptItem,
 };
 use elyra_provider::{
@@ -49,7 +49,10 @@ pub struct ThreadSession {
     pub draft: String,
     provider: Option<Box<dyn AgentSession>>,
     /// Settings changed that only apply when the provider restarts.
-    needs_restart: bool,
+    pub(crate) needs_restart: bool,
+    /// The next launch forks `provider_session_id` (side chats).
+    pub fork_pending: bool,
+    pub recapping: bool,
     _events: Option<Task<()>>,
 }
 
@@ -99,6 +102,8 @@ impl ThreadSession {
             draft: String::new(),
             provider: None,
             needs_restart: false,
+            fork_pending: false,
+            recapping: false,
             _events: None,
         }
     }
@@ -226,9 +231,11 @@ impl ThreadSession {
         self.append(
             ItemContent::User {
                 text: user_text(&prompt),
+                checkpoint: None,
             },
             cx,
         );
+        let item_id = self.items.last().map(|item| item.id);
         self.running = true;
         self.set_status(ThreadStatus::Running, cx);
 
@@ -237,10 +244,99 @@ impl ThreadSession {
             && self.thread.provider_session_id.is_none();
         if needs_worktree {
             self.stop_provider();
-            self.prepare_worktree_then_send(prompt, cx);
+            self.prepare_worktree_then_send(prompt, item_id, cx);
         } else {
-            self.deliver(prompt, cx);
+            self.checkpoint_then_deliver(prompt, item_id, cx);
         }
+    }
+
+    /// Snapshot the working tree (so the turn can be reviewed and reverted),
+    /// then hand the prompt to the provider.
+    fn checkpoint_then_deliver(
+        &mut self,
+        prompt: Prompt,
+        item_id: Option<elyra_core::ItemId>,
+        cx: &mut Context<Self>,
+    ) {
+        let cwd = self.working_dir();
+        let refname = format!(
+            "refs/elyra/{}/{}",
+            self.thread.id.simple(),
+            self.items.len()
+        );
+        let job = cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&cwd).ok()?;
+            elyra_git::checkpoint::create(&root, &refname, "elyra: before turn")
+                .map_err(|err| log::warn!("checkpoint failed: {err:#}"))
+                .ok()
+        });
+        cx.spawn(async move |this, cx| {
+            let checkpoint = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if let (Some(sha), Some(id)) = (checkpoint, item_id)
+                    && let Some(index) = this.items.iter().position(|item| item.id == id)
+                {
+                    if let ItemContent::User { checkpoint, .. } = &mut this.items[index].content {
+                        *checkpoint = Some(sha);
+                    }
+                    this.persist_item(index, cx);
+                }
+                this.deliver(prompt, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Checkpoints of this thread's turns, oldest first: (label, commit).
+    pub fn turn_checkpoints(&self) -> Vec<(String, String)> {
+        self.items
+            .iter()
+            .filter_map(|item| match &item.content {
+                ItemContent::User {
+                    text,
+                    checkpoint: Some(sha),
+                } => Some((
+                    text.lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(60)
+                        .collect::<String>(),
+                    sha.clone(),
+                )),
+                _ => None,
+            })
+            .enumerate()
+            .map(|(index, (text, sha))| (format!("Turn {} · {text}", index + 1), sha))
+            .collect()
+    }
+
+    /// Put the working tree back to how it was before a message was sent.
+    pub fn restore_checkpoint(&mut self, sha: String, cx: &mut Context<Self>) {
+        if self.running {
+            self.notice("Stop the agent before restoring files.", true, cx);
+            return;
+        }
+        let cwd = self.working_dir();
+        let job = cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&cwd)?;
+            elyra_git::checkpoint::restore(&root, &sha)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(()) => this.notice(
+                        "Files restored to how they were before that message. The conversation is unchanged.",
+                        false,
+                        cx,
+                    ),
+                    Err(err) => this.notice(format!("Could not restore files: {err:#}"), true, cx),
+                }
+                cx.emit(SessionEvent::TurnCompleted);
+            });
+        })
+        .detach();
     }
 
     /// Deliver a queued message into the running turn now.
@@ -261,6 +357,7 @@ impl ThreadSession {
             Ok(()) => self.append(
                 ItemContent::User {
                     text: user_text(&prompt),
+                    checkpoint: None,
                 },
                 cx,
             ),
@@ -278,7 +375,12 @@ impl ThreadSession {
         prompt
     }
 
-    fn prepare_worktree_then_send(&mut self, prompt: Prompt, cx: &mut Context<Self>) {
+    fn prepare_worktree_then_send(
+        &mut self,
+        prompt: Prompt,
+        item_id: Option<elyra_core::ItemId>,
+        cx: &mut Context<Self>,
+    ) {
         let short = self.thread.id.simple().to_string()[..8].to_string();
         let branch = format!("elyra/{short}");
         let dest = elyra_core::paths::worktrees_dir()
@@ -301,7 +403,7 @@ impl ThreadSession {
                     Ok(()) => {
                         this.thread.environment = Environment::Worktree { path: dest, branch };
                         this.save_thread(cx);
-                        this.deliver(prompt, cx);
+                        this.checkpoint_then_deliver(prompt, item_id, cx);
                     }
                     Err(err) => {
                         this.running = false;
@@ -329,6 +431,9 @@ impl ThreadSession {
             permission_mode: self.thread.permission_mode,
             resume_session_id: self.thread.provider_session_id.clone(),
             executable: None,
+            // A side chat's first launch branches from its parent's session.
+            fork: self.fork_pending,
+            append_system_prompt: self.project.instructions.clone(),
         };
         let (session, events) = elyra_provider::start_session(self.thread.provider, config)?;
         self.provider = Some(session);
@@ -644,7 +749,7 @@ impl ThreadSession {
             .items
             .iter()
             .filter_map(|item| match &item.content {
-                ItemContent::User { text } => Some(format!("User: {text}")),
+                ItemContent::User { text, .. } => Some(format!("User: {text}")),
                 ItemContent::Assistant {
                     text,
                     parent_tool_use_id: None,
@@ -682,6 +787,80 @@ impl ThreadSession {
         .detach();
     }
 
+    pub fn toggle_pin(&mut self, id: ItemId, cx: &mut Context<Self>) {
+        let pinned = &mut self.thread.pinned_items;
+        match pinned.iter().position(|item| *item == id) {
+            Some(index) => {
+                pinned.remove(index);
+            }
+            None => pinned.push(id),
+        }
+        self.save_thread(cx);
+        cx.notify();
+    }
+
+    /// Summarise the conversation so far into `thread.recap`.
+    pub fn generate_recap(&mut self, cx: &mut Context<Self>) {
+        let mut excerpt: Vec<String> = self
+            .items
+            .iter()
+            .filter_map(|item| match &item.content {
+                ItemContent::User { text, .. } => Some(format!("User: {text}")),
+                ItemContent::Assistant {
+                    text,
+                    parent_tool_use_id: None,
+                } => Some(format!("Assistant: {text}")),
+                _ => None,
+            })
+            .collect();
+        // Keep the most recent part of long conversations.
+        let mut total = 0;
+        let keep = excerpt
+            .iter()
+            .rev()
+            .take_while(|text| {
+                total += text.len();
+                total < 16_000
+            })
+            .count();
+        let excerpt = excerpt.split_off(excerpt.len() - keep).join("\n\n");
+        if excerpt.is_empty() {
+            return;
+        }
+        self.recapping = true;
+        cx.notify();
+        let prompt = format!(
+            "Summarise this coding conversation for someone picking it up later: the goal, what has been done, decisions made, and what is left. Use at most 8 short bullet points. Reply with the bullets only.\n\n{excerpt}"
+        );
+        let (kind, cwd) = (self.thread.provider, self.working_dir());
+        let job = cx
+            .background_executor()
+            .spawn(async move { elyra_provider::generate_text(kind, &cwd, &prompt) });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.recapping = false;
+                match result {
+                    Ok(text) => {
+                        this.thread.recap = Some(text.trim().to_string());
+                        this.save_thread(cx);
+                    }
+                    Err(err) => this.notice(format!("Could not write a recap: {err:#}"), true, cx),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub fn set_notes(&mut self, notes: String, cx: &mut Context<Self>) {
+        let notes = Some(notes).filter(|n| !n.trim().is_empty());
+        if self.thread.notes != notes {
+            self.thread.notes = notes;
+            self.save_thread(cx);
+        }
+    }
+
     pub fn rename(&mut self, title: String, cx: &mut Context<Self>) {
         let title = title.trim();
         if title.is_empty() {
@@ -697,6 +876,7 @@ impl ThreadSession {
     fn handle_event(&mut self, event: ProviderEvent, cx: &mut Context<Self>) {
         match event {
             ProviderEvent::SessionStarted { session_id, .. } => {
+                self.fork_pending = false;
                 if self.thread.provider_session_id.as_deref() != Some(session_id.as_str()) {
                     self.thread.provider_session_id = Some(session_id);
                     self.save_thread(cx);

@@ -256,12 +256,40 @@ pub fn render(
     rows
 }
 
-fn hover_actions(id: ItemId, text: String, editable: bool, cx: &Context<ThreadView>) -> Div {
+fn hover_actions(
+    id: ItemId,
+    text: String,
+    editable: bool,
+    restore: Option<String>,
+    pinned: bool,
+    cx: &Context<ThreadView>,
+) -> Div {
     let copy = text.clone();
     h_flex()
         .gap_0p5()
-        .invisible()
-        .group_hover("message", |style| style.visible())
+        .when(!pinned, |this| {
+            this.invisible()
+                .group_hover("message", |style| style.visible())
+        })
+        .child(
+            Button::new(SharedString::from(format!("pin-{id}")))
+                .ghost()
+                .xsmall()
+                .icon(if pinned {
+                    IconName::PinOff
+                } else {
+                    IconName::Pin
+                })
+                .tooltip(if pinned {
+                    "Unpin"
+                } else {
+                    "Pin to context (⇧⌘I)"
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.session
+                        .update(cx, |session, cx| session.toggle_pin(id, cx))
+                })),
+        )
         .child(
             Button::new(SharedString::from(format!("copy-{id}")))
                 .ghost()
@@ -284,6 +312,18 @@ fn hover_actions(id: ItemId, text: String, editable: bool, cx: &Context<ThreadVi
                     })),
             )
         })
+        .when_some(restore, |this, sha| {
+            this.child(
+                Button::new(SharedString::from(format!("restore-{id}")))
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::RotateCcwClock)
+                    .tooltip("Restore files to before this message")
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.confirm_restore(sha.clone(), window, cx)
+                    })),
+            )
+        })
 }
 
 fn render_item(
@@ -296,7 +336,7 @@ fn render_item(
 ) -> Option<AnyElement> {
     let id = item.id;
     Some(match &item.content {
-        ItemContent::User { text } => {
+        ItemContent::User { text, checkpoint } => {
             let long = text.lines().count() > COLLAPSE_USER_LINES || text.len() > 2400;
             let open = expanded.contains(&id);
             let shown = if long && !open {
@@ -338,7 +378,14 @@ fn render_item(
                             )
                         }),
                 )
-                .child(hover_actions(id, text.clone(), true, cx))
+                .child(hover_actions(
+                    id,
+                    text.clone(),
+                    true,
+                    checkpoint.clone(),
+                    session.thread.pinned_items.contains(&id),
+                    cx,
+                ))
                 .into_any_element()
         }
         ItemContent::Assistant { text, .. } => v_flex()
@@ -349,7 +396,14 @@ fn render_item(
                 TextView::markdown(SharedString::from(format!("md-{id}")), text.clone())
                     .selectable(true),
             )
-            .child(hover_actions(id, text.clone(), false, cx))
+            .child(hover_actions(
+                id,
+                text.clone(),
+                false,
+                None,
+                session.thread.pinned_items.contains(&id),
+                cx,
+            ))
             .into_any_element(),
         ItemContent::Thinking { text } => {
             let open = expanded.contains(&id);
@@ -1228,7 +1282,7 @@ fn working_row(label: String, cx: &App) -> AnyElement {
 /// Plain text of an item, for find-in-thread.
 pub fn searchable_text(item: &TranscriptItem) -> Option<String> {
     match &item.content {
-        ItemContent::User { text } | ItemContent::Assistant { text, .. } => Some(text.clone()),
+        ItemContent::User { text, .. } | ItemContent::Assistant { text, .. } => Some(text.clone()),
         ItemContent::ToolUse { name, input, .. } => {
             Some(format!("{name} {}", tool_summary(name, input)))
         }

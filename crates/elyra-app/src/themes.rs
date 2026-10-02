@@ -5,6 +5,7 @@ use elyra_terminal::Palette;
 use gpui_kit::App;
 use gpui_kit::component::ThemeRegistry;
 use serde_json::{Map, Value, json};
+use std::sync::Mutex;
 
 pub const DEFAULT_DARK: &str = "Default Dark";
 pub const DEFAULT_LIGHT: &str = "Default Light";
@@ -264,11 +265,63 @@ fn theme_set() -> Value {
     json!({ "name": "Elyra", "author": "Elyra Workspace", "themes": themes })
 }
 
+/// Names and modes (dark?) of themes loaded from the custom themes folder.
+static CUSTOM: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
+
+/// Folder for user themes in gpui-component's theme-set JSON format.
+pub fn custom_dir() -> std::path::PathBuf {
+    elyra_core::paths::data_dir().join("themes")
+}
+
 pub fn register(cx: &mut App) {
     let json = theme_set().to_string();
     if let Err(err) = ThemeRegistry::global_mut(cx).load_themes_from_str(&json) {
         log::error!("registering built-in themes: {err:#}");
     }
+    load_custom(cx);
+}
+
+/// (Re)load `~/.elyra/themes/*.json`.
+pub fn load_custom(cx: &mut App) {
+    let Ok(dir) = std::fs::read_dir(custom_dir()) else {
+        return;
+    };
+    let mut custom = Vec::new();
+    for entry in dir.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|ext| ext != "json") {
+            continue;
+        }
+        let Ok(json) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        match serde_json::from_str::<Value>(&json) {
+            Ok(set) => {
+                for theme in set["themes"].as_array().into_iter().flatten() {
+                    if let Some(name) = theme["name"].as_str() {
+                        custom.push((name.to_string(), theme["mode"].as_str() != Some("light")));
+                    }
+                }
+                if let Err(err) = ThemeRegistry::global_mut(cx).load_themes_from_str(&json) {
+                    log::warn!("theme {}: {err:#}", path.display());
+                }
+            }
+            Err(err) => log::warn!("theme {}: {err}", path.display()),
+        }
+    }
+    custom.sort_by_key(|(name, _)| name.to_lowercase());
+    *CUSTOM.lock().unwrap_or_else(|e| e.into_inner()) = custom;
+}
+
+/// Built-in and custom theme names, in display order.
+pub fn all_names(_cx: &App) -> Vec<String> {
+    let mut names: Vec<String> = names().into_iter().map(String::from).collect();
+    for (name, _) in CUSTOM.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+        if !names.contains(name) {
+            names.push(name.clone());
+        }
+    }
+    names
 }
 
 /// Theme names offered in Settings, in display order.
@@ -279,6 +332,14 @@ pub fn names() -> Vec<&'static str> {
 }
 
 pub fn is_dark(name: &str) -> bool {
+    if let Some((_, dark)) = CUSTOM
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .find(|(custom, _)| custom == name)
+    {
+        return *dark;
+    }
     name != DEFAULT_LIGHT
         && THEMES
             .iter()
@@ -290,7 +351,7 @@ pub fn is_dark(name: &str) -> bool {
 pub fn terminal_palette(name: &str) -> Palette {
     match THEMES.iter().find(|def| def.name == name) {
         Some(def) => def.terminal,
-        None if name == DEFAULT_LIGHT => Palette::light(),
+        None if !is_dark(name) => Palette::light(),
         None => Palette::dark(),
     }
 }

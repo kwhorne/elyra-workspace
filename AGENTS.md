@@ -21,6 +21,12 @@ See README.md for the crate map.
 - Render helpers that need `cx` across several calls should take `&Context<Self>` and
   return `AnyElement` (Rust 2024 `impl Trait` capture rules).
 - Use `ELYRA_HOME=<dir>` for isolated instances; never reuse the user's `~/.elyra`.
+- App shortcuts live in the `SHORTCUTS` table in `actions.rs` (defaults, user
+  overrides from `keybindings.json` and the ⌘/ sheet all read it); add new ones there.
+- `cc` is pinned to 1.2.x in Cargo.lock because `tree-sitter-sequel` requires `~1.2`;
+  `cargo update` may need `-p cc --precise 1.2.67`.
+- Occluded windows started with `ELYRA_NO_ACTIVATE` don't repaint, so screenshots
+  show the first frame only.
 
 ## Verify
 

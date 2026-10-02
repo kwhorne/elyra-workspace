@@ -33,6 +33,16 @@ pub struct Preferences {
     /// Empty means the login shell.
     pub terminal_shell: String,
     pub check_updates: bool,
+    /// External editor name (see `editors::EDITORS`); empty picks the first
+    /// installed one.
+    pub editor: String,
+    /// Switch between `light_theme` and `dark_theme` with macOS appearance.
+    pub follow_system: bool,
+    pub light_theme: String,
+    /// Maximum width of the conversation column in points; 0 is unlimited.
+    pub chat_width: f32,
+    /// "comfortable" or "compact".
+    pub density: String,
 }
 
 impl Default for Preferences {
@@ -54,6 +64,11 @@ impl Default for Preferences {
             terminal_scrollback: 10_000,
             terminal_shell: String::new(),
             check_updates: true,
+            editor: String::new(),
+            follow_system: false,
+            light_theme: themes::DEFAULT_LIGHT.into(),
+            chat_width: 860.,
+            density: "comfortable".into(),
         }
     }
 }
@@ -81,6 +96,21 @@ impl Preferences {
         } else {
             &self.terminal_font_family
         }
+    }
+
+    pub fn editor(&self) -> Option<crate::editors::EditorApp> {
+        let installed = crate::editors::installed();
+        crate::editors::by_name(&self.editor)
+            .filter(|editor| installed.contains(editor))
+            .or_else(|| {
+                installed
+                    .into_iter()
+                    .find(|e| e.app != "Finder" && e.app != "Terminal")
+            })
+    }
+
+    pub fn compact(&self) -> bool {
+        self.density == "compact"
     }
 
     pub fn terminal_options(&self) -> TerminalOptions {
@@ -117,12 +147,17 @@ pub fn init(app: &gpui_kit::Entity<AppState>, cx: &mut App) {
             }
             prefs
         });
-    if !themes::names().contains(&prefs.theme.as_str()) {
+    let known = themes::all_names(cx);
+    if !known.contains(&prefs.theme) {
         prefs.theme = themes::DEFAULT_DARK.into();
+    }
+    if !known.contains(&prefs.light_theme) {
+        prefs.light_theme = themes::DEFAULT_LIGHT.into();
     }
     cx.set_global(PreferencesStore(app.downgrade()));
     cx.set_global(prefs);
     apply(cx);
+    sync_with_system(cx);
 }
 
 /// Change preferences, then persist and apply them.
@@ -130,11 +165,22 @@ pub fn update(cx: &mut App, edit: impl FnOnce(&mut Preferences)) {
     let before = Preferences::global(cx).clone();
     let mut prefs = before.clone();
     edit(&mut prefs);
+    if prefs.follow_system {
+        prefs.theme = if system_is_dark(cx) {
+            prefs.dark_theme.clone()
+        } else {
+            prefs.light_theme.clone()
+        };
+    }
     if prefs == before {
         return;
     }
-    if themes::is_dark(&prefs.theme) {
-        prefs.dark_theme = prefs.theme.clone();
+    if prefs.theme != before.theme {
+        if themes::is_dark(&prefs.theme) {
+            prefs.dark_theme = prefs.theme.clone();
+        } else {
+            prefs.light_theme = prefs.theme.clone();
+        }
     }
     let json = serde_json::to_string(&prefs).unwrap_or_default();
     cx.set_global(prefs);
@@ -171,15 +217,31 @@ pub fn apply(cx: &mut App) {
     });
 }
 
-/// Toggle between light and the most recently used dark theme.
+/// Toggle between the remembered light and dark themes.
 pub fn toggle_light_dark(cx: &mut App) {
     update(cx, |prefs| {
+        prefs.follow_system = false;
         prefs.theme = if themes::is_dark(&prefs.theme) {
-            themes::DEFAULT_LIGHT.into()
+            prefs.light_theme.clone()
         } else {
             prefs.dark_theme.clone()
         };
     });
+}
+
+/// With "follow system appearance" on, pick the light or dark theme that
+/// matches the OS.
+pub fn sync_with_system(cx: &mut App) {
+    if Preferences::global(cx).follow_system {
+        update(cx, |_| {});
+    }
+}
+
+fn system_is_dark(cx: &App) -> bool {
+    matches!(
+        cx.window_appearance(),
+        gpui_kit::WindowAppearance::Dark | gpui_kit::WindowAppearance::VibrantDark
+    )
 }
 
 const MONO_CANDIDATES: &[&str] = &[

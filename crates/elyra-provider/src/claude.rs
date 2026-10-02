@@ -107,6 +107,16 @@ impl ClaudeSession {
         }
         if let Some(session) = config.resume_session_id.as_deref() {
             args.extend(["--resume".into(), session.into()]);
+            if config.fork {
+                args.push("--fork-session".into());
+            }
+        }
+        if let Some(prompt) = config
+            .append_system_prompt
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+        {
+            args.extend(["--append-system-prompt".into(), prompt.into()]);
         }
 
         let pending = Arc::new(Mutex::new(HashMap::new()));

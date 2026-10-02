@@ -70,6 +70,7 @@ pub fn rename_thread(app: Entity<AppState>, id: ThreadId, window: &mut Window, c
 pub struct ProjectForm {
     name: Entity<InputState>,
     icon: Entity<InputState>,
+    space: Entity<InputState>,
     color: Option<String>,
 }
 
@@ -116,6 +117,18 @@ impl Render for ProjectForm {
             .child(
                 v_flex()
                     .gap_1()
+                    .child(div().text_sm().child("Space"))
+                    .child(Input::new(&self.space))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Group projects (e.g. Work, Personal) and filter the sidebar by space."),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap_1()
                     .child(div().text_sm().child("Colour"))
                     .child(h_flex().gap_2().children(swatches)),
             )
@@ -139,6 +152,13 @@ pub fn edit_project(app: Entity<AppState>, id: ProjectId, window: &mut Window, c
             }
             state
         }),
+        space: cx.new(|cx| {
+            let mut state = InputState::new(window, cx).placeholder("No space");
+            if let Some(space) = &project.space {
+                state.set_value(space.clone(), window, cx);
+            }
+            state
+        }),
         color: project.color.clone(),
     });
     window.open_dialog(cx, move |dialog, _, _| {
@@ -158,6 +178,8 @@ pub fn edit_project(app: Entity<AppState>, id: ProjectId, window: &mut Window, c
                     }
                     updated.icon = Some(icon).filter(|i| !i.is_empty());
                     updated.color = form.color.clone();
+                    let space = form.space.read(cx).value().trim().to_string();
+                    updated.space = Some(space).filter(|s| !s.is_empty());
                     app.update(cx, |app, cx| app.update_project(updated, cx));
                     window.close_dialog(cx);
                 }),
@@ -348,6 +370,186 @@ pub fn archived_threads(
         dialog
             .title("Archived threads")
             .w(px(520.))
+            .child(list.clone())
+    });
+}
+
+/// One managed worktree on disk and the thread that uses it, if any.
+struct WorktreeEntry {
+    path: std::path::PathBuf,
+    repo: Option<std::path::PathBuf>,
+    branch: Option<String>,
+    thread: Option<String>,
+}
+
+pub struct WorktreeList {
+    app: Entity<AppState>,
+    entries: Vec<WorktreeEntry>,
+    message: Option<String>,
+}
+
+impl WorktreeList {
+    fn load(&mut self, cx: &mut Context<Self>) {
+        let state = self.app.read(cx);
+        let threads: Vec<_> = state
+            .threads
+            .iter()
+            .cloned()
+            .chain(state.archived_threads())
+            .collect();
+        let root = elyra_core::paths::worktrees_dir();
+        let mut entries = Vec::new();
+        for project_dir in std::fs::read_dir(&root).into_iter().flatten().flatten() {
+            for dir in std::fs::read_dir(project_dir.path())
+                .into_iter()
+                .flatten()
+                .flatten()
+            {
+                let path = dir.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let thread = threads.iter().find(|t| {
+                    matches!(&t.environment, Environment::Worktree { path: p, .. } if *p == path)
+                });
+                let repo = thread
+                    .and_then(|t| state.project(t.project_id))
+                    .map(|p| p.path.clone())
+                    .or_else(|| {
+                        // `<repo>/.git/worktrees/<name>` → `<repo>`
+                        let common = std::process::Command::new("git")
+                            .current_dir(&path)
+                            .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+                            .output()
+                            .ok()?;
+                        let common = std::path::PathBuf::from(
+                            String::from_utf8_lossy(&common.stdout).trim(),
+                        );
+                        common.parent().map(|p| p.to_path_buf())
+                    });
+                entries.push(WorktreeEntry {
+                    branch: elyra_git::current_branch(&path),
+                    thread: thread.map(|t| {
+                        if t.archived {
+                            format!("{} (archived)", t.title)
+                        } else {
+                            t.title.clone()
+                        }
+                    }),
+                    path,
+                    repo,
+                });
+            }
+        }
+        self.entries = entries;
+        cx.notify();
+    }
+}
+
+impl Render for WorktreeList {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = self.entries.iter().enumerate().map(|(index, entry)| {
+            let (reveal, remove_path, repo) =
+                (entry.path.clone(), entry.path.clone(), entry.repo.clone());
+            h_flex()
+                .gap_2()
+                .py_1()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(
+                    Icon::new(IconName::GitBranch)
+                        .xsmall()
+                        .text_color(cx.theme().muted_foreground),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .text_sm()
+                                .child(entry.branch.clone().unwrap_or_else(|| "(detached)".into())),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(entry.thread.clone().unwrap_or_else(|| "No thread".into())),
+                        ),
+                )
+                .child(
+                    Button::new(("reveal-worktree", index))
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::FolderOpen)
+                        .on_click(move |_, _, cx| cx.reveal_path(&reveal)),
+                )
+                .child(
+                    Button::new(("remove-worktree", index))
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Trash)
+                        .tooltip("Remove worktree (its branch is kept)")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let result = match &repo {
+                                Some(repo) => elyra_git::remove_worktree(repo, &remove_path),
+                                None => std::fs::remove_dir_all(&remove_path).map_err(Into::into),
+                            };
+                            this.message = Some(match result {
+                                Ok(()) => format!("Removed {}", remove_path.display()),
+                                Err(err) => format!("{err:#}"),
+                            });
+                            this.load(cx);
+                        })),
+                )
+        });
+        v_flex()
+            .gap_2()
+            .when_some(self.message.clone(), |this, message| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(message),
+                )
+            })
+            .child(
+                v_flex()
+                    .id("worktree-list")
+                    .max_h(px(420.))
+                    .overflow_y_scroll()
+                    .children(rows)
+                    .when(self.entries.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .py_6()
+                                .text_sm()
+                                .text_center()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("No managed worktrees"),
+                        )
+                    }),
+            )
+    }
+}
+
+pub fn worktrees(app: Entity<AppState>, window: &mut Window, cx: &mut App) {
+    let list = cx.new(|cx| {
+        let mut list = WorktreeList {
+            app,
+            entries: Vec::new(),
+            message: None,
+        };
+        list.load(cx);
+        list
+    });
+    window.open_dialog(cx, move |dialog, _, _| {
+        dialog
+            .title("Managed worktrees")
+            .w(px(560.))
             .child(list.clone())
     });
 }

@@ -34,7 +34,18 @@ conversation, and the tools around it — changes, Git and a terminal — in one
   layout restored; first-run welcome; single instance per data directory; crash log;
   update check
 - Local checkout or an isolated managed Git worktree per thread
-- Changes panel: changed files, unified diff, discard, commit, push
+- Git panel: branch switch/create (stash on conflict), fetch/pull/push/publish,
+  staged and unstaged lists with stage/unstage/discard, diffs of the working tree,
+  of a single agent turn or against any branch/commit, split or unified view,
+  wrap, ignore whitespace, next/previous change (⌥↓/⌥↑), blame, line comments
+  sent to the agent, generated commit messages, commit / commit & push (⌃⌘P)
+- Checkpoints: the working tree is snapshotted before every turn (hidden refs,
+  index untouched); restore files to before any message
+- Pull requests (via `gh`): create with generated title/body and draft option,
+  checks, reviews and inline comments, comment, merge/squash/rebase, ready,
+  close/reopen, "ask the agent to address feedback"
+- Code review inbox (⇧⌘R): PRs and issues across all projects' GitHub repos with
+  filters, detail pane and "Send to agent"; managed worktrees dialog
 - Terminal panel per thread (several terminals as tabs) built on alacritty_terminal,
   complete enough for full-screen TUIs (vim, htop, lazygit, Claude Code):
   mouse reporting (X10/normal/UTF-8/SGR, drag and any-motion), alternate screen with
@@ -42,9 +53,26 @@ conversation, and the tools around it — changes, Git and a terminal — in one
   ⌥-drag block; Shift bypasses app mouse mode), copy/paste with bracketed paste,
   focus reporting, cursor shapes and blinking (DECSCUSR), wide/CJK/emoji cells,
   OSC 8 hyperlinks and URLs (⌘-click), OSC 52 copy, window title, IME and dead keys
+- Command palette (⌘K) over threads (titles and message content), projects,
+  commands and themes; file finder (⌘P) and content search (⇧⌘F), .gitignore-aware
+- Files tab (⇧⌘E): explorer and a tree-sitter code editor with autosave, ⌘S,
+  external-change detection (reload / overwrite), Markdown and image preview,
+  "mention in chat"; open the project or file in an external editor (⌘O)
+- Thread navigation: ⌘1–9, ⇧⌘[ / ⇧⌘], ⌃Tab most recent, ⌘[ / ⌘] back/forward;
+  split chat (⌘\\) shows two threads side by side
+- Side chats (⌥⌘S): a branch of the current agent session in the tools panel, to
+  ask without derailing the thread; promote to a thread or discard; unused ones expire
+- Context tab (⇧⌘I): thread notes, pinned messages, AI recap, project instructions
+  (appended to every agent's system prompt) and dev servers running in the project
+- Terminal extras: split (⌘D), scrollback search (⌘F), add selection to chat,
+  full-width terminal (⇧⌘J), confirmation before closing a busy terminal
+- Project spaces to group projects and filter the sidebar
+- Keyboard shortcuts sheet (⌘/); override any shortcut in `~/.elyra/keybindings.json`
 - Settings window (⌘,): themes (Default Dark/Light, Tokyo Night, Palenight, Dracula,
-  Nord — terminal colors follow the theme), interface/code/terminal fonts and sizes,
-  terminal line height, cursor, Option-as-Meta, copy on select, shell, scrollback
+  Nord, plus custom themes from `~/.elyra/themes`; terminal colors follow the theme),
+  follow system light/dark, conversation width and density, external editor,
+  interface/code/terminal fonts and sizes, terminal line height, cursor,
+  Option-as-Meta, copy on select, shell, scrollback
 - Everything persisted in SQLite (`~/.elyra/state.db`)
 
 ## Requirements
@@ -87,8 +115,21 @@ Provider smoke test (real turn, prints neutral events):
 
 | Shortcut | Action              |
 | -------- | ------------------- |
+| ⌘K       | Command palette     |
+| ⌘P       | Find file           |
+| ⇧⌘F      | Search in files     |
 | ⌘N       | New thread          |
-| ⌘O       | Add project         |
+| ⇧⌘O      | Add project         |
+| ⌘O       | Open in external editor |
+| ⌘1–9     | Go to tab           |
+| ⌃Tab     | Most recent thread  |
+| ⌘[ / ⌘]  | Back / forward      |
+| ⌘\       | Split chat          |
+| ⌥⌘S      | New side chat       |
+| ⇧⌘E      | Files               |
+| ⇧⌘I      | Context and notes   |
+| ⇧⌘J      | Full-width terminal |
+| ⌘/       | All shortcuts       |
 | ⌘W       | Close tab           |
 | ⌘B       | Toggle sidebar      |
 | ⌥⌘B      | Toggle tools panel  |
@@ -101,7 +142,8 @@ Provider smoke test (real turn, prints neutral events):
 | ⌥⌘N      | New chat (no project) |
 | ⌘,       | Settings            |
 
-Terminal: ⌘T new terminal, ⇧⌘W close terminal, ⇧⌘[ / ⇧⌘] switch, ⌘C/⌘V copy/paste,
+Terminal: ⌘T new terminal, ⌘D split, ⌘F search scrollback, ⇧⌘W close terminal,
+⇧⌘[ / ⇧⌘] switch, ⌘C/⌘V copy/paste,
 ⌘K clear, ⌘A select all, ⌘←/⌘→ line start/end, ⌘⌫ delete line, ⌥←/⌥→ word,
 ⇧PgUp/⇧PgDn or ⌘↑/⌘↓ scroll, ⌘-click opens links.
 

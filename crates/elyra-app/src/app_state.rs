@@ -24,6 +24,27 @@ impl AppState {
         let store = Store::open(&elyra_core::paths::database_path())?;
         let projects = store.projects()?;
         let mut threads = store.threads(false)?;
+        // Side chats expire: unused ones, and ones whose parent is gone or
+        // that have been idle for a week.
+        let week_ago = Utc::now() - chrono::Duration::days(7);
+        let expired: Vec<ThreadId> = threads
+            .iter()
+            .filter(|t| {
+                t.parent_id.is_some_and(|parent| {
+                    !threads.iter().any(|p| p.id == parent)
+                        || t.updated_at < week_ago
+                        || store
+                            .transcript(t.id)
+                            .map(|items| items.is_empty())
+                            .unwrap_or(false)
+                })
+            })
+            .map(|t| t.id)
+            .collect();
+        for id in &expired {
+            store.delete_thread(*id)?;
+        }
+        threads.retain(|t| !expired.contains(&t.id));
         // No provider process survives a restart. A turn that was running
         // when the app quit can be resumed from the thread.
         for thread in &mut threads {
@@ -156,6 +177,41 @@ impl AppState {
         Ok(thread)
     }
 
+    /// A side chat: a child thread that branches from the parent's agent
+    /// session (same provider, model and working directory) so questions
+    /// can be asked without derailing the main thread.
+    pub fn create_side_chat(
+        &mut self,
+        parent_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) -> Result<Entity<ThreadSession>> {
+        let parent = self
+            .thread(parent_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        let mut thread = self.store.create_thread(
+            parent.project_id,
+            parent.provider,
+            parent.model.clone(),
+            parent.permission_mode,
+            parent.environment.clone(),
+        )?;
+        thread.title = format!("Side chat · {}", parent.title);
+        thread.effort = parent.effort.clone();
+        thread.parent_id = Some(parent_id);
+        thread.provider_session_id = parent.provider_session_id.clone();
+        self.store.update_thread(&thread)?;
+        let fork = thread.provider_session_id.is_some();
+        let id = thread.id;
+        self.threads.insert(0, thread);
+        let session = self
+            .session(id, cx)
+            .ok_or_else(|| anyhow::anyhow!("could not start the side chat"))?;
+        session.update(cx, |session, _| session.fork_pending = fork);
+        cx.notify();
+        Ok(session)
+    }
+
     /// Persist a changed thread and keep the sidebar list most-recent first.
     pub fn save_thread(&mut self, thread: &Thread, cx: &mut Context<Self>) {
         if let Err(err) = self.store.update_thread(thread) {
@@ -248,7 +304,27 @@ impl AppState {
             .or_else(|| self.archived_threads().into_iter().find(|t| t.id == id));
         self.sessions.remove(&id);
         self.store.delete_thread(id)?;
+        if let Some(thread) = &thread
+            && let Some(project) = self.project(thread.project_id)
+        {
+            let dir = thread.working_dir(project);
+            let prefix = format!("refs/elyra/{}", id.simple());
+            if let Ok(root) = elyra_git::repo_root(&dir) {
+                let _ = elyra_git::checkpoint::delete_refs(&root, &prefix);
+            }
+        }
         self.threads.retain(|t| t.id != id);
+        let side_chats: Vec<ThreadId> = self
+            .threads
+            .iter()
+            .filter(|t| t.parent_id == Some(id))
+            .map(|t| t.id)
+            .collect();
+        for side in side_chats {
+            self.sessions.remove(&side);
+            self.store.delete_thread(side)?;
+            self.threads.retain(|t| t.id != side);
+        }
         cx.notify();
         if remove_worktree
             && let Some(thread) = thread
@@ -263,6 +339,17 @@ impl AppState {
     pub fn update_project(&mut self, project: Project, cx: &mut Context<Self>) {
         if let Err(err) = self.store.update_project(&project) {
             log::error!("saving project {}: {err:#}", project.id);
+        }
+        for session in self.sessions.values() {
+            session.update(cx, |session, _| {
+                if session.project.id == project.id {
+                    // The system prompt is fixed when the agent starts.
+                    if session.project.instructions != project.instructions {
+                        session.needs_restart = true;
+                    }
+                    session.project = project.clone();
+                }
+            });
         }
         if let Some(existing) = self.projects.iter_mut().find(|p| p.id == project.id) {
             *existing = project;
@@ -289,6 +376,7 @@ impl AppState {
     pub fn attention_count(&self) -> usize {
         self.threads
             .iter()
+            .filter(|t| t.parent_id.is_none())
             .filter(|t| t.status == ThreadStatus::NeedsApproval || t.is_unread())
             .count()
     }

@@ -22,6 +22,8 @@ fn main() -> anyhow::Result<()> {
             permission_mode: PermissionMode::Ask,
             resume_session_id: None,
             executable: None,
+            fork: false,
+            append_system_prompt: None,
         },
     )?;
     session.send(&Prompt::text(prompt))?;

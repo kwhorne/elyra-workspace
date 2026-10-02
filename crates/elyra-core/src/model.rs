@@ -25,6 +25,12 @@ pub struct Project {
     /// Accent colour as `#rrggbb`.
     #[serde(default)]
     pub color: Option<String>,
+    /// Named group the project belongs to (Spaces).
+    #[serde(default)]
+    pub space: Option<String>,
+    /// Extra instructions given to agents in this project.
+    #[serde(default)]
+    pub instructions: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,6 +183,14 @@ pub struct Thread {
     pub read_at: Option<DateTime<Utc>>,
     /// When the agent last finished a turn or asked for input.
     pub last_activity_at: Option<DateTime<Utc>>,
+    /// Set for side chats: the thread they branched from.
+    pub parent_id: Option<ThreadId>,
+    /// Autosaved scratchpad.
+    pub notes: Option<String>,
+    /// Cached AI summary of the thread.
+    pub recap: Option<String>,
+    /// Transcript items the user pinned.
+    pub pinned_items: Vec<ItemId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -203,6 +217,9 @@ impl Thread {
 pub enum ItemContent {
     User {
         text: String,
+        /// Working-tree snapshot taken before this message was sent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkpoint: Option<String>,
     },
     Assistant {
         text: String,

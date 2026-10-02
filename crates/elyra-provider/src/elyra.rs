@@ -61,7 +61,15 @@ impl ElyraSession {
             args.extend(["--thinking".into(), effort.into()]);
         }
         if let Some(session) = config.resume_session_id.as_deref() {
-            args.extend(["--session".into(), session.into()]);
+            let flag = if config.fork { "--fork" } else { "--session" };
+            args.extend([flag.into(), session.into()]);
+        }
+        if let Some(prompt) = config
+            .append_system_prompt
+            .as_deref()
+            .filter(|p| !p.trim().is_empty())
+        {
+            args.extend(["--append-system-prompt".into(), prompt.into()]);
         }
         let mut parser = RpcParser::default();
         let (process, rx) = JsonlProcess::spawn(

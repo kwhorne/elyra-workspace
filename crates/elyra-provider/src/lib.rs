@@ -24,6 +24,10 @@ pub struct SessionConfig {
     pub resume_session_id: Option<String>,
     /// Override the provider executable.
     pub executable: Option<PathBuf>,
+    /// Start a new session that branches from `resume_session_id`.
+    pub fork: bool,
+    /// Extra instructions appended to the provider's system prompt.
+    pub append_system_prompt: Option<String>,
 }
 
 /// What a provider supports, so the UI only offers what works.

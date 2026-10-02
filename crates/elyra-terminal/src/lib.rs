@@ -13,10 +13,11 @@ pub use palette::{Palette, Rgb};
 use alacritty_terminal::event::{Event as AlacEvent, EventListener, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::search::{Match, RegexSearch};
 use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::tty;
 use alacritty_terminal::vte::ansi::{Color, CursorShape as AlacShape, CursorStyle, NamedColor};
@@ -241,6 +242,9 @@ pub struct Terminal {
     options: Mutex<TerminalOptions>,
     /// Pressed mouse button, for drag reporting.
     pressed: Mutex<Option<MouseButton>>,
+    /// The current scrollback search and its match.
+    search: Mutex<Option<(String, Match)>>,
+    shell_pid: u32,
 }
 
 impl Terminal {
@@ -282,6 +286,7 @@ impl Terminal {
         };
         let window_size = window_size(size, 8, 16);
         let pty = tty::new(&pty_options, window_size, 0)?;
+        let shell_pid = pty.child().id();
 
         let (tx, rx) = async_channel::unbounded();
         let sender_slot = Arc::new(FairMutex::new(None));
@@ -303,6 +308,8 @@ impl Terminal {
                 size: Mutex::new(size),
                 options: Mutex::new(options),
                 pressed: Mutex::new(None),
+                search: Mutex::new(None),
+                shell_pid,
             },
             rx,
         ))
@@ -557,6 +564,91 @@ impl Terminal {
             .filter(|text| !text.is_empty())
     }
 
+    // ---- search -----------------------------------------------------------
+
+    /// Find `query` (plain text, smart case) in the scrollback and select it.
+    /// A new query starts at the newest output; repeating it moves to the
+    /// next older (`older`) or newer match. Returns whether a match was found.
+    pub fn search(&self, query: &str, older: bool) -> bool {
+        let mut state = self.search.lock().unwrap_or_else(|e| e.into_inner());
+        let mut term = self.term.lock();
+        if query.is_empty() {
+            *state = None;
+            term.selection = None;
+            return false;
+        }
+        let Ok(mut regex) = RegexSearch::new(&escape_regex(query)) else {
+            return false;
+        };
+        let previous = state
+            .as_ref()
+            .filter(|(q, _)| q == query)
+            .map(|(_, m)| m.clone());
+        let (origin, direction) = match previous {
+            Some(found) if older => (
+                found.start().sub(&*term, Boundary::None, 1),
+                Direction::Left,
+            ),
+            Some(found) => (found.end().add(&*term, Boundary::None, 1), Direction::Right),
+            None => (
+                Point::new(term.grid().bottommost_line(), term.grid().last_column()),
+                Direction::Left,
+            ),
+        };
+        let side = if direction == Direction::Left {
+            Side::Right
+        } else {
+            Side::Left
+        };
+        let Some(found) = term.search_next(&mut regex, origin, direction, side, None) else {
+            return false;
+        };
+        let mut selection = Selection::new(SelectionType::Simple, *found.start(), Side::Left);
+        selection.update(*found.end(), Side::Right);
+        term.selection = Some(selection);
+        term.scroll_to_point(*found.start());
+        *state = Some((query.to_string(), found));
+        true
+    }
+
+    pub fn end_search(&self) {
+        *self.search.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    // ---- processes ----------------------------------------------------------
+
+    /// Whether the shell is running a command: the terminal's foreground
+    /// process group is not the shell's own.
+    pub fn has_running_process(&self) -> bool {
+        let ps = |args: &[&str]| {
+            std::process::Command::new("ps")
+                .args(args)
+                .output()
+                .ok()
+                .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                .unwrap_or_default()
+        };
+        // On macOS the PTY child is `login`, which runs the shell.
+        let mut pid = self.shell_pid.to_string();
+        if ps(&["-o", "comm=", "-p", &pid]).ends_with("login") {
+            let children = std::process::Command::new("pgrep")
+                .args(["-P", &pid])
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+                .unwrap_or_default();
+            match children.split_whitespace().next() {
+                Some(child) => pid = child.to_string(),
+                None => return false,
+            }
+        }
+        let groups = ps(&["-o", "pgid=,tpgid=", "-p", &pid]);
+        let mut parts = groups.split_whitespace();
+        match (parts.next(), parts.next()) {
+            (Some(pgid), Some(tpgid)) => pgid != tpgid,
+            _ => false,
+        }
+    }
+
     // ---- links ------------------------------------------------------------
 
     /// The OSC 8 hyperlink or plain-text URL under the given position.
@@ -689,6 +781,17 @@ impl Terminal {
             has_selection: selection.is_some(),
         }
     }
+}
+
+fn escape_regex(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if "\\.+*?()|[]{}^$#&-~".contains(ch) {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 impl Drop for Terminal {
@@ -866,6 +969,33 @@ mod tests {
             ..Default::default()
         }));
         terminal.write("printf '\\e[?1003l\\e[?1006l'\r");
+    }
+
+    #[test]
+    fn searches_scrollback_and_detects_running_commands() {
+        let (terminal, _events) =
+            Terminal::spawn(&std::env::temp_dir(), 80, 10, TerminalOptions::default()).unwrap();
+        // Push the first marker into the scrollback.
+        terminal.write("echo needle-one; seq 1 40; echo needle-two\r");
+        wait_for(&terminal, "needle-two");
+        // An uppercase query is case-sensitive.
+        assert!(!terminal.search("NEEDLE-", true));
+        assert!(terminal.search("needle-t", true));
+        assert_eq!(terminal.selection_text().as_deref(), Some("needle-t"));
+        // Older matches: the echoed command line, then the scrolled-off output.
+        assert!(terminal.search("needle-o", true));
+        assert_eq!(terminal.selection_text().as_deref(), Some("needle-o"));
+        assert!(!terminal.search("(x)", true));
+        assert!(!terminal.search("", true));
+
+        assert!(!terminal.has_running_process());
+        terminal.write("sleep 5\r");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !terminal.has_running_process() {
+            assert!(Instant::now() < deadline, "sleep not detected");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        terminal.write("\x03");
     }
 
     #[test]

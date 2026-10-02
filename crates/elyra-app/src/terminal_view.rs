@@ -10,7 +10,10 @@ use elyra_terminal::{
 };
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::{
+    ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, h_resizable, resizable_panel, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::cell::Cell;
@@ -25,11 +28,24 @@ const BLINK_INTERVAL: Duration = Duration::from_millis(530);
 
 gpui_kit::actions!(
     terminal,
-    [NewTerminal, CloseTerminal, NextTerminal, PreviousTerminal]
+    [
+        NewTerminal,
+        CloseTerminal,
+        NextTerminal,
+        PreviousTerminal,
+        FindInTerminal,
+        FindNext,
+        FindPrevious,
+        CloseFind,
+    ]
 );
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("cmd-f", FindInTerminal, Some("TerminalPanel")),
+        KeyBinding::new("cmd-g", FindPrevious, Some("TerminalFind")),
+        KeyBinding::new("cmd-shift-g", FindNext, Some("TerminalFind")),
+        KeyBinding::new("escape", CloseFind, Some("TerminalFind")),
         KeyBinding::new("cmd-t", NewTerminal, Some("TerminalPanel")),
         KeyBinding::new("cmd-shift-w", CloseTerminal, Some("TerminalPanel")),
         KeyBinding::new("cmd-shift-]", NextTerminal, Some("TerminalPanel")),
@@ -177,6 +193,10 @@ impl TerminalView {
 
     pub fn exited(&self) -> bool {
         self.exited
+    }
+
+    pub fn terminal(&self) -> Option<Arc<Terminal>> {
+        self.terminal.clone()
     }
 
     fn handle_event(&mut self, event: TerminalEvent, cx: &mut Context<Self>) {
@@ -802,13 +822,24 @@ fn char_at(snapshot: &Snapshot, line: usize, column: usize) -> Option<char> {
 }
 
 /// The terminals belonging to one thread, shown as tabs.
+pub enum TerminalPanelEvent {
+    /// Text selected in a terminal, to quote in the composer.
+    AddToChat(String),
+}
+
 pub struct TerminalPanel {
     cwd: PathBuf,
     terminals: Vec<Entity<TerminalView>>,
     active: usize,
+    /// Terminal shown to the left of the active one (⌘D).
+    split: Option<Entity<TerminalView>>,
+    find: Option<Entity<InputState>>,
+    find_missed: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<TerminalPanelEvent> for TerminalPanel {}
 
 impl TerminalPanel {
     pub fn new(cwd: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -816,6 +847,9 @@ impl TerminalPanel {
             cwd,
             terminals: Vec::new(),
             active: 0,
+            split: None,
+            find: None,
+            find_missed: false,
             focus: cx.focus_handle(),
             _subscriptions: Vec::new(),
         };
@@ -834,16 +868,59 @@ impl TerminalPanel {
         cx.notify();
     }
 
+    /// Close a terminal, asking first when a command is still running.
+    fn request_close(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let busy = self
+            .terminals
+            .get(index)
+            .and_then(|view| view.read(cx).terminal())
+            .is_some_and(|terminal| terminal.has_running_process());
+        if !busy {
+            self.close(index, window, cx);
+            return;
+        }
+        let panel = cx.weak_entity();
+        let target = self.terminals[index].downgrade();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let (panel, target) = (panel.clone(), target.clone());
+            alert
+                .title("Close terminal?")
+                .description(
+                    "A command is still running in this terminal. Closing it stops the command.",
+                )
+                .confirm()
+                .ok_text("Close")
+                .on_ok(move |_, window, cx| {
+                    let _ = panel.update(cx, |panel, cx| {
+                        if let Some(index) = panel
+                            .terminals
+                            .iter()
+                            .position(|view| view.downgrade() == target)
+                        {
+                            panel.close(index, window, cx);
+                        }
+                    });
+                    true
+                })
+        });
+    }
+
     fn close(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index >= self.terminals.len() {
             return;
         }
-        self.terminals.remove(index);
+        let removed = self.terminals.remove(index);
+        if self.split.as_ref() == Some(&removed) {
+            self.split = None;
+        }
         if self.terminals.is_empty() {
             self.add(window, cx);
             return;
         }
         self.active = self.active.min(self.terminals.len() - 1);
+        if self.split.as_ref() == self.terminals.get(self.active) {
+            self.split = None;
+        }
         self.focus_active(window, cx);
         cx.notify();
     }
@@ -851,6 +928,9 @@ impl TerminalPanel {
     fn select(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         if index < self.terminals.len() {
             self.active = index;
+            if self.split.as_ref() == self.terminals.get(index) {
+                self.split = None;
+            }
             self.focus_active(window, cx);
             cx.notify();
         }
@@ -862,12 +942,99 @@ impl TerminalPanel {
         }
     }
 
+    fn active_terminal(&self, cx: &App) -> Option<Arc<Terminal>> {
+        self.terminals.get(self.active)?.read(cx).terminal()
+    }
+
+    /// Split: keep the current terminal on the left and open a new one.
+    fn on_split(
+        &mut self,
+        _: &crate::actions::SplitTerminal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.split.take().is_some() {
+            cx.notify();
+            return;
+        }
+        let current = self.terminals.get(self.active).cloned();
+        self.add(window, cx);
+        self.split = current;
+    }
+
+    fn add_selection_to_chat(&mut self, cx: &mut Context<Self>) {
+        let text = self
+            .active_terminal(cx)
+            .and_then(|terminal| terminal.selection_text())
+            .or_else(|| {
+                let split = self.split.as_ref()?.read(cx).terminal()?;
+                split.selection_text()
+            });
+        if let Some(text) = text {
+            cx.emit(TerminalPanelEvent::AddToChat(text));
+        }
+    }
+
+    // ---- find -----------------------------------------------------------
+
+    fn on_find(&mut self, _: &FindInTerminal, window: &mut Window, cx: &mut Context<Self>) {
+        let find = match &self.find {
+            Some(find) => find.clone(),
+            None => {
+                let find =
+                    cx.new(|cx| InputState::new(window, cx).placeholder("Find in scrollback"));
+                self._subscriptions
+                    .push(cx.subscribe(&find, |this, _, event: &InputEvent, cx| {
+                        match event {
+                            InputEvent::Change => this.run_find(true, cx),
+                            // ↩ older, ⇧↩ newer.
+                            InputEvent::PressEnter { shift, .. } => this.run_find(!shift, cx),
+                            _ => {}
+                        }
+                    }));
+                self.find = Some(find.clone());
+                find
+            }
+        };
+        find.update(cx, |find, cx| find.focus(window, cx));
+        cx.notify();
+    }
+
+    fn run_find(&mut self, older: bool, cx: &mut Context<Self>) {
+        let Some(find) = &self.find else {
+            return;
+        };
+        let query = find.read(cx).value().to_string();
+        if let Some(terminal) = self.active_terminal(cx) {
+            self.find_missed = !terminal.search(&query, older) && !query.is_empty();
+        }
+        cx.notify();
+    }
+
+    fn on_find_next(&mut self, _: &FindNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.run_find(false, cx);
+    }
+
+    fn on_find_previous(&mut self, _: &FindPrevious, _: &mut Window, cx: &mut Context<Self>) {
+        self.run_find(true, cx);
+    }
+
+    fn on_close_find(&mut self, _: &CloseFind, window: &mut Window, cx: &mut Context<Self>) {
+        self.find = None;
+        self.find_missed = false;
+        if let Some(terminal) = self.active_terminal(cx) {
+            terminal.end_search();
+        }
+        self.focus_active(window, cx);
+        cx.notify();
+    }
+
     fn on_new(&mut self, _: &NewTerminal, window: &mut Window, cx: &mut Context<Self>) {
         self.add(window, cx);
     }
 
     fn on_close(&mut self, _: &CloseTerminal, window: &mut Window, cx: &mut Context<Self>) {
-        self.close(self.active, window, cx);
+        self.request_close(self.active, window, cx);
     }
 
     fn on_next(&mut self, _: &NextTerminal, window: &mut Window, cx: &mut Context<Self>) {
@@ -921,16 +1088,87 @@ impl Render for TerminalPanel {
                         .icon(IconName::X)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             cx.stop_propagation();
-                            this.close(index, window, cx);
+                            this.request_close(index, window, cx);
                         })),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| this.select(index, window, cx)))
         });
         let active = self.terminals.get(self.active).cloned();
+        let split = self
+            .split
+            .clone()
+            .filter(|split| Some(split) != active.as_ref());
+        let body: AnyElement = match (split, active) {
+            (Some(left), Some(right)) => h_resizable("terminal-split")
+                .child(resizable_panel().child(left))
+                .child(
+                    resizable_panel().child(
+                        div()
+                            .size_full()
+                            .border_l_1()
+                            .border_color(cx.theme().border)
+                            .child(right),
+                    ),
+                )
+                .into_any_element(),
+            (_, active) => div().size_full().children(active).into_any_element(),
+        };
+        let find_bar = self.find.clone().map(|find| {
+            h_flex()
+                .key_context("TerminalFind")
+                .on_action(cx.listener(Self::on_find_next))
+                .on_action(cx.listener(Self::on_find_previous))
+                .on_action(cx.listener(Self::on_close_find))
+                .px_2()
+                .py_1()
+                .gap_1()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .flex_1()
+                        .child(Input::new(&find).small().cleanable(true)),
+                )
+                .when(self.find_missed, |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("No matches"),
+                    )
+                })
+                .child(
+                    Button::new("find-older")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::ChevronUp)
+                        .tooltip("Older match (↩)")
+                        .on_click(cx.listener(|this, _, _, cx| this.run_find(true, cx))),
+                )
+                .child(
+                    Button::new("find-newer")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::ChevronDown)
+                        .tooltip("Newer match (⇧↩)")
+                        .on_click(cx.listener(|this, _, _, cx| this.run_find(false, cx))),
+                )
+                .child(
+                    Button::new("find-close")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::X)
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.on_close_find(&CloseFind, window, cx)
+                        })),
+                )
+        });
 
         v_flex()
             .key_context("TerminalPanel")
             .track_focus(&self.focus)
+            .on_action(cx.listener(Self::on_split))
+            .on_action(cx.listener(Self::on_find))
             .on_action(cx.listener(Self::on_new))
             .on_action(cx.listener(Self::on_close))
             .on_action(cx.listener(Self::on_next))
@@ -953,8 +1191,38 @@ impl Render for TerminalPanel {
                             .icon(IconName::Plus)
                             .tooltip("New terminal (⌘T)")
                             .on_click(cx.listener(|this, _, window, cx| this.add(window, cx))),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("terminal-to-chat")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::MessageSquareQuote)
+                            .tooltip("Add selection to chat")
+                            .on_click(cx.listener(|this, _, _, cx| this.add_selection_to_chat(cx))),
+                    )
+                    .child(
+                        Button::new("terminal-find")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Search)
+                            .tooltip("Find in scrollback (⌘F)")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_find(&FindInTerminal, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("terminal-split")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Columns2)
+                            .tooltip("Split terminal (⌘D)")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_split(&crate::actions::SplitTerminal, window, cx)
+                            })),
                     ),
             )
-            .child(div().flex_1().min_h_0().children(active))
+            .children(find_bar)
+            .child(div().flex_1().min_h_0().child(body))
     }
 }

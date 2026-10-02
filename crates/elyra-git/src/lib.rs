@@ -1,15 +1,19 @@
 //! Git operations for Elyra, implemented on top of the `git` CLI so behavior
 //! matches the user's own Git configuration (hooks, signing, credentials).
 
+pub mod checkpoint;
 pub mod diff;
+pub mod github;
+pub mod ops;
 
 use anyhow::{Context as _, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 pub use diff::{DiffHunk, DiffLine, DiffLineKind, FileDiff, parse_unified_diff};
+pub use ops::*;
 
-fn git(cwd: &Path) -> Command {
+pub(crate) fn git(cwd: &Path) -> Command {
     let mut command = Command::new("git");
     command
         .current_dir(cwd)
@@ -18,7 +22,7 @@ fn git(cwd: &Path) -> Command {
     command
 }
 
-fn run(cwd: &Path, args: &[&str]) -> Result<Output> {
+pub(crate) fn run(cwd: &Path, args: &[&str]) -> Result<Output> {
     let output = git(cwd)
         .args(args)
         .output()
@@ -26,7 +30,7 @@ fn run(cwd: &Path, args: &[&str]) -> Result<Output> {
     Ok(output)
 }
 
-fn run_ok(cwd: &Path, args: &[&str]) -> Result<String> {
+pub(crate) fn run_ok(cwd: &Path, args: &[&str]) -> Result<String> {
     let output = run(cwd, args)?;
     if !output.status.success() {
         bail!(
@@ -103,7 +107,7 @@ pub fn status(path: &Path) -> Result<Vec<FileChange>> {
     Ok(parse_status(&output))
 }
 
-fn parse_status(output: &str) -> Vec<FileChange> {
+pub(crate) fn parse_status(output: &str) -> Vec<FileChange> {
     let mut changes = Vec::new();
     let mut entries = output.split('\0').filter(|entry| !entry.is_empty());
     while let Some(entry) = entries.next() {
@@ -263,8 +267,26 @@ pub fn remove_worktree(repo: &Path, dest: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// A fresh repository on branch `main` with a test identity.
+    pub(crate) fn temp_repo(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "elyra-git-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        run_ok(&dir, &["init", "--quiet", "--initial-branch=main"]).unwrap();
+        run_ok(&dir, &["config", "user.email", "test@example.com"]).unwrap();
+        run_ok(&dir, &["config", "user.name", "Test"]).unwrap();
+        run_ok(&dir, &["config", "commit.gpgsign", "false"]).unwrap();
+        dir.canonicalize().unwrap()
+    }
 
     #[test]
     fn parses_porcelain_status() {

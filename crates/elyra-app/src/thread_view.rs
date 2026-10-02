@@ -13,7 +13,9 @@ use gpui_kit::component::input::{
 };
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::{HashMap, HashSet};
@@ -204,7 +206,7 @@ impl ThreadView {
             .iter()
             .rev()
             .filter_map(|item| match &item.content {
-                ItemContent::User { text } => Some(text.clone()),
+                ItemContent::User { text, .. } => Some(text.clone()),
                 _ => None,
             })
             .collect();
@@ -552,6 +554,38 @@ impl ThreadView {
             answers.push(parts.join(", "));
         }
         self.answer(request_id, QuestionAnswer::Answers { answers }, cx);
+    }
+
+    pub fn confirm_restore(&mut self, sha: String, window: &mut Window, cx: &mut Context<Self>) {
+        let session = self.session.clone();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let (session, sha) = (session.clone(), sha.clone());
+            alert
+                .title("Restore files?")
+                .description(
+                    "Files in this thread's folder go back to how they were before this message: \
+                     edits since then are undone and files created since are deleted. \
+                     The conversation and commits are not changed.",
+                )
+                .confirm()
+                .ok_text("Restore files")
+                .on_ok(move |_, _, cx| {
+                    session.update(cx, |s, cx| s.restore_checkpoint(sha.clone(), cx));
+                    true
+                })
+        });
+    }
+
+    /// Add a block of text (e.g. a review comment) to the composer.
+    pub fn append_to_composer(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self.composer.read(cx).value().to_string();
+        let joined = if value.trim().is_empty() {
+            text.to_string()
+        } else {
+            format!("{}\n{text}", value.trim_end())
+        };
+        self.set_composer(&joined, None, window, cx);
+        self.focus_composer(window, cx);
     }
 
     pub fn edit_message(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -1329,13 +1363,16 @@ impl Render for ThreadView {
         let popup = self.render_popup(cx);
         let find = self.render_find(cx);
 
+        let prefs = crate::preferences::Preferences::global(cx);
+        let width = prefs.chat_width;
+        let compact = prefs.compact();
         let row = |child: AnyElement| {
             div()
                 .w_full()
-                .max_w(px(860.))
+                .when(width > 0., |this| this.max_w(px(width)))
                 .mx_auto()
-                .px_6()
-                .py_1p5()
+                .when(compact, |this| this.px_4().py_0p5())
+                .when(!compact, |this| this.px_6().py_1p5())
                 .child(child)
         };
         let mut children: Vec<AnyElement> = vec![div().h(px(12.)).into_any_element()];
@@ -1399,7 +1436,7 @@ impl Render for ThreadView {
                     v_flex()
                         .id("composer-box")
                         .w_full()
-                        .max_w(px(860.))
+                        .when(width > 0., |this| this.max_w(px(width)))
                         .mx_auto()
                         .gap_1()
                         .children(interrupted)

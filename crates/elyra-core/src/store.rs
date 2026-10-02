@@ -55,12 +55,21 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE projects ADD COLUMN icon TEXT;
     ALTER TABLE projects ADD COLUMN color TEXT;
 "#,
+    r#"
+    ALTER TABLE threads ADD COLUMN parent_id TEXT;
+    ALTER TABLE threads ADD COLUMN notes TEXT;
+    ALTER TABLE threads ADD COLUMN recap TEXT;
+    ALTER TABLE threads ADD COLUMN pinned_items TEXT;
+    ALTER TABLE projects ADD COLUMN space TEXT;
+    ALTER TABLE projects ADD COLUMN instructions TEXT;
+"#,
 ];
 
-const PROJECT_COLUMNS: &str = "id, name, path, created_at, pinned, icon, color";
+const PROJECT_COLUMNS: &str =
+    "id, name, path, created_at, pinned, icon, color, space, instructions";
 const THREAD_COLUMNS: &str = "id, project_id, title, provider, model, permission_mode,
     provider_session_id, environment, status, archived, created_at, updated_at, effort,
-    pinned, done, read_at, last_activity_at";
+    pinned, done, read_at, last_activity_at, parent_id, notes, recap, pinned_items";
 
 pub struct Store {
     conn: Connection,
@@ -123,6 +132,8 @@ impl Store {
             pinned: false,
             icon: None,
             color: None,
+            space: None,
+            instructions: None,
         };
         self.conn.execute(
             "INSERT INTO projects (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -186,13 +197,16 @@ impl Store {
     /// Persist name, pinning and appearance.
     pub fn update_project(&self, project: &Project) -> Result<()> {
         self.conn.execute(
-            "UPDATE projects SET name = ?2, pinned = ?3, icon = ?4, color = ?5 WHERE id = ?1",
+            "UPDATE projects SET name = ?2, pinned = ?3, icon = ?4, color = ?5, space = ?6,
+                instructions = ?7 WHERE id = ?1",
             params![
                 project.id.to_string(),
                 project.name,
                 project.pinned,
                 project.icon,
-                project.color
+                project.color,
+                project.space,
+                project.instructions
             ],
         )?;
         Ok(())
@@ -233,6 +247,10 @@ impl Store {
             done: false,
             read_at: None,
             last_activity_at: None,
+            parent_id: None,
+            notes: None,
+            recap: None,
+            pinned_items: Vec::new(),
             created_at: now,
             updated_at: now,
         };
@@ -263,7 +281,8 @@ impl Store {
             "UPDATE threads SET title = ?2, model = ?3, permission_mode = ?4,
                 provider_session_id = ?5, environment = ?6, status = ?7, archived = ?8,
                 updated_at = ?9, effort = ?10, provider = ?11, pinned = ?12, done = ?13,
-                read_at = ?14, last_activity_at = ?15
+                read_at = ?14, last_activity_at = ?15, parent_id = ?16, notes = ?17, recap = ?18,
+                pinned_items = ?19
              WHERE id = ?1",
             params![
                 thread.id.to_string(),
@@ -281,6 +300,10 @@ impl Store {
                 thread.done,
                 thread.read_at.map(|t| t.to_rfc3339()),
                 thread.last_activity_at.map(|t| t.to_rfc3339()),
+                thread.parent_id.map(|id| id.to_string()),
+                thread.notes,
+                thread.recap,
+                serde_json::to_string(&thread.pinned_items)?,
             ],
         )?;
         Ok(())
@@ -301,6 +324,36 @@ impl Store {
         ))?;
         let rows = stmt.query_map([], thread_from_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Threads whose messages contain `query` (case-insensitive), newest first.
+    pub fn search_messages(&self, query: &str, limit: usize) -> Result<Vec<(ThreadId, String)>> {
+        let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
+        let mut stmt = self.conn.prepare(
+            "SELECT thread_id, content FROM transcript_items
+             WHERE content LIKE ?1 ESCAPE '\\'
+               AND (json_extract(content, '$.kind') IN ('user', 'assistant'))
+             ORDER BY created_at DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![pattern, limit as i64], |row| {
+            let content: String = row.get(1)?;
+            Ok((parse_uuid(row, 0)?, content))
+        })?;
+        let mut results = Vec::new();
+        for row in rows {
+            let (thread, content) = row?;
+            let text = serde_json::from_str::<ItemContent>(&content)
+                .ok()
+                .and_then(|c| match c {
+                    ItemContent::User { text, .. } | ItemContent::Assistant { text, .. } => {
+                        Some(text)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            results.push((thread, snippet(&text, query)));
+        }
+        Ok(results)
     }
 
     pub fn delete_thread(&self, id: ThreadId) -> Result<()> {
@@ -410,6 +463,25 @@ fn parse_time(row: &Row, index: usize) -> rusqlite::Result<DateTime<Utc>> {
         })
 }
 
+/// The part of `text` around the first match of `query`.
+fn snippet(text: &str, query: &str) -> String {
+    let lower = text.to_lowercase();
+    let position = lower.find(&query.to_lowercase()).unwrap_or(0);
+    let start = text[..position.min(text.len())]
+        .char_indices()
+        .rev()
+        .nth(40)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    let excerpt: String = text[start..].chars().take(120).collect();
+    let excerpt = excerpt.replace('\n', " ");
+    if start > 0 {
+        format!("…{excerpt}")
+    } else {
+        excerpt
+    }
+}
+
 fn parse_optional_time(row: &Row, index: usize) -> rusqlite::Result<Option<DateTime<Utc>>> {
     let text: Option<String> = row.get(index)?;
     Ok(text
@@ -427,6 +499,8 @@ fn project_from_row(row: &Row) -> rusqlite::Result<Project> {
         pinned: row.get(4)?,
         icon: row.get(5)?,
         color: row.get(6)?,
+        space: row.get(7)?,
+        instructions: row.get(8)?,
     })
 }
 
@@ -451,6 +525,15 @@ fn thread_from_row(row: &Row) -> rusqlite::Result<Thread> {
         done: row.get(14)?,
         read_at: parse_optional_time(row, 15)?,
         last_activity_at: parse_optional_time(row, 16)?,
+        parent_id: row
+            .get::<_, Option<String>>(17)?
+            .and_then(|id| Uuid::parse_str(&id).ok()),
+        notes: row.get(18)?,
+        recap: row.get(19)?,
+        pinned_items: row
+            .get::<_, Option<String>>(20)?
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default(),
         created_at: parse_time(row, 10)?,
         updated_at: parse_time(row, 11)?,
     })
@@ -494,7 +577,13 @@ mod tests {
         assert_eq!(loaded, vec![thread.clone()]);
 
         store
-            .append_item(thread.id, ItemContent::User { text: "hi".into() })
+            .append_item(
+                thread.id,
+                ItemContent::User {
+                    text: "hi".into(),
+                    checkpoint: None,
+                },
+            )
             .unwrap();
         let mut second = store
             .append_item(
@@ -530,6 +619,34 @@ mod tests {
             "paths stay unique"
         );
         std::fs::remove_dir_all(&other).unwrap();
+
+        let hits = store.search_messages("HELLO", 10).unwrap();
+        assert_eq!(hits.len(), 1, "case-insensitive message search");
+        assert_eq!(hits[0].1, "hello");
+        let mut child = store
+            .create_thread(
+                project.id,
+                ProviderKind::Claude,
+                None,
+                PermissionMode::Ask,
+                Environment::Local,
+            )
+            .unwrap();
+        child.parent_id = Some(thread.id);
+        child.notes = Some("remember".into());
+        child.pinned_items = vec![second.id];
+        store.update_thread(&child).unwrap();
+        let loaded = store.threads(false).unwrap();
+        let loaded = loaded.iter().find(|t| t.id == child.id).unwrap();
+        assert_eq!(
+            (
+                loaded.parent_id,
+                loaded.notes.as_deref(),
+                loaded.pinned_items.len()
+            ),
+            (Some(thread.id), Some("remember"), 1)
+        );
+        store.delete_thread(child.id).unwrap();
 
         let mut renamed = store.projects().unwrap()[0].clone();
         renamed.name = "Renamed".into();

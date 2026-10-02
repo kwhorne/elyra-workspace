@@ -3,10 +3,11 @@
 use crate::preferences::{self, Preferences};
 use crate::themes;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
 };
-use gpui_kit::component::{ActiveTheme as _, TitleBar, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, TitleBar, v_flex};
 use gpui_kit::*;
 
 struct SettingsWindow(Option<AnyWindowHandle>);
@@ -88,9 +89,30 @@ impl SettingsView {
     fn pages(cx: &App) -> Vec<SettingPage> {
         let defaults = Preferences::default();
         let theme_choices = options(
-            themes::names()
+            themes::all_names(cx)
                 .into_iter()
                 .map(|n| (n.to_string(), n.to_string())),
+        );
+        let all_themes = themes::all_names(cx);
+        let light_choices = same(
+            all_themes
+                .iter()
+                .filter(|n| !themes::is_dark(n))
+                .cloned()
+                .collect(),
+        );
+        let dark_choices = same(
+            all_themes
+                .iter()
+                .filter(|n| themes::is_dark(n))
+                .cloned()
+                .collect(),
+        );
+        let mut editor_choices = vec![(String::new(), "Automatic".to_string())];
+        editor_choices.extend(
+            crate::editors::installed()
+                .into_iter()
+                .map(|e| (e.name.to_string(), e.name.to_string())),
         );
         let mono_fonts = preferences::mono_fonts(cx);
         let mut ui_fonts = vec![(String::new(), "System".to_string())];
@@ -106,22 +128,92 @@ impl SettingsView {
             .icon(IconName::Palette)
             .resettable(true)
             .group(
-                SettingGroup::new().title("Theme").item(
-                    SettingItem::new(
-                        "Color theme",
-                        dropdown(theme_choices, |p| p.theme.clone(), |p, v| p.theme = v)
+                SettingGroup::new()
+                    .title("Theme")
+                    .item(
+                        SettingItem::new(
+                            "Color theme",
+                            dropdown(theme_choices.clone(), |p| p.theme.clone(), |p, v| {
+                                p.follow_system = false;
+                                p.theme = v
+                            })
                             .default_value(SharedString::from(defaults.theme.clone())),
+                        )
+                        .description("Applies to the whole window, including the terminal.")
+                        .keywords(["tokyo night", "palenight", "dracula", "nord", "dark", "light"]),
                     )
-                    .description("Applies to the whole window, including the terminal.")
-                    .keywords([
-                        "tokyo night",
-                        "palenight",
-                        "dracula",
-                        "nord",
-                        "dark",
-                        "light",
-                    ]),
-                ),
+                    .item(
+                        SettingItem::new(
+                            "Follow system appearance",
+                            switch(|p| p.follow_system, |p, v| p.follow_system = v)
+                                .default_value(defaults.follow_system),
+                        )
+                        .description("Switch between the light and dark theme below with macOS."),
+                    )
+                    .item(SettingItem::new(
+                        "Light theme",
+                        dropdown(light_choices, |p| p.light_theme.clone(), |p, v| {
+                            if !p.follow_system && !themes::is_dark(&p.theme) {
+                                p.theme = v.clone();
+                            }
+                            p.light_theme = v
+                        })
+                        .default_value(SharedString::from(defaults.light_theme.clone())),
+                    ))
+                    .item(SettingItem::new(
+                        "Dark theme",
+                        dropdown(dark_choices, |p| p.dark_theme.clone(), |p, v| {
+                            if !p.follow_system && themes::is_dark(&p.theme) {
+                                p.theme = v.clone();
+                            }
+                            p.dark_theme = v
+                        })
+                        .default_value(SharedString::from(defaults.dark_theme.clone())),
+                    ))
+                    .item(
+                        SettingItem::new(
+                            "Custom themes",
+                            SettingField::render(|_, _, _| {
+                                Button::new("open-themes-folder")
+                                    .small()
+                                    .label("Open folder")
+                                    .on_click(|_, _, cx| {
+                                        let dir = themes::custom_dir();
+                                        let _ = std::fs::create_dir_all(&dir);
+                                        cx.open_with_system(&dir);
+                                    })
+                            }),
+                        )
+                        .description(
+                            "Put gpui-component theme files (*.json) in ~/.elyra/themes. They load at startup.",
+                        ),
+                    ),
+            )
+            .group(
+                SettingGroup::new()
+                    .title("Layout")
+                    .item(
+                        SettingItem::new(
+                            "Conversation width",
+                            number_field(number(0., 2400., 20.), |p| p.chat_width as f64, |p, v| {
+                                p.chat_width = v.max(0.).round() as f32
+                            })
+                            .default_value(defaults.chat_width as f64),
+                        )
+                        .description("Maximum width of messages in points. 0 uses the full width."),
+                    )
+                    .item(SettingItem::new(
+                        "Density",
+                        dropdown(
+                            options([
+                                ("comfortable".to_string(), "Comfortable".to_string()),
+                                ("compact".to_string(), "Compact".to_string()),
+                            ]),
+                            |p| p.density.clone(),
+                            |p, v| p.density = v,
+                        )
+                        .default_value(SharedString::from(defaults.density.clone())),
+                    )),
             )
             .group(
                 SettingGroup::new()
@@ -272,6 +364,21 @@ impl SettingsView {
         let general = SettingPage::new("General")
             .icon(IconName::Settings)
             .resettable(true)
+            .group(
+                SettingGroup::new().title("External editor").item(
+                    SettingItem::new(
+                        "Open projects in",
+                        dropdown(
+                            options(editor_choices),
+                            |p| p.editor.clone(),
+                            |p, v| p.editor = v,
+                        )
+                        .default_value(SharedString::default()),
+                    )
+                    .description("Used by ⌘O and the Open button in the title bar.")
+                    .keywords(["vscode", "cursor", "zed", "editor", "ide"]),
+                ),
+            )
             .group(
                 SettingGroup::new().title("Updates").item(
                     SettingItem::new(

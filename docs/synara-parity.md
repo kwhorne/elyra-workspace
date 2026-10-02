@@ -39,7 +39,9 @@ window with search and reset (themes, fonts, terminal) · About · app icon and 
 | Architecture 1 — provider trait and neutral events | ✅ `AgentSession`, `ProviderEvent`, Claude + **Elyra** adapters |
 | Phase 1 — Conversation essentials | ✅ all 13 items (2026-10-03) |
 | Phase 2 — Threads, attention, app shell | ✅ (2026-10-03) — auto-updater is a release check with download link; installing updates in place needs signed releases |
-| Phase 3 — Git, diff and review | next |
+| Phase 3 — Git, diff and review | ✅ (2026-10-03) |
+| Phase 4 — Navigation, files and layout | ✅ (2026-10-03) — not yet: PDF preview, LSP, in-app shortcut recorder, theme editor, time format; the right dock keeps fixed tabs (Changes, PR, Files, Context, Terminal, Side chat) |
+| Phase 5 — Providers | next (Codex postponed) |
 
 ## Roadmap
 
@@ -79,7 +81,7 @@ window with search and reset (themes, fonts, terminal) · About · app icon and 
 | Onboarding | Provider check (installed / signed in), theme, first project | M |
 | Single instance, crash recovery, auto-updater | Sparkle-style updates from GitHub releases; notarised signing | L |
 
-### Phase 3 — Git, diff and review
+### Phase 3 — Git, diff and review ✅
 
 | Feature | Notes | Effort |
 |---|---|---|
@@ -97,7 +99,7 @@ window with search and reset (themes, fonts, terminal) · About · app icon and 
 | Code review inbox | PRs and issues across projects' GitHub repos; Send to agent / Ask / Open | L |
 | Managed worktrees list | Settings page with cleanup; retention policy | S |
 
-### Phase 4 — Navigation, files and layout
+### Phase 4 — Navigation, files and layout ✅
 
 | Feature | Notes | Effort |
 |---|---|---|
