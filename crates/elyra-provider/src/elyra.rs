@@ -50,6 +50,10 @@ pub fn find_pi() -> Option<PathBuf> {
 /// one process (`.mcp.json` format); versions without it ignore it.
 const MCP_SERVERS_ENV: &str = "ELYRA_MCP_SERVERS";
 
+/// Environment variable carrying the gateway token. The server definition only
+/// refers to it, so Elyra's cached tool list survives the per-session token.
+const MCP_TOKEN_ENV: &str = "ELYRA_MCP_TOKEN";
+
 /// The gateway servers as `ELYRA_MCP_SERVERS` JSON, or `None` without any.
 fn mcp_servers_env(servers: &[crate::McpServer]) -> Option<String> {
     if servers.is_empty() {
@@ -61,7 +65,7 @@ fn mcp_servers_env(servers: &[crate::McpServer]) -> Option<String> {
             let entry = json!({
                 "type": "http",
                 "url": server.url,
-                "headers": { "Authorization": format!("Bearer {}", server.token) },
+                "headers": { "Authorization": format!("Bearer ${{{MCP_TOKEN_ENV}}}") },
                 // Its own tools (`mcp__elyra__…`), not only through mcp_search.
                 "directTools": true,
                 // `wait_for_thread` may block for up to an hour.
@@ -88,6 +92,11 @@ impl ElyraSession {
         let mut config = config;
         if let Some(servers) = mcp_servers_env(&config.mcp_servers) {
             config.env.push((MCP_SERVERS_ENV.into(), servers));
+        }
+        if let Some(server) = config.mcp_servers.first() {
+            config
+                .env
+                .push((MCP_TOKEN_ENV.into(), server.token.clone()));
         }
         Self::start_with(executable, config)
     }
@@ -594,7 +603,11 @@ mod tests {
         let value: Value = serde_json::from_str(&json).unwrap();
         let server = &value["mcpServers"]["elyra"];
         assert_eq!(server["url"], "http://127.0.0.1:1/mcp");
-        assert_eq!(server["headers"]["Authorization"], "Bearer secret");
+        assert_eq!(
+            server["headers"]["Authorization"],
+            "Bearer ${ELYRA_MCP_TOKEN}"
+        );
+        assert!(!json.contains("secret"));
         assert_eq!(server["directTools"], true);
     }
 
