@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **Browser.** Each thread has a web browser in the tools panel (**⇧⌘B**, or
+  click a local server in the Context tab) for looking at the app you're
+  building. See [Browser](docs/browser.md).
+- With the agent gateway on, agents can open their thread's local dev server in
+  it and inspect the page: DOM outline, elements and computed styles, console,
+  network calls and a screenshot. Only pages served from this Mac (localhost,
+  `*.test`, `*.local`) can be opened or read.
+- The browser and its agent tools are adapted from Litr by Wirelabs AS, used
+  under the MIT licence with permission.
+
 ## 0.1.5
 
 - **Help → Elyra Workspace Documentation** (and "Documentation" in the command

@@ -22,9 +22,20 @@ token, and every call is written to an audit log. The address is shown in
 | `interrupt_thread` | Stop a thread's running turn | |
 | `set_thread_title` | Rename a thread | |
 | `archive_thread` | Archive a thread | |
+| `browser_open` | Open a local development page in a thread's [browser](browser.md) | |
+| `browser_snapshot` | The page's structure as an outline of its elements and text | ✓ |
+| `browser_query` | Elements matching a CSS selector, with position, size and computed styles | ✓ |
+| `browser_console` | What the page wrote to the console since it loaded | ✓ |
+| `browser_network` | The page's fetch and XHR calls (status, timing, start of the body) and the files it loaded | ✓ |
+| `browser_screenshot` | A picture of the page (the Browser tab must be on screen) | ✓ |
+| `browser_reload` | Reload the page | |
 
 Projects can be named by id, name or path. A thread can't wait for, interrupt or
 archive itself.
+
+The browser tools work on the caller's own thread; other clients pass
+`thread_id`. They only open and read pages served from this Mac (`localhost`,
+`127.0.0.1`, `*.test`, `*.local` and similar); see [Browser](browser.md).
 
 ## Letting agents manage threads
 

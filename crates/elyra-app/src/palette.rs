@@ -129,6 +129,7 @@ fn commands() -> Vec<Command> {
             IconName::FolderTree,
             actions::ShowFiles
         ),
+        command!("Show browser", "⇧⌘B", IconName::Globe, actions::ShowBrowser),
         command!(
             "Toggle terminal",
             "⌘J",

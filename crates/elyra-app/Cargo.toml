@@ -32,5 +32,50 @@ dirs.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSData", "NSString"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSImage", "NSResponder", "NSDockTile"] }
+block2 = "0.6"
+raw-window-handle = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSData",
+    "NSString",
+    "NSURL",
+    "NSURLRequest",
+    "NSURLResponse",
+    "NSError",
+    "NSGeometry",
+    "NSValue",
+    "NSKeyValueObserving",
+    "NSDictionary",
+] }
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSImage",
+    "NSResponder",
+    "NSDockTile",
+    "NSView",
+    "NSWindow",
+    "NSEvent",
+    "NSWorkspace",
+] }
+objc2-web-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "objc2-app-kit",
+    "objc2-core-foundation",
+    "WKContentWorld",
+    "WKFrameInfo",
+    "WKNavigation",
+    "WKNavigationAction",
+    "WKNavigationDelegate",
+    "WKNavigationResponse",
+    "WKPreferences",
+    "WKSnapshotConfiguration",
+    "WKUIDelegate",
+    "WKUserContentController",
+    "WKUserScript",
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "WKWebpagePreferences",
+    "WKWindowFeatures",
+] }

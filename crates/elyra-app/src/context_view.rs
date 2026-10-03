@@ -103,6 +103,13 @@ pub fn local_servers(root: &Path) -> Vec<Server> {
     servers
 }
 
+pub enum ContextEvent {
+    /// Show a local server in the thread's browser.
+    OpenUrl(String),
+}
+
+impl EventEmitter<ContextEvent> for ContextView {}
+
 pub struct ContextView {
     app: Entity<AppState>,
     session: Entity<ThreadSession>,
@@ -400,7 +407,9 @@ impl Render for ContextView {
                         .text_color(cx.theme().link)
                         .cursor_pointer()
                         .child(url)
-                        .on_click(move |_, _, cx| cx.open_url(&open_url)),
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(ContextEvent::OpenUrl(open_url.clone()))
+                        })),
                 )
                 .child(
                     div()

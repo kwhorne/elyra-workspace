@@ -16,6 +16,7 @@ and the agents run as the command-line tools you already have installed.
 | [Providers](providers.md) | Claude Code, Codex, Elyra, Pi, Gemini CLI, Cursor, OpenCode and other ACP agents; accounts |
 | [Changes, Git and review](git-and-review.md) | Diffs, staging, commits, branches, worktrees, pull requests, the review inbox |
 | [Files and search](files-and-search.md) | Command palette, file finder, content search, the editor, external editors |
+| [Browser](browser.md) | The built-in browser for your dev servers, and letting agents look at pages |
 | [Terminal](terminal.md) | Terminal tabs and splits, search, full-screen programs, copy and paste |
 | [Context, notes and goals](context-and-goals.md) | Notes, pinned messages, recaps, project instructions, dev servers, goals |
 | [Automations and tasks](automations-and-tasks.md) | Scheduled prompts and the task board |
@@ -32,8 +33,8 @@ Building Elyra Workspace yourself, or contributing? See [Development](developmen
 ┌──────────────┬──────────────────────────────┬─────────────────────────┐
 │ Sidebar      │ Thread tabs                  │ Tools panel             │
 │              │                              │ Changes · PR · Files ·  │
-│ Projects     │ Conversation                 │ Context · Terminal ·    │
-│  └ threads   │                              │ Side chat               │
+│ Projects     │ Conversation                 │ Browser · Context ·     │
+│  └ threads   │                              │ Terminal · Side chat    │
 │              │                              │                         │
 │              │ Composer                     │                         │
 └──────────────┴──────────────────────────────┴─────────────────────────┘

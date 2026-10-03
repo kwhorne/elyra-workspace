@@ -53,5 +53,5 @@ Elyra and Pi support this. ACP agents don't take extra instructions.
 
 Development servers running from the thread's folder, for example `npm run dev`
 in the terminal or a server the agent started. Each one is listed with its port
-and process. Click the address to open it in the browser, or press the refresh
-button to look again.
+and process. Click the address to open it in the thread's [browser](browser.md),
+or press the refresh button to look again.

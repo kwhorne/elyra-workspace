@@ -26,15 +26,17 @@ pub(crate) enum RightTab {
     Terminal,
     PullRequest,
     Files,
+    Browser,
     Context,
     SideChat,
 }
 
 impl RightTab {
-    const ALL: [RightTab; 6] = [
+    const ALL: [RightTab; 7] = [
         RightTab::Changes,
         RightTab::PullRequest,
         RightTab::Files,
+        RightTab::Browser,
         RightTab::Context,
         RightTab::Terminal,
         RightTab::SideChat,
@@ -46,6 +48,7 @@ impl RightTab {
             RightTab::Terminal => "terminal",
             RightTab::PullRequest => "pr",
             RightTab::Files => "files",
+            RightTab::Browser => "browser",
             RightTab::Context => "context",
             RightTab::SideChat => "side",
         }
@@ -73,6 +76,7 @@ pub struct Workspace {
     pub(crate) terminal_views: HashMap<ThreadId, Entity<TerminalPanel>>,
     pub(crate) pr_views: HashMap<ThreadId, Entity<crate::pr_view::PrView>>,
     pub(crate) files_views: HashMap<ThreadId, Entity<FilesView>>,
+    pub(crate) browser_views: HashMap<ThreadId, Entity<crate::browser_view::BrowserView>>,
     pub(crate) context_views: HashMap<ThreadId, Entity<crate::context_view::ContextView>>,
     palette: Option<Entity<Palette>>,
     /// Second thread shown beside the active one (⌘\).
@@ -104,6 +108,10 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(app: Entity<AppState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.set_global(crate::browser_tools::BrowserHub {
+            workspace: cx.entity().downgrade(),
+            window: window.window_handle(),
+        });
         let subscriptions = vec![
             cx.observe_in(&app, window, |this, _, window, cx| {
                 this.app_changed(window, cx);
@@ -178,6 +186,7 @@ impl Workspace {
             terminal_views: HashMap::new(),
             pr_views: HashMap::new(),
             files_views: HashMap::new(),
+            browser_views: HashMap::new(),
             context_views: HashMap::new(),
             palette: None,
             split: None,
@@ -250,6 +259,10 @@ impl Workspace {
         };
         if let Some(panel) = panel {
             self.toggle_panel(panel, window, cx);
+        }
+        // Development: open an address in the active thread's browser.
+        if let (Ok(url), Some(id)) = (std::env::var("ELYRA_BROWSER_URL"), self.active) {
+            self.open_in_browser(id, &url, window, cx);
         }
         if crate::onboarding::should_show(&self.app, cx) {
             crate::onboarding::show(cx.weak_entity(), self.app.clone(), window, cx);
@@ -441,6 +454,9 @@ impl Workspace {
                     self.files_views.insert(id, view);
                 }
             }
+            RightTab::Browser => {
+                self.browser_view(id, cwd, window, cx);
+            }
             RightTab::Context => {
                 if !self.context_views.contains_key(&id)
                     && let Some(session) = self.app.read(cx).existing_session(id)
@@ -448,6 +464,14 @@ impl Workspace {
                     let app = self.app.clone();
                     let view = cx
                         .new(|cx| crate::context_view::ContextView::new(app, session, window, cx));
+                    self._subscriptions.push(cx.subscribe_in(
+                        &view,
+                        window,
+                        move |this, _, event: &crate::context_view::ContextEvent, window, cx| {
+                            let crate::context_view::ContextEvent::OpenUrl(url) = event;
+                            this.open_in_browser(id, url, window, cx);
+                        },
+                    ));
                     self.context_views.insert(id, view);
                 } else if let Some(view) = self.context_views.get(&id) {
                     view.update(cx, |view, cx| view.scan_servers(cx));
@@ -522,6 +546,7 @@ impl Workspace {
         };
         self.open_tabs.remove(index);
         self.thread_views.remove(&id);
+        self.browser_views.remove(&id);
         self.recent.retain(|t| *t != id);
         self.back.retain(|t| *t != id);
         self.forward.retain(|t| *t != id);
@@ -1183,6 +1208,64 @@ impl Workspace {
         self.open_in_editor(None, window, cx);
     }
 
+    // ---- browser -----------------------------------------------------------
+
+    /// The thread's browser, created on first use.
+    pub(crate) fn browser_view(
+        &mut self,
+        id: ThreadId,
+        cwd: std::path::PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<crate::browser_view::BrowserView> {
+        if let Some(view) = self.browser_views.get(&id) {
+            view.update(cx, |view, cx| view.set_cwd(cwd, cx));
+            return view.clone();
+        }
+        let view = cx.new(|cx| crate::browser_view::BrowserView::new(cwd, window, cx));
+        self.browser_views.insert(id, view.clone());
+        view
+    }
+
+    /// Open `url` in a thread's browser, and show it when that thread is in
+    /// front.
+    pub(crate) fn open_in_browser(
+        &mut self,
+        id: ThreadId,
+        url: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<crate::browser_view::BrowserView>> {
+        let cwd = {
+            let state = self.app.read(cx);
+            let thread = state.thread(id)?;
+            thread.working_dir(state.project(thread.project_id)?)
+        };
+        let view = self.browser_view(id, cwd, window, cx);
+        if self.active == Some(id) {
+            self.show_right_tab(RightTab::Browser, window, cx);
+        }
+        view.update(cx, |view, cx| view.open(url, window, cx));
+        Some(view)
+    }
+
+    /// Tell every browser whether it's on screen and uncovered.
+    fn sync_browsers(&mut self, panel_open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let covered = self.palette.is_some() || self.about_open;
+        let visible_tab = self.right_open
+            && self.right_tab == RightTab::Browser
+            && !panel_open
+            && !self.terminal_full;
+        for (id, view) in self.browser_views.clone() {
+            let shown = visible_tab && self.active == Some(id);
+            view.update(cx, |view, cx| view.set_shown(shown, covered, window, cx));
+        }
+    }
+
+    fn on_show_browser(&mut self, _: &ShowBrowser, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_right_tab(RightTab::Browser, window, cx);
+    }
+
     // ---- fork, handoff, import -------------------------------------------
 
     pub(crate) fn fork_thread(
@@ -1555,6 +1638,11 @@ impl Workspace {
                 .get(&id)
                 .map(|v| v.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
+            (RightTab::Browser, Some(id)) => self
+                .browser_views
+                .get(&id)
+                .map(|v| v.clone().into_any_element())
+                .unwrap_or_else(|| div().into_any_element()),
             (RightTab::Context, Some(id)) => self
                 .context_views
                 .get(&id)
@@ -1592,6 +1680,7 @@ impl Workspace {
                 RightTab::Changes => ("Changes".into(), IconName::GitCompareArrows),
                 RightTab::PullRequest => (pr_label.clone(), IconName::GitPullRequest),
                 RightTab::Files => ("Files".into(), IconName::FolderOpen),
+                RightTab::Browser => ("Browser".into(), IconName::Globe),
                 RightTab::Context => ("Context".into(), IconName::NotebookPen),
                 RightTab::Terminal => ("Terminal".into(), IconName::SquareTerminal),
                 RightTab::SideChat => ("Side chat".into(), IconName::MessagesSquare),
@@ -1698,6 +1787,7 @@ impl Render for Workspace {
             None => None,
         };
         let panel_open = panel.is_some();
+        self.sync_browsers(panel_open, window, cx);
         let center = match (panel, full_terminal) {
             (Some(panel), _) => panel,
             (None, Some(terminal)) => terminal.into_any_element(),
@@ -1753,6 +1843,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_automations))
             .on_action(cx.listener(Self::on_show_tasks))
             .on_action(cx.listener(Self::on_show_stats))
+            .on_action(cx.listener(Self::on_show_browser))
             .on_action(cx.listener(Self::on_export_thread))
             .on_action(cx.listener(Self::on_fork_thread))
             .on_action(cx.listener(Self::on_toggle_split))

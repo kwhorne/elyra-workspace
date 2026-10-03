@@ -60,6 +60,7 @@ gpui_kit::actions!(
         ShowStats,
         ExportThread,
         OpenDocumentation,
+        ShowBrowser,
     ]
 );
 
@@ -322,6 +323,14 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ShowChanges
     ),
     shortcut!("files", "Panels", "Files", "cmd-shift-e", WS, ShowFiles),
+    shortcut!(
+        "browser",
+        "Panels",
+        "Browser",
+        "cmd-shift-b",
+        WS,
+        ShowBrowser
+    ),
     shortcut!(
         "context",
         "Panels",

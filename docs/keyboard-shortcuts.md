@@ -50,6 +50,7 @@ Press **⌘/** in the app to see all shortcuts, including any you changed.
 | ⌥⌘B | Toggle tools panel |
 | ⇧⌘G | Changes |
 | ⇧⌘E | Files |
+| ⇧⌘B | Browser |
 | ⇧⌘I | Context and notes |
 | ⌘J | Toggle terminal |
 | ⇧⌘J | Full-width terminal |

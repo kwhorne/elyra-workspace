@@ -3,6 +3,8 @@ mod actions;
 mod app_icon;
 mod app_state;
 mod automations;
+mod browser_tools;
+mod browser_view;
 mod changes_view;
 mod composer;
 mod context_view;
@@ -30,6 +32,7 @@ mod thread_view;
 mod transcript;
 mod updater;
 mod updates;
+mod webview;
 mod workspace;
 
 use app_state::AppState;
@@ -165,6 +168,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Full-Width Terminal", actions::ToggleTerminalWorkspace),
                 MenuItem::action("Changes", actions::ShowChanges),
                 MenuItem::action("Files", actions::ShowFiles),
+                MenuItem::action("Browser", actions::ShowBrowser),
                 MenuItem::action("Context and Notes", actions::ShowContext),
                 MenuItem::action("Code Review", actions::ShowCodeReview),
                 MenuItem::action("Task Board", actions::ShowTasks),

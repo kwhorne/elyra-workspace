@@ -38,6 +38,7 @@ For UI changes, also run the app with an isolated data directory and look at it.
 | `ELYRA_HOME=<dir>` | Use `<dir>` instead of `~/.elyra` (isolated instances; never test against your real data) |
 | `ELYRA_NO_ACTIVATE=1` | Open the window in the background without taking focus |
 | `ELYRA_OPEN_PANEL=tasks\|automations\|stats\|review` | Open that panel at launch (screenshots without input) |
+| `ELYRA_BROWSER_URL=<url>` | Open `<url>` in the active thread's browser at launch |
 | `ELYRA_UPDATE_RESTART_WHEN_READY=1` | Restart into a staged update as soon as it is ready (end-to-end update tests) |
 | `RUST_LOG=debug` | More logging |
 

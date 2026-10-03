@@ -10,7 +10,7 @@ use crate::app_state::{AppState, transcript_text};
 use elyra_core::{
     AuditEntry, ClientScope, ItemContent, McpClient, ProviderKind, ThreadId, ThreadStatus,
 };
-use elyra_mcp::{Handler, Principal, Server, Tool};
+use elyra_mcp::{Handler, Output, Principal, Server, Tool};
 use elyra_provider::{McpServer, Prompt};
 use gpui_kit::{App, AsyncApp, Entity, Global};
 use serde_json::{Value, json};
@@ -75,7 +75,7 @@ struct Call {
     caller: Caller,
     tool: String,
     args: Value,
-    reply: async_channel::Sender<Result<String, String>>,
+    reply: async_channel::Sender<Result<Output, String>>,
 }
 
 struct GatewayHandler {
@@ -89,6 +89,10 @@ const READ_TOOLS: &[&str] = &[
     "read_thread",
     "wait_for_thread",
 ];
+
+fn is_read_tool(name: &str) -> bool {
+    READ_TOOLS.contains(&name) || crate::browser_tools::READ_TOOLS.contains(&name)
+}
 
 fn tools() -> Vec<Tool> {
     let tool = |name: &str, description: &str, schema: Value| Tool {
@@ -176,11 +180,12 @@ impl Handler for GatewayHandler {
         let writable = Caller::parse(principal).is_some_and(|c| c.can_write());
         tools()
             .into_iter()
-            .filter(|tool| writable || READ_TOOLS.contains(&tool.name.as_str()))
+            .chain(crate::browser_tools::tools())
+            .filter(|tool| writable || is_read_tool(&tool.name))
             .collect()
     }
 
-    fn call(&self, principal: &Principal, name: &str, args: Value) -> Result<String, String> {
+    fn call(&self, principal: &Principal, name: &str, args: Value) -> Result<Output, String> {
         let caller = Caller::parse(principal).ok_or("unknown caller")?;
         let (reply, result) = async_channel::bounded(1);
         self.calls
@@ -343,12 +348,18 @@ pub fn server_for_thread(thread: ThreadId, cx: &App) -> Option<McpServer> {
 
 async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
     let started = Instant::now();
-    let result = if !call.caller.can_write() && !READ_TOOLS.contains(&call.tool.as_str()) {
+    let result = if !call.caller.can_write() && !is_read_tool(&call.tool) {
         Err("This client has read-only access.".to_string())
     } else if call.tool == "wait_for_thread" {
-        wait_for_thread(&app, &call, cx).await
+        wait_for_thread(&app, &call, cx).await.map(Output::Text)
+    } else if crate::browser_tools::is_browser_tool(&call.tool) {
+        let thread = match call.caller {
+            Caller::Thread(id) => Some(id),
+            Caller::Client { .. } => None,
+        };
+        crate::browser_tools::run(&app, thread, &call.tool, &call.args, cx).await
     } else {
-        cx.update(|cx| run_tool(&app, &call, cx))
+        cx.update(|cx| run_tool(&app, &call, cx)).map(Output::Text)
     };
     let detail = summarize(&call.args);
     cx.update(|cx| {

@@ -24,6 +24,30 @@ pub struct Tool {
     pub input_schema: Value,
 }
 
+/// What a tool returns.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Output {
+    Text(String),
+    /// A picture (base64), with a line of text describing it.
+    Image {
+        base64: String,
+        mime_type: String,
+        caption: String,
+    },
+}
+
+impl From<String> for Output {
+    fn from(text: String) -> Self {
+        Output::Text(text)
+    }
+}
+
+impl From<&str> for Output {
+    fn from(text: &str) -> Self {
+        Output::Text(text.to_string())
+    }
+}
+
 /// Who is calling, as decided by [`Handler::authorize`].
 pub type Principal = String;
 
@@ -33,7 +57,7 @@ pub trait Handler: Send + Sync + 'static {
     fn tools(&self, principal: &Principal) -> Vec<Tool>;
     /// Run a tool. `Ok` text is the result; `Err` text is reported to the
     /// model as a tool error.
-    fn call(&self, principal: &Principal, name: &str, arguments: Value) -> Result<String, String>;
+    fn call(&self, principal: &Principal, name: &str, arguments: Value) -> Result<Output, String>;
 }
 
 pub struct Server {
@@ -226,11 +250,22 @@ pub fn handle(handler: &dyn Handler, principal: &Principal, message: &Value) -> 
             let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
             let known = handler.tools(principal).iter().any(|t| t.name == name);
             if known {
-                let (text, is_error) = match handler.call(principal, name, arguments) {
-                    Ok(text) => (text, false),
-                    Err(text) => (text, true),
+                let (content, is_error) = match handler.call(principal, name, arguments) {
+                    Ok(Output::Text(text)) => (json!([{ "type": "text", "text": text }]), false),
+                    Ok(Output::Image {
+                        base64,
+                        mime_type,
+                        caption,
+                    }) => (
+                        json!([
+                            { "type": "image", "data": base64, "mimeType": mime_type },
+                            { "type": "text", "text": caption }
+                        ]),
+                        false,
+                    ),
+                    Err(text) => (json!([{ "type": "text", "text": text }]), true),
                 };
-                Ok(json!({ "content": [{ "type": "text", "text": text }], "isError": is_error }))
+                Ok(json!({ "content": content, "isError": is_error }))
             } else {
                 Err((-32602, format!("unknown tool: {name}")))
             }
@@ -357,10 +392,15 @@ mod tests {
             }]
         }
 
-        fn call(&self, principal: &Principal, _: &str, arguments: Value) -> Result<String, String> {
+        fn call(&self, principal: &Principal, _: &str, arguments: Value) -> Result<Output, String> {
             match arguments["text"].as_str() {
                 Some("fail") => Err("failed on purpose".into()),
-                Some(text) => Ok(format!("{principal}: {text}")),
+                Some("picture") => Ok(Output::Image {
+                    base64: "aGk=".into(),
+                    mime_type: "image/png".into(),
+                    caption: "a picture".into(),
+                }),
+                Some(text) => Ok(format!("{principal}: {text}").into()),
                 None => Err("missing text".into()),
             }
         }
@@ -417,6 +457,16 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(failed["result"]["isError"], true);
+        let picture = call(
+            &url,
+            "secret",
+            json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"echo","arguments":{"text":"picture"}}}),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(picture["result"]["content"][0]["type"], "image");
+        assert_eq!(picture["result"]["content"][0]["mimeType"], "image/png");
+        assert_eq!(picture["result"]["content"][1]["text"], "a picture");
         let unknown = call(
             &url,
             "secret",
