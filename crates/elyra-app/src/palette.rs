@@ -53,6 +53,8 @@ pub struct Palette {
     input: Entity<InputState>,
     entries: Vec<Entry>,
     selected: usize,
+    /// Keeps the selected row in view while moving with the keyboard.
+    scroll: ScrollHandle,
     app: Entity<AppState>,
     root: Option<PathBuf>,
     files: Option<Arc<Vec<String>>>,
@@ -275,6 +277,7 @@ impl Palette {
             input,
             entries: Vec::new(),
             selected: 0,
+            scroll: ScrollHandle::new(),
             app,
             root,
             files: None,
@@ -331,6 +334,7 @@ impl Palette {
         let len = self.entries.len() as isize;
         if len > 0 {
             self.selected = (self.selected as isize + delta).rem_euclid(len) as usize;
+            self.scroll.scroll_to_item(self.selected);
         }
         cx.notify();
     }
@@ -365,6 +369,8 @@ impl Palette {
     fn update_entries(&mut self, cx: &mut Context<Self>) {
         let query = self.input.read(cx).value().trim().to_string();
         self.selected = 0;
+        // New results start at the top (works before the list has been laid out).
+        self.scroll.set_offset(point(px(0.), px(0.)));
         match self.mode {
             PaletteMode::Commands => self.entries = self.command_entries(&query, cx),
             PaletteMode::Files => {
@@ -628,6 +634,7 @@ impl Render for Palette {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .p_1()
                     .children(rows)
                     .when(empty, |this| {
