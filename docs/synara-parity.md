@@ -42,7 +42,7 @@ window with search and reset (themes, fonts, terminal) · About · app icon and 
 | Phase 3 — Git, diff and review | ✅ (2026-10-03) |
 | Phase 4 — Navigation, files and layout | ✅ (2026-10-03) — not yet: PDF preview, LSP, in-app shortcut recorder, theme editor, time format; the right dock keeps fixed tabs (Changes, PR, Files, Context, Terminal, Side chat) |
 | Phase 5 — Providers | ✅ (2026-10-03) — shared ACP runtime (Gemini CLI, Cursor Agent, OpenCode, custom ACP command), Pi via the Elyra RPC adapter, provider settings (enable, executable, arguments, env, accounts, version, sign-in), starred model presets, handoff, fork, Claude Code import, Claude subagent mentions. Postponed: **Codex**. Not yet: Devin/Factory Droid/Grok presets (use the custom ACP command), stop-subagent control, CLI update checks, provider ordering, import from Codex/Elyra history |
-| Phase 6 — Orchestration and automation | next |
+| Phase 6 — Orchestration and automation | ✅ (2026-10-03) — agent gateway (MCP over local HTTP, injected into Claude Code and ACP agents, off by default), external MCP with paired read-only/full clients, stdio bridge (`elyra mcp-bridge`) and audit log, automations (once/interval/daily/weekdays/weekly/cron+tz, new or same thread, stop phrase, max runs, failure policy, run history), task board with drag and drop that follows the chat, thread goals with a turn budget, debug mode, thread ZIP export, usage statistics with a 26-week heatmap. Not yet: Hubs/Studio, Inbox, automations while the app is closed (menu-bar/login item), token heatmap (providers report cost and time, not always tokens) |
 
 ## Roadmap
 
@@ -141,7 +141,7 @@ starred model presets · provider handoff (continue the same task with another p
 bounded recap) · fork (native or transcript reconstruction) · import threads/projects
 from Claude Code and Codex history.
 
-### Phase 6 — Orchestration and automation
+### Phase 6 — Orchestration and automation ✅
 
 | Feature | Notes | Effort |
 |---|---|---|

@@ -111,6 +111,26 @@ impl ClaudeSession {
                 args.push("--fork-session".into());
             }
         }
+        if !config.mcp_servers.is_empty() {
+            let servers: serde_json::Map<String, Value> = config
+                .mcp_servers
+                .iter()
+                .map(|server| {
+                    (
+                        server.name.clone(),
+                        json!({
+                            "type": "http",
+                            "url": server.url,
+                            "headers": { "Authorization": format!("Bearer {}", server.token) }
+                        }),
+                    )
+                })
+                .collect();
+            args.extend([
+                "--mcp-config".into(),
+                json!({ "mcpServers": servers }).to_string(),
+            ]);
+        }
         if let Some(prompt) = config
             .append_system_prompt
             .as_deref()

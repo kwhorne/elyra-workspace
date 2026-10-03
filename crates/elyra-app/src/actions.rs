@@ -55,6 +55,10 @@ gpui_kit::actions!(
         SaveFile,
         ImportThreads,
         ForkThread,
+        ShowAutomations,
+        ShowTasks,
+        ShowStats,
+        ExportThread,
     ]
 );
 
@@ -348,7 +352,9 @@ pub fn effective_keys() -> Vec<(&'static Shortcut, Option<String>)> {
 pub fn bind_keys(cx: &mut App) {
     let mut bindings = Vec::new();
     for (shortcut, keys) in effective_keys() {
-        let Some(keys) = keys else { continue };
+        let Some(keys) = keys.filter(|k| !k.is_empty()) else {
+            continue;
+        };
         let context = shortcut
             .context
             .and_then(|c| KeyBindingContextPredicate::parse(c).ok())

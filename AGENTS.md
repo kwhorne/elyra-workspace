@@ -28,6 +28,10 @@ See README.md for the crate map.
 - ACP adapter tests drive `crates/elyra-provider/tests/mock_acp_agent.py` (needs
   `python3`); extend the mock when handling new ACP messages.
 - Never post global mouse/keyboard events to test the UI; they reach the user's apps.
+- `ELYRA_OPEN_PANEL=tasks|automations|stats|review` opens a panel at launch for
+  screenshots. External MCP clients run `elyra mcp-bridge <url> <token>` (no GUI).
+- Orchestration records (automations, runs, tasks, MCP clients, audit log) are JSON
+  documents in their own tables; add fields with `#[serde(default)]`.
 - Occluded windows started with `ELYRA_NO_ACTIVATE` don't repaint, so screenshots
   show the first frame only.
 

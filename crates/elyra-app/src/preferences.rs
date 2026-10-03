@@ -49,6 +49,10 @@ pub struct Preferences {
     pub providers: BTreeMap<String, ProviderSettings>,
     /// Model presets shown first in the model menu.
     pub starred_models: Vec<ModelPreset>,
+    /// Give agents MCP tools to list, create and steer threads.
+    pub agent_gateway: bool,
+    /// Automatic turns a thread goal may take before pausing.
+    pub goal_max_turns: u32,
 }
 
 /// How to launch one provider.
@@ -158,6 +162,8 @@ impl Default for Preferences {
             density: "comfortable".into(),
             providers: BTreeMap::new(),
             starred_models: Vec::new(),
+            agent_gateway: false,
+            goal_max_turns: 10,
         }
     }
 }
@@ -270,6 +276,11 @@ impl Preferences {
 struct PreferencesStore(WeakEntity<AppState>);
 
 impl Global for PreferencesStore {}
+
+/// The app state, for windows (Settings) that have no handle of their own.
+pub fn app_state(cx: &App) -> Option<gpui_kit::Entity<AppState>> {
+    cx.try_global::<PreferencesStore>()?.0.upgrade()
+}
 
 /// Load preferences (migrating the old light/dark `theme` setting), install
 /// them as a global and apply them.

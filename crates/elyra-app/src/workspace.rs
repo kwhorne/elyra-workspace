@@ -52,6 +52,15 @@ impl RightTab {
     }
 }
 
+/// Full-width views that replace the chat area.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Panel {
+    Review,
+    Automations,
+    Tasks,
+    Stats,
+}
+
 pub struct Workspace {
     pub(crate) app: Entity<AppState>,
     focus: FocusHandle,
@@ -77,7 +86,10 @@ pub struct Workspace {
     /// Project space shown in the sidebar; None shows all.
     pub(crate) active_space: Option<String>,
     review: Option<Entity<crate::review_inbox::ReviewInbox>>,
-    pub(crate) review_open: bool,
+    pub(crate) panel: Option<Panel>,
+    automations: Option<Entity<crate::automations::AutomationsView>>,
+    tasks: Option<Entity<crate::tasks::TasksView>>,
+    stats: Option<Entity<crate::stats::StatsView>>,
     pub(crate) sidebar_open: bool,
     pub(crate) right_open: bool,
     pub(crate) collapsed: HashSet<ProjectId>,
@@ -175,7 +187,10 @@ impl Workspace {
             terminal_full: false,
             active_space,
             review: None,
-            review_open: false,
+            panel: None,
+            automations: None,
+            tasks: None,
+            stats: None,
             sidebar_open,
             right_open,
             right_tab,
@@ -225,6 +240,17 @@ impl Workspace {
 
     /// First-run welcome and a note about a crash in the previous session.
     fn startup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Development: open a panel at launch (screenshots without input).
+        let panel = match std::env::var("ELYRA_OPEN_PANEL").as_deref() {
+            Ok("tasks") => Some(Panel::Tasks),
+            Ok("automations") => Some(Panel::Automations),
+            Ok("stats") => Some(Panel::Stats),
+            Ok("review") => Some(Panel::Review),
+            _ => None,
+        };
+        if let Some(panel) = panel {
+            self.toggle_panel(panel, window, cx);
+        }
         if crate::onboarding::should_show(&self.app, cx) {
             crate::onboarding::show(cx.weak_entity(), self.app.clone(), window, cx);
         }
@@ -345,7 +371,7 @@ impl Workspace {
             self.open_tabs.push(id);
         }
         self.active = Some(id);
-        self.review_open = false;
+        self.panel = None;
         self.current_project = self.app.read(cx).thread(id).map(|t| t.project_id);
         self.app.update(cx, |app, cx| app.mark_read(id, cx));
         view.update(cx, |view, cx| view.focus_composer(window, cx));
@@ -540,19 +566,121 @@ impl Workspace {
     }
 
     pub(crate) fn toggle_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.review_open = !self.review_open;
-        if self.review_open {
-            match &self.review {
+        self.toggle_panel(Panel::Review, window, cx);
+    }
+
+    /// Show (or hide) a full-width panel instead of the chat.
+    pub(crate) fn toggle_panel(
+        &mut self,
+        panel: Panel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.panel == Some(panel) {
+            self.panel = None;
+            cx.notify();
+            return;
+        }
+        self.panel = Some(panel);
+        let (app, workspace) = (self.app.clone(), cx.weak_entity());
+        match panel {
+            Panel::Review => match &self.review {
                 Some(review) => review.update(cx, |review, cx| review.refresh(cx)),
                 None => {
-                    let (app, workspace) = (self.app.clone(), cx.weak_entity());
                     self.review = Some(cx.new(|cx| {
                         crate::review_inbox::ReviewInbox::new(app, workspace, window, cx)
+                    }))
+                }
+            },
+            Panel::Automations => {
+                if self.automations.is_none() {
+                    self.automations =
+                        Some(cx.new(|cx| {
+                            crate::automations::AutomationsView::new(app, workspace, cx)
+                        }));
+                }
+            }
+            Panel::Tasks => {
+                if self.tasks.is_none() {
+                    let project = self.current_project;
+                    self.tasks = Some(cx.new(|cx| {
+                        crate::tasks::TasksView::new(app, workspace, project, window, cx)
                     }));
                 }
             }
+            Panel::Stats => match &self.stats {
+                Some(stats) => stats.update(cx, |stats, cx| stats.refresh(cx)),
+                None => self.stats = Some(cx.new(|cx| crate::stats::StatsView::new(app, cx))),
+            },
         }
         cx.notify();
+    }
+
+    /// Leave a panel and show a thread.
+    pub(crate) fn open_thread_from_panel(
+        &mut self,
+        id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.panel = None;
+        self.activate(id, window, cx);
+    }
+
+    fn on_show_automations(
+        &mut self,
+        _: &ShowAutomations,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_panel(Panel::Automations, window, cx);
+    }
+
+    fn on_show_tasks(&mut self, _: &ShowTasks, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_panel(Panel::Tasks, window, cx);
+    }
+
+    fn on_show_stats(&mut self, _: &ShowStats, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_panel(Panel::Stats, window, cx);
+    }
+
+    /// Save a thread as a ZIP chosen by the user.
+    pub(crate) fn export_thread(
+        &mut self,
+        id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(title) = self.app.read(cx).thread(id).map(|t| t.title.clone()) else {
+            return;
+        };
+        let dir = dirs::download_dir().unwrap_or_else(std::env::temp_dir);
+        let path = cx.prompt_for_new_path(&dir, Some(&crate::export::file_name(&title)));
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(path))) = path.await else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                match crate::export::export_thread(this.app.read(cx), id, &path) {
+                    Ok(()) => window.push_notification(
+                        Notification::success(format!("Exported to {}", path.display()))
+                            .on_click(move |_, _, cx| cx.reveal_path(&path)),
+                        cx,
+                    ),
+                    Err(err) => window.push_notification(
+                        Notification::error(format!("Export failed: {err:#}")),
+                        cx,
+                    ),
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn on_export_thread(&mut self, _: &ExportThread, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.active {
+            self.export_thread(id, window, cx);
+        }
     }
 
     fn on_show_review(&mut self, _: &ShowCodeReview, window: &mut Window, cx: &mut Context<Self>) {
@@ -1562,15 +1690,23 @@ impl Render for Workspace {
         if full_terminal.is_none() {
             self.terminal_full = false;
         }
-        let center = match (&self.review, self.review_open, full_terminal) {
-            (Some(review), true, _) => review.clone().into_any_element(),
-            (_, _, Some(terminal)) => terminal.into_any_element(),
+        let panel: Option<AnyElement> = match self.panel {
+            Some(Panel::Review) => self.review.clone().map(|v| v.into_any_element()),
+            Some(Panel::Automations) => self.automations.clone().map(|v| v.into_any_element()),
+            Some(Panel::Tasks) => self.tasks.clone().map(|v| v.into_any_element()),
+            Some(Panel::Stats) => self.stats.clone().map(|v| v.into_any_element()),
+            None => None,
+        };
+        let panel_open = panel.is_some();
+        let center = match (panel, full_terminal) {
+            (Some(panel), _) => panel,
+            (None, Some(terminal)) => terminal.into_any_element(),
             _ => self.render_center(window, cx),
         };
         let title_bar = self.render_title_bar(cx);
         let sidebar = self.sidebar_open.then(|| self.render_sidebar(cx));
         let right =
-            (self.right_open && self.active.is_some() && !self.review_open && !self.terminal_full)
+            (self.right_open && self.active.is_some() && !panel_open && !self.terminal_full)
                 .then(|| self.render_right(cx));
 
         let main: AnyElement = match right {
@@ -1614,6 +1750,10 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_open_in_editor))
             .on_action(cx.listener(Self::on_new_side_chat))
             .on_action(cx.listener(Self::on_import_thread))
+            .on_action(cx.listener(Self::on_show_automations))
+            .on_action(cx.listener(Self::on_show_tasks))
+            .on_action(cx.listener(Self::on_show_stats))
+            .on_action(cx.listener(Self::on_export_thread))
             .on_action(cx.listener(Self::on_fork_thread))
             .on_action(cx.listener(Self::on_toggle_split))
             .on_action(cx.listener(Self::on_next_tab))

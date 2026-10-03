@@ -925,6 +925,26 @@ impl ThreadView {
                         )
                     }),
             )
+            .child({
+                let debug = session.thread.debug_mode;
+                let button = Button::new("debug-mode")
+                    .xsmall()
+                    .icon(IconName::Bug)
+                    .tooltip(if debug {
+                        "Debug mode on: reproduce first, then fix. Click to turn off."
+                    } else {
+                        "Debug mode: reproduce the bug before fixing it"
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.session
+                            .update(cx, |session, cx| session.set_debug_mode(!debug, cx));
+                    }));
+                if debug {
+                    button.warning().label("Debug")
+                } else {
+                    button.ghost()
+                }
+            })
             .when(!accounts.is_empty(), |this| {
                 let label: SharedString = account
                     .clone()

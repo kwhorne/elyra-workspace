@@ -34,6 +34,19 @@ pub struct SessionConfig {
     pub fork: bool,
     /// Extra instructions appended to the provider's system prompt.
     pub append_system_prompt: Option<String>,
+    /// MCP servers to give the agent (providers that support MCP).
+    pub mcp_servers: Vec<McpServer>,
+}
+
+/// An MCP server reachable over HTTP, with a stdio bridge command for
+/// agents that only launch local servers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct McpServer {
+    pub name: String,
+    pub url: String,
+    pub token: String,
+    /// Command that relays stdio to `url` (e.g. `elyra mcp-bridge …`).
+    pub bridge: Option<(PathBuf, Vec<String>)>,
 }
 
 /// What a provider supports, so the UI only offers what works.

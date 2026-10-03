@@ -1,4 +1,5 @@
 use crate::model::*;
+use crate::orchestration::*;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Row, params};
@@ -67,6 +68,27 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE threads ADD COLUMN account TEXT;
     ALTER TABLE threads ADD COLUMN fork_context TEXT;
 "#,
+    r#"
+    ALTER TABLE threads ADD COLUMN goal TEXT;
+    ALTER TABLE threads ADD COLUMN goal_status TEXT;
+    ALTER TABLE threads ADD COLUMN goal_runs INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE threads ADD COLUMN debug_mode INTEGER NOT NULL DEFAULT 0;
+    CREATE TABLE automations (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE automation_runs (
+        id TEXT PRIMARY KEY,
+        automation_id TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        data TEXT NOT NULL
+    );
+    CREATE INDEX automation_runs_by_automation ON automation_runs (automation_id, started_at);
+    CREATE TABLE tasks (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, data TEXT NOT NULL);
+    CREATE TABLE mcp_clients (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at TEXT NOT NULL,
+        data TEXT NOT NULL
+    );
+"#,
 ];
 
 const PROJECT_COLUMNS: &str =
@@ -74,10 +96,10 @@ const PROJECT_COLUMNS: &str =
 const THREAD_COLUMNS: &str = "id, project_id, title, provider, model, permission_mode,
     provider_session_id, environment, status, archived, created_at, updated_at, effort,
     pinned, done, read_at, last_activity_at, parent_id, notes, recap, pinned_items, account,
-    fork_context";
+    fork_context, goal, goal_status, goal_runs, debug_mode";
 
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Store {
@@ -258,6 +280,10 @@ impl Store {
             pinned_items: Vec::new(),
             account: None,
             fork_context: None,
+            goal: None,
+            goal_status: None,
+            goal_runs: 0,
+            debug_mode: false,
             created_at: now,
             updated_at: now,
         };
@@ -289,7 +315,8 @@ impl Store {
                 provider_session_id = ?5, environment = ?6, status = ?7, archived = ?8,
                 updated_at = ?9, effort = ?10, provider = ?11, pinned = ?12, done = ?13,
                 read_at = ?14, last_activity_at = ?15, parent_id = ?16, notes = ?17, recap = ?18,
-                pinned_items = ?19, account = ?20, fork_context = ?21
+                pinned_items = ?19, account = ?20, fork_context = ?21, goal = ?22,
+                goal_status = ?23, goal_runs = ?24, debug_mode = ?25
              WHERE id = ?1",
             params![
                 thread.id.to_string(),
@@ -313,6 +340,10 @@ impl Store {
                 serde_json::to_string(&thread.pinned_items)?,
                 thread.account,
                 thread.fork_context,
+                thread.goal,
+                thread.goal_status.map(|s| s.as_str()),
+                thread.goal_runs,
+                thread.debug_mode,
             ],
         )?;
         Ok(())
@@ -487,6 +518,164 @@ impl Store {
     }
 }
 
+// ---- orchestration: JSON documents keyed by id --------------------------
+
+impl Store {
+    fn put_doc(&self, table: &str, id: Uuid, data: &impl serde::Serialize) -> Result<()> {
+        self.conn.execute(
+            &format!("INSERT OR REPLACE INTO {table} (id, data) VALUES (?1, ?2)"),
+            params![id.to_string(), serde_json::to_string(data)?],
+        )?;
+        Ok(())
+    }
+
+    fn docs<T: serde::de::DeserializeOwned>(
+        &self,
+        sql: &str,
+        args: impl rusqlite::Params,
+    ) -> Result<Vec<T>> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(args, |row| row.get::<_, String>(0))?;
+        let mut docs = Vec::new();
+        for json in rows {
+            match serde_json::from_str(&json?) {
+                Ok(doc) => docs.push(doc),
+                Err(err) => log::warn!("skipping unreadable record: {err}"),
+            }
+        }
+        Ok(docs)
+    }
+
+    pub fn automations(&self) -> Result<Vec<Automation>> {
+        let mut list: Vec<Automation> = self.docs("SELECT data FROM automations", [])?;
+        list.sort_by_key(|a| a.created_at);
+        Ok(list)
+    }
+
+    pub fn save_automation(&self, automation: &Automation) -> Result<()> {
+        self.put_doc("automations", automation.id, automation)
+    }
+
+    pub fn delete_automation(&self, id: AutomationId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM automations WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        self.conn.execute(
+            "DELETE FROM automation_runs WHERE automation_id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    pub fn save_run(&self, run: &AutomationRun) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO automation_runs (id, automation_id, started_at, data)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                run.id.to_string(),
+                run.automation_id.to_string(),
+                run.started_at.to_rfc3339(),
+                serde_json::to_string(run)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Most recent runs first.
+    pub fn runs(&self, automation_id: AutomationId, limit: usize) -> Result<Vec<AutomationRun>> {
+        self.docs(
+            "SELECT data FROM automation_runs WHERE automation_id = ?1
+             ORDER BY started_at DESC LIMIT ?2",
+            params![automation_id.to_string(), limit as i64],
+        )
+    }
+
+    pub fn tasks(&self) -> Result<Vec<Task>> {
+        let mut list: Vec<Task> = self.docs("SELECT data FROM tasks", [])?;
+        list.sort_by_key(|t| t.created_at);
+        Ok(list)
+    }
+
+    pub fn save_task(&self, task: &Task) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO tasks (id, project_id, data) VALUES (?1, ?2, ?3)",
+            params![
+                task.id.to_string(),
+                task.project_id.to_string(),
+                serde_json::to_string(task)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_task(&self, id: TaskId) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM tasks WHERE id = ?1", params![id.to_string()])?;
+        Ok(())
+    }
+
+    pub fn mcp_clients(&self) -> Result<Vec<McpClient>> {
+        let mut list: Vec<McpClient> = self.docs("SELECT data FROM mcp_clients", [])?;
+        list.sort_by_key(|c| c.created_at);
+        Ok(list)
+    }
+
+    pub fn save_mcp_client(&self, client: &McpClient) -> Result<()> {
+        self.put_doc("mcp_clients", client.id, client)
+    }
+
+    pub fn delete_mcp_client(&self, id: Uuid) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM mcp_clients WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// Record a gateway call; keeps the newest 5000 entries.
+    pub fn audit(&self, entry: &AuditEntry) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO audit_log (at, data) VALUES (?1, ?2)",
+            params![entry.at.to_rfc3339(), serde_json::to_string(entry)?],
+        )?;
+        self.conn.execute(
+            "DELETE FROM audit_log WHERE id <= (SELECT MAX(id) FROM audit_log) - 5000",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Newest first.
+    pub fn audit_log(&self, limit: usize) -> Result<Vec<AuditEntry>> {
+        self.docs(
+            "SELECT data FROM audit_log ORDER BY id DESC LIMIT ?1",
+            params![limit as i64],
+        )
+    }
+
+    /// Turn summaries across all threads, for usage statistics:
+    /// (thread provider, finished at, duration ms, cost).
+    pub fn turn_stats(&self) -> Result<Vec<TurnStat>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT t.provider, i.created_at,
+                    json_extract(i.content, '$.duration_ms'),
+                    json_extract(i.content, '$.cost_usd')
+             FROM transcript_items i JOIN threads t ON t.id = i.thread_id
+             WHERE json_extract(i.content, '$.kind') = 'turn_summary'",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(TurnStat {
+                provider: row.get(0)?,
+                at: parse_time(row, 1)?,
+                duration_ms: row.get::<_, Option<i64>>(2)?.map(|d| d.max(0) as u64),
+                cost_usd: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+}
+
 fn parse_uuid(row: &Row, index: usize) -> rusqlite::Result<Uuid> {
     let text: String = row.get(index)?;
     Uuid::parse_str(&text).map_err(|err| {
@@ -580,6 +769,12 @@ fn thread_from_row(row: &Row) -> rusqlite::Result<Thread> {
             .unwrap_or_default(),
         account: row.get(21)?,
         fork_context: row.get(22)?,
+        goal: row.get(23)?,
+        goal_status: row
+            .get::<_, Option<String>>(24)?
+            .and_then(|s| GoalStatus::parse(&s)),
+        goal_runs: row.get(25)?,
+        debug_mode: row.get(26)?,
         created_at: parse_time(row, 10)?,
         updated_at: parse_time(row, 11)?,
     })
@@ -719,5 +914,112 @@ mod tests {
 
         store.remove_project(project.id).unwrap();
         assert!(store.threads(true).unwrap().is_empty(), "threads cascade");
+    }
+
+    #[test]
+    fn stores_orchestration_records() {
+        let store = Store::open_in_memory().unwrap();
+        let dir = std::env::temp_dir().join(format!("elyra-orch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let project = store.add_project(&dir).unwrap();
+
+        let mut automation = Automation::new(
+            "Nightly".into(),
+            project.id,
+            ProviderKind::Claude,
+            "Run the tests".into(),
+            Schedule::Daily {
+                time: "02:00".into(),
+                tz: "UTC".into(),
+            },
+        );
+        store.save_automation(&automation).unwrap();
+        automation.runs = 3;
+        store.save_automation(&automation).unwrap();
+        assert_eq!(store.automations().unwrap(), vec![automation.clone()]);
+        let run = AutomationRun {
+            id: new_id(),
+            automation_id: automation.id,
+            thread_id: None,
+            started_at: Utc::now(),
+            finished_at: None,
+            status: RunStatus::Running,
+            message: None,
+        };
+        store.save_run(&run).unwrap();
+        assert_eq!(store.runs(automation.id, 10).unwrap(), vec![run]);
+        store.delete_automation(automation.id).unwrap();
+        assert!(store.runs(automation.id, 10).unwrap().is_empty());
+
+        let task = Task::new(project.id, "Add dark mode".into());
+        store.save_task(&task).unwrap();
+        assert_eq!(store.tasks().unwrap(), vec![task.clone()]);
+        store.delete_task(task.id).unwrap();
+        assert!(store.tasks().unwrap().is_empty());
+
+        for n in 0..3 {
+            store
+                .audit(&AuditEntry {
+                    at: Utc::now(),
+                    client: "Claude Desktop".into(),
+                    tool: format!("tool{n}"),
+                    detail: String::new(),
+                    ok: true,
+                })
+                .unwrap();
+        }
+        assert_eq!(store.audit_log(2).unwrap()[0].tool, "tool2", "newest first");
+
+        let mut thread = store
+            .create_thread(
+                project.id,
+                ProviderKind::Claude,
+                None,
+                PermissionMode::Ask,
+                Environment::Local,
+            )
+            .unwrap();
+        thread.goal = Some("Green CI".into());
+        thread.goal_status = Some(GoalStatus::Active);
+        thread.goal_runs = 2;
+        thread.debug_mode = true;
+        store.update_thread(&thread).unwrap();
+        let loaded = store
+            .threads(false)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.id == thread.id)
+            .unwrap();
+        assert_eq!(
+            (
+                loaded.goal.as_deref(),
+                loaded.goal_status,
+                loaded.goal_runs,
+                loaded.debug_mode
+            ),
+            (Some("Green CI"), Some(GoalStatus::Active), 2, true)
+        );
+        store
+            .append_item(
+                thread.id,
+                ItemContent::TurnSummary {
+                    duration_ms: Some(1200),
+                    cost_usd: Some(0.5),
+                    is_error: false,
+                    context_tokens: None,
+                    context_window: None,
+                },
+            )
+            .unwrap();
+        let stats = store.turn_stats().unwrap();
+        assert_eq!(
+            (
+                stats[0].provider.as_str(),
+                stats[0].duration_ms,
+                stats[0].cost_usd
+            ),
+            ("claude", Some(1200), Some(0.5))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

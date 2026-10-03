@@ -100,6 +100,36 @@ struct State {
     /// Tool calls already reported, so updates don't duplicate them.
     tools: HashMap<String, ToolState>,
     plan: Option<Value>,
+    mcp_servers: Vec<crate::McpServer>,
+    /// The agent accepts HTTP MCP servers (else stdio bridges are used).
+    mcp_http: bool,
+}
+
+impl State {
+    fn mcp_servers(&self) -> Value {
+        Value::Array(
+            self.mcp_servers
+                .iter()
+                .filter_map(|server| {
+                    if self.mcp_http {
+                        return Some(json!({
+                            "type": "http",
+                            "name": server.name,
+                            "url": server.url,
+                            "headers": [{ "name": "Authorization", "value": format!("Bearer {}", server.token) }]
+                        }));
+                    }
+                    let (command, args) = server.bridge.as_ref()?;
+                    Some(json!({
+                        "name": server.name,
+                        "command": command.display().to_string(),
+                        "args": args,
+                        "env": []
+                    }))
+                })
+                .collect(),
+        )
+    }
 }
 
 /// A tool call as reported so far. Agents often announce a call before its
@@ -226,6 +256,8 @@ impl AcpSession {
             thinking: String::new(),
             tools: HashMap::new(),
             plan: None,
+            mcp_servers: config.mcp_servers.clone(),
+            mcp_http: false,
         }));
         let writer: Writer = Arc::new(Mutex::new(None));
         let (reader_state, reader_writer) = (state.clone(), writer.clone());
@@ -511,6 +543,9 @@ fn handle_response(
             state.load_session = result["agentCapabilities"]["loadSession"]
                 .as_bool()
                 .unwrap_or(false);
+            state.mcp_http = result["agentCapabilities"]["mcpCapabilities"]["http"]
+                .as_bool()
+                .unwrap_or(false);
             let cwd = state.cwd.display().to_string();
             let frame = match state.resume.clone() {
                 Some(session_id) if state.load_session => {
@@ -518,14 +553,14 @@ fn handle_response(
                     request_frame(
                         state,
                         "session/load",
-                        json!({ "sessionId": session_id, "cwd": cwd, "mcpServers": [] }),
+                        json!({ "sessionId": session_id, "cwd": cwd, "mcpServers": state.mcp_servers() }),
                         Pending::LoadSession(session_id),
                     )
                 }
                 _ => request_frame(
                     state,
                     "session/new",
-                    json!({ "cwd": cwd, "mcpServers": [] }),
+                    json!({ "cwd": cwd, "mcpServers": state.mcp_servers() }),
                     Pending::NewSession,
                 ),
             };
@@ -540,7 +575,7 @@ fn handle_response(
                 outgoing.push(request_frame(
                     state,
                     "session/new",
-                    json!({ "cwd": cwd, "mcpServers": [] }),
+                    json!({ "cwd": cwd, "mcpServers": state.mcp_servers() }),
                     Pending::NewSession,
                 ));
                 return;
@@ -1066,6 +1101,7 @@ mod tests {
             env: vec![("MOCK_GREETING".into(), "hej".into())],
             fork: false,
             append_system_prompt: None,
+            mcp_servers: Vec::new(),
         };
         let (session, rx) = AcpSession::start(ProviderKind::CustomAcp, config).unwrap();
         // Prompts sent before the session exists are queued.

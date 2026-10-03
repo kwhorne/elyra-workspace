@@ -4,7 +4,7 @@
 
 use crate::app_state::AppState;
 use crate::dialogs;
-use crate::workspace::{RightTab, Workspace, format_age};
+use crate::workspace::{Panel, RightTab, Workspace, format_age};
 use chrono::Utc;
 use elyra_core::{Project, ProjectId, Thread, ThreadId, ThreadStatus};
 use gpui_kit::assets::IconName;
@@ -123,6 +123,13 @@ fn thread_menu(
             }
             menu
         },
+    )
+    .item(
+        PopupMenuItem::new("Export…")
+            .icon(IconName::Download)
+            .on_click(on(&workspace, |this, id, window, cx| {
+                this.export_thread(id, window, cx)
+            })),
     )
     .separator()
     .item(
@@ -582,11 +589,33 @@ impl Workspace {
                             .child("PROJECTS"),
                     )
                     .child(
+                        Button::new("tasks-board")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::SquareKanban)
+                            .when(self.panel == Some(Panel::Tasks), |b| b.primary())
+                            .tooltip("Tasks (⌥⌘T)")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_panel(Panel::Tasks, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("automations")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::CalendarClock)
+                            .when(self.panel == Some(Panel::Automations), |b| b.primary())
+                            .tooltip("Automations (⌥⌘A)")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.toggle_panel(Panel::Automations, window, cx)
+                            })),
+                    )
+                    .child(
                         Button::new("code-review")
                             .ghost()
                             .xsmall()
                             .icon(IconName::GitPullRequest)
-                            .when(self.review_open, |b| b.primary())
+                            .when(self.panel == Some(Panel::Review), |b| b.primary())
                             .tooltip("Code review (⇧⌘R)")
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.toggle_review(window, cx)),

@@ -2,12 +2,15 @@ mod about;
 mod actions;
 mod app_icon;
 mod app_state;
+mod automations;
 mod changes_view;
 mod composer;
 mod context_view;
 mod dialogs;
 mod editors;
+mod export;
 mod files_view;
+mod gateway;
 mod lifecycle;
 mod onboarding;
 mod palette;
@@ -18,6 +21,8 @@ mod search;
 mod settings_window;
 mod shortcuts;
 mod sidebar;
+mod stats;
+mod tasks;
 mod terminal_view;
 mod themes;
 mod thread_session;
@@ -32,6 +37,20 @@ use gpui_kit::component::{TitleBar, WindowExt as _};
 use gpui_kit::*;
 
 fn main() {
+    // `elyra mcp-bridge <url> <token>`: relay MCP over stdio for external
+    // clients (Claude Desktop, Codex). No window, no database.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("mcp-bridge") {
+        let (Some(url), Some(token)) = (args.get(2), args.get(3)) else {
+            eprintln!("usage: elyra mcp-bridge <url> <token>");
+            std::process::exit(2);
+        };
+        if let Err(err) = elyra_mcp::run_bridge(url, token) {
+            eprintln!("elyra mcp-bridge: {err:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     lifecycle::install_crash_log();
     let Some(_instance_lock) = lifecycle::acquire_instance_lock() else {
@@ -62,6 +81,8 @@ fn main() {
 
             let app = cx.new(|_| state);
             preferences::init(&app, cx);
+            gateway::init(app.clone(), cx);
+            automations::init(app.clone(), cx);
             cx.set_menus(menus());
 
             let mut options = TitleBar::window_options();
@@ -117,6 +138,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("New Side Chat", actions::NewSideChat),
                 MenuItem::action("Fork Thread", actions::ForkThread),
                 MenuItem::action("Import from Claude Code…", actions::ImportThreads),
+                MenuItem::action("Export Thread…", actions::ExportThread),
                 MenuItem::action("Add Project…", actions::AddProject),
                 MenuItem::action("Open in Editor", actions::OpenInEditor),
                 MenuItem::separator(),
@@ -142,6 +164,9 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Files", actions::ShowFiles),
                 MenuItem::action("Context and Notes", actions::ShowContext),
                 MenuItem::action("Code Review", actions::ShowCodeReview),
+                MenuItem::action("Task Board", actions::ShowTasks),
+                MenuItem::action("Automations", actions::ShowAutomations),
+                MenuItem::action("Usage Statistics", actions::ShowStats),
                 MenuItem::separator(),
                 MenuItem::action("Split Chat", actions::ToggleSplit),
                 MenuItem::action("Back", actions::GoBack),

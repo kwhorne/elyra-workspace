@@ -75,6 +75,18 @@ conversation, and the tools around it — changes, Git and a terminal — in one
 - Terminal extras: split (⌘D), scrollback search (⌘F), add selection to chat,
   full-width terminal (⇧⌘J), confirmation before closing a busy terminal
 - Project spaces to group projects and filter the sidebar
+- Agent gateway (Settings → Agents & MCP): agents get MCP tools to list, read,
+  create, message, wait for, interrupt, rename and archive threads, so one agent can
+  fan out work. Pair Claude Desktop, Codex or Claude Code as external clients
+  (read-only or full access, copy-paste config, `elyra mcp-bridge` for stdio); every
+  call is in the audit log
+- Automations (⌥⌘A): prompts on a schedule (once, every N minutes, daily, weekdays,
+  weekly, cron with time zone), each run in a new or the same thread, stop phrase,
+  max runs, failure policy (pause, keep going, retry once) and run history
+- Task board (⌥⌘T): Draft / In progress / Done with drag and drop; "Start" hands a
+  card to an agent and the card follows the thread
+- Thread goals (Context tab) that keep the agent going turn after turn within a
+  budget, debug mode (reproduce first), thread export as ZIP, usage statistics
 - Keyboard shortcuts sheet (⌘/); override any shortcut in `~/.elyra/keybindings.json`
 - Settings window (⌘,): themes (Default Dark/Light, Tokyo Night, Palenight, Dracula,
   Nord, plus custom themes from `~/.elyra/themes`; terminal colors follow the theme),

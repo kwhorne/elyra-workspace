@@ -220,6 +220,13 @@ pub struct Thread {
     /// Conversation context to send ahead of the first prompt, for forks
     /// that cannot branch the provider's own session.
     pub fork_context: Option<String>,
+    /// Objective the thread keeps working toward across turns.
+    pub goal: Option<String>,
+    pub goal_status: Option<crate::orchestration::GoalStatus>,
+    /// Automatic continuations spent on the goal.
+    pub goal_runs: u32,
+    /// Reproduce-first debugging mode.
+    pub debug_mode: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

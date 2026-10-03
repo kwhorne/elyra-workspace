@@ -33,6 +33,19 @@ fn main() -> anyhow::Result<()> {
             env: Vec::new(),
             fork: false,
             append_system_prompt: None,
+            // ELYRA_MCP_URL + ELYRA_MCP_TOKEN: give the agent an MCP server.
+            mcp_servers: match (
+                std::env::var("ELYRA_MCP_URL"),
+                std::env::var("ELYRA_MCP_TOKEN"),
+            ) {
+                (Ok(url), Ok(token)) => vec![elyra_provider::McpServer {
+                    name: "elyra".into(),
+                    url,
+                    token,
+                    bridge: None,
+                }],
+                _ => Vec::new(),
+            },
         },
     )?;
     session.send(&Prompt::text(prompt))?;

@@ -1,8 +1,8 @@
 use crate::app_state::AppState;
 use chrono::Utc;
 use elyra_core::{
-    ApprovalDecision, Environment, ItemContent, ItemId, PermissionMode, Project, ProviderKind,
-    QuestionAnswer, Thread, ThreadStatus, TranscriptItem,
+    ApprovalDecision, Environment, GoalStatus, ItemContent, ItemId, PermissionMode, Project,
+    ProviderKind, QuestionAnswer, Thread, ThreadStatus, TranscriptItem,
 };
 use elyra_provider::{
     AgentSession, ModelOption, PermissionResponse, Prompt, ProviderEvent, SessionConfig,
@@ -440,7 +440,10 @@ impl ThreadSession {
             env: launch.env,
             // A side chat's first launch branches from its parent's session.
             fork: self.fork_pending,
-            append_system_prompt: self.project.instructions.clone(),
+            append_system_prompt: self.system_prompt(),
+            mcp_servers: crate::gateway::server_for_thread(self.thread.id, cx)
+                .into_iter()
+                .collect(),
         };
         let (session, events) = elyra_provider::start_session(self.thread.provider, config)?;
         self.provider = Some(session);
@@ -1184,9 +1187,135 @@ impl ThreadSession {
         if !self.queued.is_empty() {
             let prompt = self.queued.remove(0);
             self.send(prompt, cx);
+            return;
         }
+        self.continue_goal(is_error, cx);
+    }
+
+    // ---- goals ------------------------------------------------------------
+
+    /// Set (or clear) the thread's goal and start working on it.
+    pub fn set_goal(&mut self, goal: Option<String>, cx: &mut Context<Self>) {
+        let goal = goal.map(|g| g.trim().to_string()).filter(|g| !g.is_empty());
+        self.thread.goal_status = goal.as_ref().map(|_| GoalStatus::Active);
+        self.thread.goal = goal;
+        self.thread.goal_runs = 0;
+        self.save_thread(cx);
+        if self.thread.goal.is_some() && !self.running && self.preparing.is_none() {
+            let prompt = self.goal_prompt(true);
+            self.submit(Prompt::text(prompt), cx);
+        }
+        cx.notify();
+    }
+
+    pub fn pause_goal(&mut self, paused: bool, cx: &mut Context<Self>) {
+        if self.thread.goal.is_none() {
+            return;
+        }
+        self.thread.goal_status = Some(if paused {
+            GoalStatus::Paused
+        } else {
+            GoalStatus::Active
+        });
+        if !paused {
+            self.thread.goal_runs = 0;
+        }
+        self.save_thread(cx);
+        if !paused && !self.running && self.preparing.is_none() {
+            let prompt = self.goal_prompt(false);
+            self.submit(Prompt::text(prompt), cx);
+        }
+        cx.notify();
+    }
+
+    fn goal_prompt(&self, first: bool) -> String {
+        let goal = self.thread.goal.as_deref().unwrap_or("");
+        let lead = if first {
+            "Work toward this goal across as many turns as it takes"
+        } else {
+            "Keep working toward the goal"
+        };
+        format!(
+            "{lead}:\n\n{goal}\n\nTake the next concrete step and verify it. When the goal is fully achieved and verified, end your reply with the line {GOAL_DONE}. If you are blocked and need me, end with {GOAL_BLOCKED} and say what you need."
+        )
+    }
+
+    /// After a turn: continue, finish or stop the goal.
+    fn continue_goal(&mut self, is_error: bool, cx: &mut Context<Self>) {
+        if self.thread.goal_status != Some(GoalStatus::Active) {
+            return;
+        }
+        let reply = self
+            .items
+            .iter()
+            .rev()
+            .take_while(|item| !matches!(item.content, ItemContent::User { .. }))
+            .find_map(|item| match &item.content {
+                ItemContent::Assistant {
+                    text,
+                    parent_tool_use_id: None,
+                } => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let budget = crate::preferences::Preferences::global(cx)
+            .goal_max_turns
+            .max(1);
+        let (status, note) = if reply.contains(GOAL_DONE) {
+            (GoalStatus::Achieved, "Goal achieved.".to_string())
+        } else if reply.contains(GOAL_BLOCKED) || is_error {
+            (
+                GoalStatus::Paused,
+                "Goal paused: the agent needs you.".to_string(),
+            )
+        } else if self.thread.goal_runs >= budget {
+            (
+                GoalStatus::Exhausted,
+                format!("Goal paused after {budget} automatic turns."),
+            )
+        } else {
+            self.thread.goal_runs += 1;
+            self.save_thread(cx);
+            let prompt = self.goal_prompt(false);
+            self.send(Prompt::text(prompt), cx);
+            return;
+        };
+        self.thread.goal_status = Some(status);
+        self.save_thread(cx);
+        self.notice(note, false, cx);
+        cx.emit(SessionEvent::NeedsAttention);
+    }
+
+    /// Reproduce-first debugging: changes the agent's instructions, so it
+    /// takes effect from the next message.
+    pub fn set_debug_mode(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.thread.debug_mode == on {
+            return;
+        }
+        self.thread.debug_mode = on;
+        if self.provider.is_some() {
+            self.needs_restart = true;
+        }
+        self.save_thread(cx);
+        cx.notify();
+    }
+
+    fn system_prompt(&self) -> Option<String> {
+        let mut parts: Vec<&str> = Vec::new();
+        if let Some(instructions) = self.project.instructions.as_deref() {
+            parts.push(instructions);
+        }
+        if self.thread.debug_mode {
+            parts.push(DEBUG_INSTRUCTIONS);
+        }
+        (!parts.is_empty()).then(|| parts.join("\n\n"))
     }
 }
+
+const GOAL_DONE: &str = "GOAL ACHIEVED";
+const GOAL_BLOCKED: &str = "GOAL BLOCKED";
+
+const DEBUG_INSTRUCTIONS: &str = "Debug mode: reproduce before you fix. First write a failing test or a minimal reproduction that shows the bug and run it. Then find the root cause (explain it in one or two sentences), make the smallest fix, and show the reproduction passing. Do not change unrelated code.";
 
 /// Models last reported by the provider, or its built-in suggestions.
 pub fn cached_models(store: &elyra_core::Store, provider: ProviderKind) -> Vec<ModelOption> {

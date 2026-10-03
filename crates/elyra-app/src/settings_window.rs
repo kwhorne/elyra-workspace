@@ -4,7 +4,7 @@ use crate::preferences::{self, Preferences, ProviderSettings};
 use crate::themes;
 use elyra_core::ProviderKind;
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::setting::{
     NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
@@ -476,8 +476,257 @@ impl SettingsView {
             providers = providers.group(provider_group(kind, cx));
         }
 
-        vec![general, appearance, code, terminal, providers]
+        vec![
+            general,
+            appearance,
+            code,
+            terminal,
+            providers,
+            external_page(),
+        ]
     }
+}
+
+fn external_page() -> SettingPage {
+    SettingPage::new("Agents & MCP")
+        .icon(IconName::Network)
+        .group(
+            SettingGroup::new()
+                .title("Agent gateway")
+                .item(
+                    SettingItem::new(
+                        "Let agents manage threads",
+                        switch(|p| p.agent_gateway, |p, v| p.agent_gateway = v)
+                            .default_value(false),
+                    )
+                    .description(
+                        "Gives Claude Code and ACP agents MCP tools to list, read, create, message and wait for threads, so one agent can fan out work. Applies to agents started afterwards.",
+                    ),
+                )
+                .item(SettingItem::new(
+                    "Server",
+                    SettingField::render(|_, _, cx| {
+                        div()
+                            .text_sm()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_color(cx.theme().muted_foreground)
+                            .child(crate::gateway::url(cx).unwrap_or_else(|| "not running".into()))
+                    }),
+                )),
+        )
+        .group(
+            SettingGroup::new().title("Thread goals").item(
+                SettingItem::new(
+                    "Automatic turns per goal",
+                    number_field(number(1., 100., 1.), |p| p.goal_max_turns as f64, |p, v| {
+                        p.goal_max_turns = v.max(1.).round() as u32
+                    })
+                    .default_value(10.),
+                )
+                .description("A goal pauses after this many turns without being achieved."),
+            ),
+        )
+        .group(
+            SettingGroup::new()
+                .title("External clients")
+                .description(
+                    "Pair Claude Desktop, Codex or another MCP client to control Elyra Workspace. Each client gets its own token; revoke it any time.",
+                )
+                .item(SettingItem::new(
+                    "Paired clients",
+                    SettingField::render(|_, _, cx| render_clients(cx)),
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title("Activity")
+                .description("Every gateway call, newest first.")
+                .item(SettingItem::new(
+                    "Audit log",
+                    SettingField::render(|_, _, cx| render_audit(cx)),
+                )),
+        )
+}
+
+fn render_clients(cx: &mut App) -> AnyElement {
+    let Some(app) = preferences::app_state(cx) else {
+        return div().into_any_element();
+    };
+    let clients = app.read(cx).store.mcp_clients().unwrap_or_default();
+    let url = crate::gateway::url(cx).unwrap_or_default();
+    let copy = |id: String, label: &'static str, text: String| {
+        Button::new(SharedString::from(id))
+            .xsmall()
+            .ghost()
+            .label(label)
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(text.clone()))
+            })
+    };
+    let rows = clients.into_iter().map(|client| {
+        let id = client.id;
+        let used = client
+            .last_used_at
+            .map(|t| {
+                format!(
+                    "used {} ago",
+                    crate::workspace::format_age(chrono::Utc::now() - t)
+                )
+            })
+            .unwrap_or_else(|| "never used".into());
+        let scope = match client.scope {
+            elyra_core::ClientScope::Full => "full access",
+            elyra_core::ClientScope::ReadOnly => "read-only",
+        };
+        let revoke_app = app.clone();
+        v_flex()
+            .gap_1()
+            .py_1()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(div().text_sm().child(client.name.clone()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("{scope} · {used}")),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("revoke-{id}")))
+                            .xsmall()
+                            .ghost()
+                            .icon(IconName::Trash)
+                            .tooltip("Revoke")
+                            .on_click(move |_, _, cx| {
+                                crate::gateway::revoke_client(&revoke_app, id, cx)
+                            }),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(copy(
+                        format!("copy-desktop-{id}"),
+                        "Copy Claude Desktop config",
+                        crate::gateway::client_config("claude-desktop", &url, &client.token),
+                    ))
+                    .child(copy(
+                        format!("copy-codex-{id}"),
+                        "Copy Codex config",
+                        crate::gateway::client_config("codex", &url, &client.token),
+                    ))
+                    .child(copy(
+                        format!("copy-cc-{id}"),
+                        "Copy Claude Code command",
+                        crate::gateway::client_config("claude-code", &url, &client.token),
+                    )),
+            )
+    });
+    let (read_app, full_app) = (app.clone(), app.clone());
+    v_flex()
+        .w_full()
+        .gap_1()
+        .children(rows)
+        .child(
+            h_flex()
+                .gap_2()
+                .pt_1()
+                .child(
+                    Button::new("pair-read")
+                        .small()
+                        .label("Pair read-only client")
+                        .on_click(move |_, _, cx| {
+                            crate::gateway::pair_client(
+                                &read_app,
+                                elyra_core::ClientScope::ReadOnly,
+                                cx,
+                            );
+                        }),
+                )
+                .child(
+                    Button::new("pair-full")
+                        .small()
+                        .label("Pair full-access client")
+                        .on_click(move |_, _, cx| {
+                            crate::gateway::pair_client(
+                                &full_app,
+                                elyra_core::ClientScope::Full,
+                                cx,
+                            );
+                        }),
+                ),
+        )
+        .into_any_element()
+}
+
+fn render_audit(cx: &mut App) -> AnyElement {
+    let Some(app) = preferences::app_state(cx) else {
+        return div().into_any_element();
+    };
+    let entries = app.read(cx).store.audit_log(40).unwrap_or_default();
+    if entries.is_empty() {
+        return div()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child("No calls yet.")
+            .into_any_element();
+    }
+    v_flex()
+        .w_full()
+        .children(entries.into_iter().map(|entry| {
+            h_flex()
+                .gap_2()
+                .text_xs()
+                .child(
+                    div()
+                        .w(px(110.))
+                        .flex_none()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(
+                            entry
+                                .at
+                                .with_timezone(&chrono::Local)
+                                .format("%d.%m %H:%M:%S")
+                                .to_string(),
+                        ),
+                )
+                .child(
+                    div()
+                        .w(px(150.))
+                        .flex_none()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(entry.client),
+                )
+                .child(
+                    div()
+                        .w(px(120.))
+                        .flex_none()
+                        .text_color(if entry.ok {
+                            cx.theme().foreground
+                        } else {
+                            cx.theme().danger
+                        })
+                        .child(entry.tool),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_color(cx.theme().muted_foreground)
+                        .child(entry.detail),
+                )
+        }))
+        .into_any_element()
 }
 
 fn provider_field(

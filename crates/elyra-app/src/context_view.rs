@@ -3,7 +3,7 @@
 
 use crate::app_state::AppState;
 use crate::thread_session::ThreadSession;
-use elyra_core::{ItemContent, ItemId};
+use elyra_core::{GoalStatus, ItemContent, ItemId};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
@@ -108,6 +108,7 @@ pub struct ContextView {
     session: Entity<ThreadSession>,
     notes: Entity<TextareaState>,
     instructions: Entity<TextareaState>,
+    goal: Entity<TextareaState>,
     servers: Vec<Server>,
     scanning: bool,
     _save_notes: Option<Task<()>>,
@@ -141,6 +142,11 @@ impl ContextView {
                 .placeholder("Extra instructions every agent in this project gets…")
                 .default_value(instructions_text)
         });
+        let goal = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(2, 8)
+                .placeholder("e.g. All tests pass and the checkout flow handles discounts")
+        });
         let subscriptions = vec![
             cx.subscribe(&notes, |this, _, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
@@ -165,6 +171,7 @@ impl ContextView {
             session,
             notes,
             instructions,
+            goal,
             servers: Vec::new(),
             scanning: false,
             _save_notes: None,
@@ -212,6 +219,94 @@ impl ContextView {
         })
         .detach();
         cx.notify();
+    }
+
+    fn render_goal(&self, cx: &Context<Self>) -> AnyElement {
+        let session = self.session.read(cx);
+        let budget = crate::preferences::Preferences::global(cx).goal_max_turns;
+        let section = Self::section("Goal", cx);
+        let Some(goal) = session.thread.goal.clone() else {
+            return v_flex()
+                .gap_2()
+                .child(section)
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "The agent keeps working toward it turn after turn (up to {budget} automatic turns) until it reports the goal achieved or needs you."
+                        )),
+                )
+                .child(Textarea::new(&self.goal))
+                .child(
+                    h_flex().justify_end().child(
+                        Button::new("start-goal")
+                            .small()
+                            .primary()
+                            .icon(IconName::Target)
+                            .label("Start goal")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                let text = this.goal.read(cx).value().to_string();
+                                this.goal.update(cx, |goal, cx| goal.set_value("", window, cx));
+                                this.session
+                                    .update(cx, |session, cx| session.set_goal(Some(text), cx));
+                            })),
+                    ),
+                )
+                .into_any_element();
+        };
+        let status = session.thread.goal_status.unwrap_or(GoalStatus::Paused);
+        let runs = session.thread.goal_runs;
+        let (label, color) = match status {
+            GoalStatus::Active => (format!("Working · {runs}/{budget} turns"), cx.theme().info),
+            GoalStatus::Paused => ("Paused".to_string(), cx.theme().warning),
+            GoalStatus::Achieved => ("Achieved".to_string(), cx.theme().success),
+            GoalStatus::Exhausted => (format!("Stopped after {budget} turns"), cx.theme().warning),
+        };
+        let active = status == GoalStatus::Active;
+        v_flex()
+            .gap_2()
+            .child(section)
+            .child(
+                v_flex()
+                    .p_2()
+                    .gap_1()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(color.opacity(0.5))
+                    .child(div().text_sm().child(goal))
+                    .child(div().text_xs().text_color(color).child(label)),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .justify_end()
+                    .child(
+                        Button::new("goal-toggle")
+                            .small()
+                            .icon(if active {
+                                IconName::Pause
+                            } else {
+                                IconName::Play
+                            })
+                            .label(if active { "Pause" } else { "Resume" })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.session
+                                    .update(cx, |session, cx| session.pause_goal(active, cx));
+                            })),
+                    )
+                    .child(
+                        Button::new("goal-clear")
+                            .small()
+                            .ghost()
+                            .label("Clear")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.session
+                                    .update(cx, |session, cx| session.set_goal(None, cx));
+                            })),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn section(title: &'static str, cx: &Context<Self>) -> Div {
@@ -323,6 +418,7 @@ impl Render for ContextView {
                 v_flex()
                     .p_3()
                     .gap_4()
+                    .child(self.render_goal(cx))
                     .child(
                         v_flex()
                             .gap_2()
