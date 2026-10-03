@@ -6,6 +6,8 @@ the changes it makes, Git, a terminal and your files in the same window. Written
 Rust with [GPUI](https://www.gpui.rs/) and [GPUI Kit](https://gpui-kit.com), inspired by
 [Synara](https://github.com/Emanuele-web04/synara).
 
+![Elyra Workspace: projects and threads on the left, an agent conversation with a task list, a question and a plan in the middle, and the Changes panel with a diff on the right](assets/screenshot.png)
+
 **[Download the latest release](https://github.com/kwhorne/elyra-workspace/releases/latest)**
 — a signed and notarized DMG for Macs with Apple Silicon (macOS 12 or later). The app
 updates itself after that.
