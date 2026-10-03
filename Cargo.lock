@@ -1655,7 +1655,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 
 [[package]]
 name = "elyra-app"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -1686,7 +1686,7 @@ dependencies = [
 
 [[package]]
 name = "elyra-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "elyra-git"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "log",
@@ -1712,7 +1712,7 @@ dependencies = [
 
 [[package]]
 name = "elyra-mcp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "log",
@@ -1721,7 +1721,7 @@ dependencies = [
 
 [[package]]
 name = "elyra-provider"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -1736,7 +1736,7 @@ dependencies = [
 
 [[package]]
 name = "elyra-terminal"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "alacritty_terminal",
  "anyhow",

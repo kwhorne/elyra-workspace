@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.2.0
+## 0.2.1
+
+First release with the browser (0.2.0 was tagged but never published).
 
 - **Browser.** Each thread has a web browser in the tools panel (**⇧⌘B**, or
   click a local server in the Context tab) for looking at the app you're
