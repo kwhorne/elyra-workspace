@@ -43,7 +43,7 @@ Turn on **Settings → Agents & MCP → Let agents manage threads**. Agents star
 afterwards get the tools above as an MCP server named `elyra`. In Claude Code they
 appear as `mcp__elyra__…`.
 
-- Supported by Claude Code, Codex, Elyra (versions newer than 0.9.45) and ACP
+- Supported by Claude Code, Codex, Elyra (0.9.46 or later) and ACP
   agents. Pi can use MCP servers through an extension with its own
   configuration, but doesn't get the gateway from Elyra Workspace yet.
 - Tool calls follow the thread's permission mode like any other tool. In *Ask for

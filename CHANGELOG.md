@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.2.2
 
-- Elyra threads get the agent gateway too (Elyra newer than 0.9.45), as
+- Elyra threads get the agent gateway too (Elyra 0.9.46 or later), as
   `mcp__elyra__…` tools. Pi still doesn't.
 
 ## 0.2.1
