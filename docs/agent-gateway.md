@@ -46,6 +46,9 @@ appear as `mcp__elyra__…`.
 - Supported by Claude Code, Codex, Elyra (0.9.46 or later) and ACP
   agents. Pi can use MCP servers through an extension with its own
   configuration, but doesn't get the gateway from Elyra Workspace yet.
+- With Elyra 0.9.47 or later the gateway's tools are there from the first message
+  of a thread. With 0.9.46 Elyra registers them in the background, so an agent may
+  have to reach them through `mcp_search` and `mcp_call` first.
 - Tool calls follow the thread's permission mode like any other tool. In *Ask for
   approval* mode you approve each one.
 - Each agent gets its own token, which only lasts while Elyra is running.
