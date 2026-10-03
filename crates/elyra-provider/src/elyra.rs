@@ -46,6 +46,33 @@ pub fn find_pi() -> Option<PathBuf> {
     crate::process::find_executable("pi")
 }
 
+/// Environment variable through which Elyra's MCP client takes servers for
+/// one process (`.mcp.json` format); versions without it ignore it.
+const MCP_SERVERS_ENV: &str = "ELYRA_MCP_SERVERS";
+
+/// The gateway servers as `ELYRA_MCP_SERVERS` JSON, or `None` without any.
+fn mcp_servers_env(servers: &[crate::McpServer]) -> Option<String> {
+    if servers.is_empty() {
+        return None;
+    }
+    let servers: serde_json::Map<String, Value> = servers
+        .iter()
+        .map(|server| {
+            let entry = json!({
+                "type": "http",
+                "url": server.url,
+                "headers": { "Authorization": format!("Bearer {}", server.token) },
+                // Its own tools (`mcp__elyra__…`), not only through mcp_search.
+                "directTools": true,
+                // `wait_for_thread` may block for up to an hour.
+                "timeout": 61 * 60 * 1000,
+            });
+            (server.name.clone(), entry)
+        })
+        .collect();
+    Some(json!({ "mcpServers": servers }).to_string())
+}
+
 pub struct ElyraSession {
     process: Arc<JsonlProcess>,
     next_id: AtomicU64,
@@ -58,6 +85,10 @@ impl ElyraSession {
             .clone()
             .or_else(find_executable)
             .ok_or_else(|| anyhow!("Elyra (`elyra`) was not found on PATH — install with `npm install -g @elyracode/coding-agent`"))?;
+        let mut config = config;
+        if let Some(servers) = mcp_servers_env(&config.mcp_servers) {
+            config.env.push((MCP_SERVERS_ENV.into(), servers));
+        }
         Self::start_with(executable, config)
     }
 
@@ -549,6 +580,23 @@ impl RpcParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn passes_gateway_servers_as_json() {
+        assert_eq!(mcp_servers_env(&[]), None);
+        let json = mcp_servers_env(&[crate::McpServer {
+            name: "elyra".into(),
+            url: "http://127.0.0.1:1/mcp".into(),
+            token: "secret".into(),
+            bridge: None,
+        }])
+        .unwrap();
+        let value: Value = serde_json::from_str(&json).unwrap();
+        let server = &value["mcpServers"]["elyra"];
+        assert_eq!(server["url"], "http://127.0.0.1:1/mcp");
+        assert_eq!(server["headers"]["Authorization"], "Bearer secret");
+        assert_eq!(server["directTools"], true);
+    }
 
     fn feed(parser: &mut RpcParser, line: &str) -> Vec<ProviderEvent> {
         parser.handle(&serde_json::from_str(line).unwrap())

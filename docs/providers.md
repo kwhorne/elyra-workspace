@@ -8,7 +8,7 @@ Sign-in, billing and limits are handled by each tool.
 | --- | --- | --- | --- | --- | --- | --- |
 | Claude Code | `claude` | stream-json | yes | low – max | yes | yes |
 | Codex | `codex app-server` | JSON-RPC (app-server v2) | yes | minimal – extra high | yes | yes |
-| Elyra | `elyra --mode rpc` | RPC | no (tools run directly) | off – extra high | yes | no |
+| Elyra | `elyra --mode rpc` | RPC | no (tools run directly) | off – extra high | yes | yes (newer than 0.9.45) |
 | Pi | `pi --mode rpc` | RPC (same as Elyra) | no | off – extra high | yes | no |
 | Gemini CLI | `gemini --experimental-acp` | Agent Client Protocol | yes | — | via context | yes |
 | Cursor Agent | `cursor-agent acp` | Agent Client Protocol | yes | — | via context | yes |

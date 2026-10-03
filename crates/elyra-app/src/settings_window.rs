@@ -512,7 +512,7 @@ fn external_page() -> SettingPage {
                             .default_value(false),
                     )
                     .description(
-                        "Gives Claude Code and ACP agents MCP tools to list, read, create, message and wait for threads, so one agent can fan out work. Applies to agents started afterwards.",
+                        "Gives Claude Code, Codex, Elyra and ACP agents MCP tools to list, read, create, message and wait for threads, so one agent can fan out work, and to look at local pages in the thread's browser. Applies to agents started afterwards.",
                     ),
                 )
                 .item(SettingItem::new(

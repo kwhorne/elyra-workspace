@@ -52,7 +52,7 @@ arguments (ACP agents), environment and accounts. See [Providers](providers.md).
 
 | Setting | Meaning |
 | --- | --- |
-| Let agents manage threads | Gives Claude Code, Codex and ACP agents tools to list, read, create and steer threads ([Agent gateway](agent-gateway.md)). Off by default. |
+| Let agents manage threads | Gives Claude Code, Codex, Elyra and ACP agents tools to list, read, create and steer threads and to look at local pages in the browser ([Agent gateway](agent-gateway.md)). Off by default. |
 | Server | The address of Elyra's local MCP server |
 | Automatic turns per goal | How many turns a [goal](context-and-goals.md#goal) may take on its own before it pauses (default 10) |
 | External clients | Pair, configure and revoke Claude Desktop, Codex and other MCP clients |
