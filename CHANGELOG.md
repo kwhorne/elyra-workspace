@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - **Best of N.** Give one task to several agents at once (command palette →
   *Best of N…*), each in its own worktree. Compare their changes, cost and
