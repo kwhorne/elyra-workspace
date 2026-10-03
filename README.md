@@ -45,12 +45,15 @@ and needs no API keys.
 
 ## Documentation
 
-- [User guide](docs/README.md): getting started, threads, working with agents,
-  providers, Git and review, files, terminal, automations, the agent gateway,
-  settings, keyboard shortcuts and troubleshooting
-- [Development](docs/development.md): building from source, architecture, testing
-  and releasing
+- [User guide](https://elyracode.com/docs/workspace): getting started, threads,
+  working with agents, providers, Git and review, files, terminal, automations, the
+  agent gateway, settings, keyboard shortcuts and troubleshooting
+- [Development](https://elyracode.com/docs/workspace/development): building from
+  source, architecture, testing and releasing
 - [Changelog](CHANGELOG.md)
+
+More about Elyra Workspace: [elyracode.com/workspace](https://elyracode.com/workspace).
+The documentation source is in [docs/](docs/README.md).
 
 ## Building from source
 
@@ -60,8 +63,8 @@ Requires Rust 1.85 or later and `git`, on a Mac with Apple Silicon.
 cargo run --release
 ```
 
-See [Development](docs/development.md) for the app bundle, tests and the release
-process.
+See [Development](https://elyracode.com/docs/workspace/development) for the app
+bundle, tests and the release process.
 
 ## License
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Help → Elyra Workspace Documentation** (and "Documentation" in the command
+  palette) opens the user guide on
+  [elyracode.com/docs/workspace](https://elyracode.com/docs/workspace).
+
 ## 0.1.4
 
 No changes to the app itself.
@@ -7,7 +13,8 @@ No changes to the app itself.
 - Releases are now built, signed, notarized and published by GitHub Actions
   when a version tag is pushed; this is the first release made that way.
 - New README with a screenshot, and a development guide
-  ([docs/development.md](docs/development.md)) for building and releasing.
+  ([elyracode.com/docs/workspace/development](https://elyracode.com/docs/workspace/development))
+  for building and releasing.
 
 ## 0.1.3
 

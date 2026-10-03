@@ -101,6 +101,7 @@ fn main() {
             cx.on_action(move |_: &actions::Quit, cx| request_quit(&quit_app, cx));
             cx.on_action(|_: &actions::OpenSettings, cx| settings_window::open(cx));
             cx.on_action(|_: &actions::CheckForUpdates, cx| updater::check(true, cx));
+            cx.on_action(|_: &actions::OpenDocumentation, cx| cx.open_url(DOCS_URL));
             let shutdown_app = app.clone();
             cx.on_app_quit(move |cx| {
                 shutdown_app.update(cx, |app, cx| app.prepare_quit(cx));
@@ -114,6 +115,9 @@ fn main() {
             updater::init(app.clone(), cx);
         });
 }
+
+/// The user guide.
+pub(crate) const DOCS_URL: &str = "https://elyracode.com/docs/workspace";
 
 fn menus() -> Vec<Menu> {
     vec![
@@ -177,10 +181,10 @@ fn menus() -> Vec<Menu> {
         },
         Menu {
             name: "Help".into(),
-            items: vec![MenuItem::action(
-                "Keyboard Shortcuts",
-                actions::ShowShortcuts,
-            )],
+            items: vec![
+                MenuItem::action("Elyra Workspace Documentation", actions::OpenDocumentation),
+                MenuItem::action("Keyboard Shortcuts", actions::ShowShortcuts),
+            ],
             disabled: false,
         },
     ]

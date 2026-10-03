@@ -222,6 +222,12 @@ fn commands() -> Vec<Command> {
             actions::ShowShortcuts
         ),
         command!(
+            "Documentation",
+            "",
+            IconName::BookOpen,
+            actions::OpenDocumentation
+        ),
+        command!(
             "Manage worktrees…",
             "",
             IconName::GitBranch,

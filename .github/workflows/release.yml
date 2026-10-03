@@ -117,11 +117,16 @@ jobs:
             echo "## What's new"
             echo
             # The CHANGELOG section for this version, without its heading or
-            # leading blank lines; repository-relative links made absolute so
-            # they work on the release page.
+            # leading blank lines. Links to the user guide go to
+            # elyracode.com; other repository-relative links to GitHub.
             awk -v v="## $VERSION" '$0 == v { on = 1; next } /^## / && on { exit } on' CHANGELOG.md \
               | awk 'NF { body = 1 } body' \
-              | sed -E "s#\]\(((docs|assets|scripts|crates)/[^)]*|[A-Za-z_-]+\.md|LICENSE)\)#](https://github.com/$GITHUB_REPOSITORY/blob/main/\1)#g"
+              | sed -E \
+                  -e "s#\]\(docs/README\.md\)#](https://elyracode.com/docs/workspace)#g" \
+                  -e "s#\]\(docs/([a-z0-9-]+)\.md(\#[^)]*)?\)#](https://elyracode.com/docs/workspace/\1\2)#g" \
+                  -e "s#\]\(((assets|scripts|crates)/[^)]*|[A-Za-z_-]+\.md|LICENSE)\)#](https://github.com/$GITHUB_REPOSITORY/blob/main/\1)#g"
+            echo
+            echo "Documentation: https://elyracode.com/docs/workspace"
           } > "$RUNNER_TEMP/notes.md"
           gh release create "v$VERSION" "$dmg" "$dmg.sha256" \
             --title "Elyra Workspace $VERSION" \

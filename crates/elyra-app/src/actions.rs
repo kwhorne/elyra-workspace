@@ -59,6 +59,7 @@ gpui_kit::actions!(
         ShowTasks,
         ShowStats,
         ExportThread,
+        OpenDocumentation,
     ]
 );
 
@@ -111,6 +112,14 @@ pub const SHORTCUTS: &[Shortcut] = &[
         "cmd-/",
         WS,
         ShowShortcuts
+    ),
+    shortcut!(
+        "documentation",
+        "General",
+        "Documentation",
+        "",
+        None,
+        OpenDocumentation
     ),
     shortcut!(
         "toggle_theme",
