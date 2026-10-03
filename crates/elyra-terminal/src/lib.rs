@@ -988,7 +988,12 @@ mod tests {
         assert!(!terminal.search("(x)", true));
         assert!(!terminal.search("", true));
 
-        assert!(!terminal.has_running_process());
+        // The shell takes the terminal back shortly after the output arrives.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while terminal.has_running_process() {
+            assert!(Instant::now() < deadline, "shell still busy");
+            std::thread::sleep(Duration::from_millis(50));
+        }
         terminal.write("sleep 5\r");
         let deadline = Instant::now() + Duration::from_secs(5);
         while !terminal.has_running_process() {
