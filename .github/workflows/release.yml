@@ -116,8 +116,12 @@ jobs:
             echo
             echo "## What's new"
             echo
-            # The CHANGELOG section for this version, without its heading.
-            awk -v v="## $VERSION" '$0 == v { on = 1; next } /^## / && on { exit } on' CHANGELOG.md
+            # The CHANGELOG section for this version, without its heading or
+            # leading blank lines; repository-relative links made absolute so
+            # they work on the release page.
+            awk -v v="## $VERSION" '$0 == v { on = 1; next } /^## / && on { exit } on' CHANGELOG.md \
+              | awk 'NF { body = 1 } body' \
+              | sed -E "s#\]\(((docs|assets|scripts|crates)/[^)]*|[A-Za-z_-]+\.md|LICENSE)\)#](https://github.com/$GITHUB_REPOSITORY/blob/main/\1)#g"
           } > "$RUNNER_TEMP/notes.md"
           gh release create "v$VERSION" "$dmg" "$dmg.sha256" \
             --title "Elyra Workspace $VERSION" \
