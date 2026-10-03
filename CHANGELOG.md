@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.3
+
+- Elyra threads have the gateway's `mcp__elyra__…` tools from their first
+  message (with Elyra 0.9.47 or later). The gateway token now reaches Elyra in
+  its own environment variable, so Elyra's cached tool list survives the new
+  token each session.
+- The command palette (⌘K) scrolls to keep the selected row in view when you
+  move with the arrow keys.
+
 ## 0.2.2
 
 - Elyra threads get the agent gateway too (Elyra 0.9.46 or later), as
