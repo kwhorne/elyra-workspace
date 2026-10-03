@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.5
 
 - **Help → Elyra Workspace Documentation** (and "Documentation" in the command
   palette) opens the user guide on
