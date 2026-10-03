@@ -1,0 +1,129 @@
+# Build, sign, notarize and publish a release when a version tag is pushed:
+#
+#   git tag -a v0.1.4 -m "Elyra Workspace 0.1.4" && git push origin v0.1.4
+#
+# The tag must match the version in Cargo.toml, and CHANGELOG.md must have a
+# "## <version>" section (it becomes the release notes). Running the workflow
+# by hand ("Run workflow") builds and notarizes without publishing; the DMG is
+# attached to the run as an artifact.
+#
+# Repository secrets:
+#   MACOS_CERTIFICATE_P12       base64 of the "Developer ID Application" certificate
+#                               and its private key, exported as .p12
+#   MACOS_CERTIFICATE_PASSWORD  the .p12 export password
+#   NOTARY_APPLE_ID             Apple ID used for notarization
+#   NOTARY_PASSWORD             app-specific password for that Apple ID
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Apple Silicon runner: releases are arm64 only.
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      CODESIGN_IDENTITY: "Developer ID Application: GETS AS (7G383N3VY7)"
+      NOTARY_TEAM_ID: 7G383N3VY7
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version
+        id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            if [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+              echo "::error::Tag ${GITHUB_REF_NAME} does not match Cargo.toml version $version"
+              exit 1
+            fi
+            if ! grep -q "^## $version\$" CHANGELOG.md; then
+              echo "::error::CHANGELOG.md has no '## $version' section"
+              exit 1
+            fi
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$P12" ]; then
+            echo "::error::The MACOS_CERTIFICATE_P12 secret is not set"
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$P12_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$keychain"
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" \
+            $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$keychain"
+
+      - name: Build, sign and notarize
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: scripts/release-macos.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Elyra-Workspace-${{ steps.version.outputs.version }}-arm64
+          path: |
+            target/release/dist/*.dmg
+            target/release/dist/*.sha256
+          if-no-files-found: error
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          dmg="target/release/dist/Elyra-Workspace-$VERSION-arm64.dmg"
+          sha="$(cut -d' ' -f1 "$dmg.sha256")"
+          {
+            echo "**Download:** \`$(basename "$dmg")\` — macOS 12 or later on Apple Silicon. Signed with Developer ID and notarized by Apple. Elyra Workspace 0.1.2 and later install this update automatically."
+            echo
+            echo "SHA-256: \`$sha\`"
+            echo
+            echo "## What's new"
+            echo
+            # The CHANGELOG section for this version, without its heading.
+            awk -v v="## $VERSION" '$0 == v { on = 1; next } /^## / && on { exit } on' CHANGELOG.md
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "v$VERSION" "$dmg" "$dmg.sha256" \
+            --title "Elyra Workspace $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            --verify-tag
+
+      - name: Remove signing keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true

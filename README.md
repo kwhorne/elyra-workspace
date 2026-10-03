@@ -129,15 +129,46 @@ distribution. Bundle id: `com.gets.elyra-workspace`.
 
 ### Release (signed and notarized)
 
+Releases are built by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml))
+when a version tag is pushed:
+
+1. Bump `version` in `Cargo.toml` and add a `## <version>` section to
+   [CHANGELOG.md](CHANGELOG.md); commit and push.
+2. Tag and push: `git tag -a v0.1.4 -m "Elyra Workspace 0.1.4" && git push origin v0.1.4`.
+
+The workflow checks that the tag matches `Cargo.toml`, runs the tests, builds the
+app with the hardened runtime, signs it with the Developer ID, notarizes and
+staples the app and the DMG, and publishes the GitHub release with the DMG, its
+SHA-256 and the changelog section as notes. Installed copies (0.1.2 and later)
+pick it up and update themselves. "Run workflow" builds and notarizes without
+publishing (the DMG is attached to the run).
+
+The workflow needs four repository secrets:
+
+| Secret | Value |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12` | The *Developer ID Application* certificate with its private key, exported from Keychain Access as `.p12`, base64-encoded |
+| `MACOS_CERTIFICATE_PASSWORD` | The password chosen when exporting the `.p12` |
+| `NOTARY_APPLE_ID` | The Apple ID used for notarization |
+| `NOTARY_PASSWORD` | An app-specific password for that Apple ID |
+
 ```console
-xcrun notarytool store-credentials elyra-workspace --apple-id <apple id> --team-id 7G383N3VY7   # once
-scripts/release-macos.sh       # -> target/release/dist/Elyra-Workspace-<version>-<arch>.dmg
+base64 -i DeveloperID.p12 | gh secret set MACOS_CERTIFICATE_P12
+gh secret set MACOS_CERTIFICATE_PASSWORD     # prompts for the value
+gh secret set NOTARY_APPLE_ID
+gh secret set NOTARY_PASSWORD
 ```
 
-Builds the app with the hardened runtime, signs it with the Developer ID identity,
-notarizes and staples the app and the DMG, and writes a SHA-256 checksum.
-`SKIP_NOTARIZE=1` signs without notarizing. The version comes from `Cargo.toml`;
-see [CHANGELOG.md](CHANGELOG.md).
+To release from this Mac instead:
+
+```console
+xcrun notarytool store-credentials elyra-workspace --apple-id <apple id> --team-id 7G383N3VY7   # once
+scripts/release-macos.sh       # -> target/release/dist/Elyra-Workspace-<version>-arm64.dmg
+```
+
+`SKIP_NOTARIZE=1` signs without notarizing. Keep the DMG name
+(`Elyra-Workspace-<version>-arm64.dmg` plus `.sha256`): the in-app updater looks
+for exactly these assets.
 
 ### App icon
 

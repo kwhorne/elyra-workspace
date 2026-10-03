@@ -11,6 +11,9 @@
 #   xcrun notarytool store-credentials elyra-workspace \
 #     --apple-id you@example.com --team-id 7G383N3VY7
 #
+# In CI, set NOTARY_APPLE_ID, NOTARY_PASSWORD (app-specific) and NOTARY_TEAM_ID
+# instead of a keychain profile.
+#
 # SKIP_NOTARIZE=1 builds and signs without notarizing (local testing only).
 set -euo pipefail
 
@@ -20,6 +23,11 @@ VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 ARCH=arm64  # Apple Silicon only; bundle-macos.sh refuses other hosts
 export CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: GETS AS (7G383N3VY7)}"
 PROFILE="${NOTARY_PROFILE:-elyra-workspace}"
+if [ -n "${NOTARY_APPLE_ID:-}" ]; then
+  NOTARY_AUTH=(--apple-id "$NOTARY_APPLE_ID" --password "${NOTARY_PASSWORD:?}" --team-id "${NOTARY_TEAM_ID:-7G383N3VY7}")
+else
+  NOTARY_AUTH=(--keychain-profile "$PROFILE")
+fi
 APP="$ROOT/target/release/bundle/$NAME.app"
 DIST="$ROOT/target/release/dist"
 DMG="$DIST/Elyra-Workspace-$VERSION-$ARCH.dmg"
@@ -30,11 +38,11 @@ notarize() {
     return
   fi
   echo "→ notarizing $(basename "$1") (this takes a few minutes)"
-  xcrun notarytool submit "$1" --keychain-profile "$PROFILE" --wait
+  xcrun notarytool submit "$1" "${NOTARY_AUTH[@]}" --wait
 }
 
-if [ "${SKIP_NOTARIZE:-}" != "1" ] && ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
-  echo "No notarytool profile \"$PROFILE\". Store credentials once with:" >&2
+if [ "${SKIP_NOTARIZE:-}" != "1" ] && ! xcrun notarytool history "${NOTARY_AUTH[@]}" >/dev/null 2>&1; then
+  echo "Notarization credentials don't work (profile \"$PROFILE\" or NOTARY_* variables). Store them once with:" >&2
   echo "  xcrun notarytool store-credentials $PROFILE --apple-id <apple id> --team-id 7G383N3VY7" >&2
   exit 1
 fi
