@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- Maintenance release with no functional changes, published to verify that
+  0.1.2 updates itself automatically.
+
 ## 0.1.2
 
 - **Automatic updates.** New versions are downloaded and verified in the
