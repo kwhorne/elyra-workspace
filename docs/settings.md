@@ -10,7 +10,8 @@ that restores its defaults.
 | Setting | Meaning |
 | --- | --- |
 | External editor → Open projects in | The editor ⌘O uses. *Automatic* picks the first one installed. |
-| Updates → Check for updates automatically | Looks for a newer release on GitHub at launch. **Elyra Workspace → Check for Updates…** checks now. Updates are downloaded and installed by you. |
+| Updates → Check for updates automatically | Looks for a newer release on GitHub at launch and every six hours. **Elyra Workspace → Check for Updates…** checks now. |
+| Updates → Download and install updates automatically | Downloads and verifies a new version in the background; it installs when you restart or quit. Off: you're told about the new version and click to install it. See [Updates](troubleshooting.md#updates). |
 
 ## Appearance
 

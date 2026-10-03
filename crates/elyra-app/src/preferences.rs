@@ -35,6 +35,8 @@ pub struct Preferences {
     /// Empty means the login shell.
     pub terminal_shell: String,
     pub check_updates: bool,
+    /// Download and stage updates on their own; they install on restart.
+    pub auto_update: bool,
     /// External editor name (see `editors::EDITORS`); empty picks the first
     /// installed one.
     pub editor: String,
@@ -155,6 +157,7 @@ impl Default for Preferences {
             terminal_scrollback: 10_000,
             terminal_shell: String::new(),
             check_updates: true,
+            auto_update: true,
             editor: String::new(),
             follow_system: false,
             light_theme: themes::DEFAULT_LIGHT.into(),

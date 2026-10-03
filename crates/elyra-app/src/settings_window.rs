@@ -459,14 +459,26 @@ impl SettingsView {
                 ),
             )
             .group(
-                SettingGroup::new().title("Updates").item(
-                    SettingItem::new(
-                        "Check for updates automatically",
-                        switch(|p| p.check_updates, |p, v| p.check_updates = v)
-                            .default_value(defaults.check_updates),
+                SettingGroup::new()
+                    .title("Updates")
+                    .item(
+                        SettingItem::new(
+                            "Check for updates automatically",
+                            switch(|p| p.check_updates, |p, v| p.check_updates = v)
+                                .default_value(defaults.check_updates),
+                        )
+                        .description("Looks for a newer release on GitHub at launch and every six hours."),
                     )
-                    .description("Looks for a newer release on GitHub at launch."),
-                ),
+                    .item(
+                        SettingItem::new(
+                            "Download and install updates automatically",
+                            switch(|p| p.auto_update, |p, v| p.auto_update = v)
+                                .default_value(defaults.auto_update),
+                        )
+                        .description(
+                            "Downloads and verifies new versions in the background. They install when you restart or quit.",
+                        ),
+                    ),
             );
 
         let mut providers = SettingPage::new("Providers")

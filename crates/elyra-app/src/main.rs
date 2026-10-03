@@ -28,11 +28,11 @@ mod themes;
 mod thread_session;
 mod thread_view;
 mod transcript;
+mod updater;
 mod updates;
 mod workspace;
 
 use app_state::AppState;
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{TitleBar, WindowExt as _};
 use gpui_kit::*;
 
@@ -100,19 +100,18 @@ fn main() {
             let quit_app = app.clone();
             cx.on_action(move |_: &actions::Quit, cx| request_quit(&quit_app, cx));
             cx.on_action(|_: &actions::OpenSettings, cx| settings_window::open(cx));
-            cx.on_action(|_: &actions::CheckForUpdates, cx| check_for_updates(true, cx));
+            cx.on_action(|_: &actions::CheckForUpdates, cx| updater::check(true, cx));
             let shutdown_app = app.clone();
             cx.on_app_quit(move |cx| {
                 shutdown_app.update(cx, |app, cx| app.prepare_quit(cx));
+                updater::on_quit(cx);
                 async {}
             })
             .detach();
             if !background {
                 cx.activate(true);
             }
-            if preferences::Preferences::global(cx).check_updates {
-                check_for_updates(false, cx);
-            }
+            updater::init(app.clone(), cx);
         });
 }
 
@@ -211,7 +210,7 @@ fn saved_bounds(app: &Entity<AppState>, cx: &App) -> WindowBounds {
 }
 
 /// Quit, asking first when agents are still working.
-fn request_quit(app: &Entity<AppState>, cx: &mut App) {
+pub(crate) fn request_quit(app: &Entity<AppState>, cx: &mut App) {
     let running = app.read(cx).running_threads(cx);
     if running.is_empty() {
         cx.quit();
@@ -248,46 +247,10 @@ fn request_quit(app: &Entity<AppState>, cx: &mut App) {
                     cx.quit();
                     true
                 })
+                .on_cancel(|_, _, cx| {
+                    updater::cancel_relaunch(cx);
+                    true
+                })
         });
     });
-}
-
-/// Look for a newer release. `manual` also reports "up to date" and errors.
-fn check_for_updates(manual: bool, cx: &mut App) {
-    let job = cx
-        .background_executor()
-        .spawn(async { updates::latest_release() });
-    cx.spawn(async move |cx| {
-        let result = job.await;
-        cx.update(|cx| {
-            let note = match result {
-                Ok(release) if updates::is_newer(&release.version, env!("CARGO_PKG_VERSION")) => {
-                    let url = release.url.clone();
-                    Some(
-                        Notification::info(format!(
-                            "Elyra Workspace {} is available (you have {}). Click to open the release.",
-                            release.version,
-                            env!("CARGO_PKG_VERSION")
-                        ))
-                        .autohide(false)
-                        .on_click(move |_, _, cx| cx.open_url(&url)),
-                    )
-                }
-                Ok(_) if manual => Some(Notification::success(format!(
-                    "Elyra Workspace {} is up to date.",
-                    env!("CARGO_PKG_VERSION")
-                ))),
-                Err(err) if manual => Some(Notification::warning(format!(
-                    "Could not check for updates: {err:#}"
-                ))),
-                _ => None,
-            };
-            if let Some(note) = note
-                && let Some(window) = cx.windows().first().copied()
-            {
-                let _ = window.update(cx, |_, window, cx| window.push_notification(note, cx));
-            }
-        });
-    })
-    .detach();
 }

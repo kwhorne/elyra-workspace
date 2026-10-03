@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2
+
+- **Automatic updates.** New versions are downloaded and verified in the
+  background (checksum, same Developer ID team, notarization, version) and
+  installed when you restart or quit; the app relaunches itself. Checks run at
+  launch and every six hours. Settings → General can turn off automatic
+  downloads. Apps running from the disk image or a read-only folder still get a
+  download link.
+
 ## 0.1.1
 
 - **Codex** as a provider through `codex app-server`: streaming, reasoning,

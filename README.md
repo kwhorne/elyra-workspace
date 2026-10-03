@@ -47,7 +47,7 @@ gateway, settings, keyboard shortcuts and troubleshooting.
 - Notifications and Dock badge when a background thread finishes or needs input;
   quit guard for running agents with resume after relaunch; window size and panel
   layout restored; first-run welcome; single instance per data directory; crash log;
-  update check
+  automatic updates (downloaded, verified and installed on restart)
 - Local checkout or an isolated managed Git worktree per thread
 - Git panel: branch switch/create (stash on conflict), fetch/pull/push/publish,
   staged and unstaged lists with stage/unstage/discard, diffs of the working tree,

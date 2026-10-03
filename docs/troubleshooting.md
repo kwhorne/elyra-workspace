@@ -23,10 +23,33 @@ To run a separate copy with its own data, for example to try something out, set
 ELYRA_HOME=~/elyra-test "/Applications/Elyra Workspace.app/Contents/MacOS/elyra"
 ```
 
+## Updates
+
+Elyra Workspace updates itself:
+
+1. At launch and every six hours, it checks GitHub for a newer release.
+2. It downloads the new version in the background and checks it:
+   - the SHA-256 checksum must match
+   - the app must be signed by the same Developer ID team as the copy you run
+   - Gatekeeper must accept its notarization
+   - it must report the expected version
+3. A notification says the new version is ready. Click it to restart into the
+   new version. Agents that are still working are stopped first, after asking, and
+   can be resumed. If you don't click, the update installs the next time you quit.
+
+**Elyra Workspace → Check for Updates…** checks right away and shows the
+progress. To download only when you choose, turn off **Download and install
+updates automatically** in Settings → General.
+
+The app can't replace itself when it runs straight from the disk image, or from a
+folder you can't write to. Then the notification links to the download instead.
+Move the app to Applications to get automatic updates. Versions before 0.1.2 only
+link to the download, so update those once by hand.
+
 ## Privacy
 
-- Elyra Workspace has no account and sends no telemetry. The only network request
-  it makes itself is the optional check for a new release on GitHub.
+- Elyra Workspace has no account and sends no telemetry. The only network requests
+  it makes itself are the update check and update downloads from GitHub.
 - Your messages and files go to the agents you use, under their own terms. Elyra
   starts them as local programs.
 - The MCP server listens only on `127.0.0.1` and requires a token.
