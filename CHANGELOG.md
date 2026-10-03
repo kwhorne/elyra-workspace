@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - **Browser.** Each thread has a web browser in the tools panel (**⇧⌘B**, or
   click a local server in the Context tab) for looking at the app you're
