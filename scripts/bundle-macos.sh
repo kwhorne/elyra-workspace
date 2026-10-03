@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build "Elyra Workspace.app" (release) with the app icon and bundle metadata.
 #   scripts/bundle-macos.sh            -> target/release/bundle/Elyra Workspace.app
-# Signs ad hoc unless CODESIGN_IDENTITY is set (e.g. "Developer ID Application: ...").
+# Signs ad hoc unless CODESIGN_IDENTITY is set (e.g. "Developer ID Application: ...");
+# with an identity it signs with the hardened runtime and a secure timestamp, as
+# notarization requires. scripts/release-macos.sh builds the notarized DMG.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,5 +42,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-codesign --force --deep --sign "${CODESIGN_IDENTITY:--}" "$APP"
+if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+  codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$APP"
+  codesign --verify --strict --verbose=2 "$APP"
+else
+  codesign --force --sign - "$APP"
+fi
 echo "Built $APP"

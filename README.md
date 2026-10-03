@@ -125,6 +125,18 @@ scripts/bundle-macos.sh        # -> target/release/bundle/Elyra Workspace.app
 Signs ad hoc; set `CODESIGN_IDENTITY="Developer ID Application: …"` to sign for
 distribution. Bundle id: `com.gets.elyra-workspace`.
 
+### Release (signed and notarized)
+
+```console
+xcrun notarytool store-credentials elyra-workspace --apple-id <apple id> --team-id 7G383N3VY7   # once
+scripts/release-macos.sh       # -> target/release/dist/Elyra-Workspace-<version>-<arch>.dmg
+```
+
+Builds the app with the hardened runtime, signs it with the Developer ID identity,
+notarizes and staples the app and the DMG, and writes a SHA-256 checksum.
+`SKIP_NOTARIZE=1` signs without notarizing. The version comes from `Cargo.toml`;
+see [CHANGELOG.md](CHANGELOG.md).
+
 ### App icon
 
 The icon is Elyra Conductor's Lyra constellation recolored to Elyra yellow
