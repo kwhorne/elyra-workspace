@@ -104,7 +104,8 @@ gateway, settings, keyboard shortcuts and troubleshooting.
 ## Requirements
 
 - Rust 1.85+ (edition 2024)
-- macOS (primary target; GPUI also supports Linux and Windows)
+- A Mac with Apple Silicon (M1 or later) running macOS 12 or later. Intel Macs,
+  Linux and Windows are not supported.
 - At least one provider: [Claude Code](https://docs.claude.com/en/docs/claude-code)
   (`claude`, logged in) and/or [Elyra](https://www.npmjs.com/package/@elyracode/coding-agent)
   (`npm install -g @elyracode/coding-agent`)

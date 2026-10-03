@@ -17,7 +17,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NAME="Elyra Workspace"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
-ARCH="$(uname -m)"
+ARCH=arm64  # Apple Silicon only; bundle-macos.sh refuses other hosts
 export CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: GETS AS (7G383N3VY7)}"
 PROFILE="${NOTARY_PROFILE:-elyra-workspace}"
 APP="$ROOT/target/release/bundle/$NAME.app"

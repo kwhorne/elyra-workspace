@@ -12,6 +12,12 @@ BUNDLE_ID="com.gets.elyra-workspace"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 APP="$ROOT/target/release/bundle/$NAME.app"
 
+# Apple Silicon only.
+if [ "$(uname -m)" != "arm64" ]; then
+  echo "Elyra Workspace supports Apple Silicon only; build on an arm64 Mac." >&2
+  exit 1
+fi
+
 cargo build --release --manifest-path "$ROOT/Cargo.toml" -p elyra-app
 
 rm -rf "$APP"
@@ -34,6 +40,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>LSArchitecturePriority</key><array><string>arm64</string></array>
+  <key>LSRequiresNativeExecution</key><true/>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>

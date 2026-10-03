@@ -2,7 +2,8 @@
 
 ## Requirements
 
-- macOS
+- A Mac with Apple Silicon (M1 or later), macOS 12 or later. Intel Macs are not
+  supported.
 - `git`
 - At least one coding agent installed and signed in:
 
