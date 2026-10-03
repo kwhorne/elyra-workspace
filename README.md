@@ -219,4 +219,4 @@ cargo fmt --all
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
