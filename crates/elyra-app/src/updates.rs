@@ -15,8 +15,13 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const REPO: &str = "kwhorne/elyra-workspace";
+
 pub const RELEASES_API: &str =
     "https://api.github.com/repos/kwhorne/elyra-workspace/releases/latest";
+
+/// Redirects to the latest release's tag page; not subject to API limits.
+const LATEST_PAGE: &str = "https://github.com/kwhorne/elyra-workspace/releases/latest";
 
 /// Releases are built for Apple Silicon only.
 const ARCH: &str = "arm64";
@@ -107,9 +112,11 @@ fn curl(args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-/// Fetch the latest release.
+/// Fetch the latest release. Uses the GitHub API, and falls back to the
+/// release page redirect when the API refuses (its anonymous limit is 60
+/// requests an hour per IP address, shared by everyone behind it).
 pub fn latest_release() -> Result<Release> {
-    let body = curl(&[
+    let from_api = curl(&[
         "-fsSL",
         "-m",
         "15",
@@ -117,8 +124,56 @@ pub fn latest_release() -> Result<Release> {
         "Accept: application/vnd.github+json",
         RELEASES_API,
     ])
-    .context("no published release found")?;
-    Ok(parse_release(&serde_json::from_slice(&body)?))
+    .and_then(|body| Ok(parse_release(&serde_json::from_slice(&body)?)))
+    .and_then(|release| {
+        if release.version.is_empty() {
+            bail!("no published release found")
+        }
+        Ok(release)
+    });
+    match from_api {
+        Ok(release) => Ok(release),
+        Err(api_error) => {
+            latest_from_redirect().with_context(|| format!("GitHub API: {api_error:#}"))
+        }
+    }
+}
+
+/// The latest release from the `/releases/latest` redirect, with asset URLs
+/// built from the fixed file names the release workflow uses.
+fn latest_from_redirect() -> Result<Release> {
+    let output = Command::new("curl")
+        .args([
+            "-fsSI",
+            "-m",
+            "15",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{redirect_url}",
+            LATEST_PAGE,
+        ])
+        .output()
+        .context("running curl")?;
+    let location = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    release_from_tag_url(&location).ok_or_else(|| anyhow!("no published release found"))
+}
+
+fn release_from_tag_url(url: &str) -> Option<Release> {
+    let tag = url.split("/releases/tag/").nth(1)?.trim_end_matches('/');
+    let version = tag.trim_start_matches('v');
+    version_key(version)?;
+    let name = format!("Elyra-Workspace-{version}-{ARCH}.dmg");
+    let download = |file: &str| Asset {
+        name: file.to_string(),
+        url: format!("https://github.com/{REPO}/releases/download/{tag}/{file}"),
+    };
+    Some(Release {
+        version: version.to_string(),
+        url: url.to_string(),
+        checksum: Some(download(&format!("{name}.sha256"))),
+        dmg: Some(download(&name)),
+    })
 }
 
 /// The `.app` bundle containing an executable, if it is one.
@@ -403,6 +458,38 @@ mod tests {
                 .dmg
                 .is_none()
         );
+    }
+
+    #[test]
+    fn reads_releases_from_the_redirect() {
+        let release =
+            release_from_tag_url("https://github.com/kwhorne/elyra-workspace/releases/tag/v0.2.0")
+                .unwrap();
+        assert_eq!(release.version, "0.2.0");
+        assert_eq!(
+            release.dmg.unwrap().url,
+            "https://github.com/kwhorne/elyra-workspace/releases/download/v0.2.0/Elyra-Workspace-0.2.0-arm64.dmg"
+        );
+        assert!(
+            release
+                .checksum
+                .unwrap()
+                .url
+                .ends_with("Elyra-Workspace-0.2.0-arm64.dmg.sha256")
+        );
+        assert!(
+            release_from_tag_url("https://github.com/kwhorne/elyra-workspace/releases").is_none()
+        );
+        assert!(release_from_tag_url("").is_none());
+    }
+
+    /// Network: `cargo test -p elyra-app live_latest_release -- --ignored`.
+    #[test]
+    #[ignore]
+    fn live_latest_release() {
+        let release = latest_release().unwrap();
+        println!("latest: {} {:?}", release.version, release.dmg);
+        assert!(release.dmg.is_some() && release.checksum.is_some());
     }
 
     #[test]

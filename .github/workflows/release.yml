@@ -62,6 +62,13 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # Test builds are several GB; the runner's disk is too small to keep
+      # them next to the release build and the disk image.
+      - name: Free disk space
+        run: |
+          rm -rf target/debug
+          df -h "$GITHUB_WORKSPACE" | tail -1
+
       - name: Import signing certificate
         env:
           P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}

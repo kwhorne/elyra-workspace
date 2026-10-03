@@ -5,6 +5,9 @@
 - **Help → Elyra Workspace Documentation** (and "Documentation" in the command
   palette) opens the user guide on
   [elyracode.com/docs/workspace](https://elyracode.com/docs/workspace).
+- Update checks keep working when GitHub's API limit is reached (60 requests an
+  hour per network, shared by everyone on it): the app then reads the latest
+  version from the release page instead.
 
 ## 0.1.4
 
