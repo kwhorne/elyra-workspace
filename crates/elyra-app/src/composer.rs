@@ -20,6 +20,11 @@ pub enum Attachment {
     Text {
         content: String,
     },
+    /// Context Elyra gathered, such as errors from the browser.
+    Context {
+        title: String,
+        content: String,
+    },
 }
 
 impl Attachment {
@@ -35,16 +40,13 @@ impl Attachment {
         Attachment::Text { content }
     }
 
-    pub fn is_image(&self) -> bool {
-        matches!(self, Attachment::Image { .. })
-    }
-
     pub fn label(&self) -> String {
         match self {
             Attachment::Image { size, .. } => format!("Image · {} KB", size.div_ceil(1024)),
             Attachment::Text { content } => {
                 format!("Pasted text · {} lines", content.lines().count().max(1))
             }
+            Attachment::Context { title, .. } => title.clone(),
         }
     }
 }
@@ -101,6 +103,15 @@ pub fn build_prompt(text: &str, attachments: Vec<Attachment>) -> Prompt {
                     text.push_str("\n\n");
                 }
                 text.push_str("```\n");
+                text.push_str(content.trim_end());
+                text.push_str("\n```");
+            }
+            Attachment::Context { title, content } => {
+                if !text.is_empty() {
+                    text.push_str("\n\n");
+                }
+                text.push_str(&title);
+                text.push_str(":\n```\n");
                 text.push_str(content.trim_end());
                 text.push_str("\n```");
             }
@@ -430,9 +441,16 @@ mod tests {
             vec![
                 Attachment::pasted_text("a\nb".into()),
                 Attachment::image("image/png", b"png"),
+                Attachment::Context {
+                    title: "Errors in the browser".into(),
+                    content: "boom\n".into(),
+                },
             ],
         );
-        assert_eq!(prompt.text, "explain\n\n```\na\nb\n```");
+        assert_eq!(
+            prompt.text,
+            "explain\n\n```\na\nb\n```\n\nErrors in the browser:\n```\nboom\n```"
+        );
         assert_eq!(prompt.images[0].data, "cG5n");
     }
 

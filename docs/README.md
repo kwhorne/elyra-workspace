@@ -11,14 +11,14 @@ and the agents run as the command-line tools you already have installed.
 | Guide | What it covers |
 | --- | --- |
 | [Getting started](getting-started.md) | Installing, first launch, your first project and thread |
-| [Projects and threads](projects-and-threads.md) | The sidebar, tabs, spaces, archiving, forking, side chats, import and export |
+| [Projects and threads](projects-and-threads.md) | The sidebar, tabs, spaces, archiving, forking, side chats, second opinions, best of N, import and export |
 | [Working with an agent](chat.md) | The composer, attachments, `@` and `/`, models, approvals, plans, checkpoints |
 | [Providers](providers.md) | Claude Code, Codex, Elyra, Pi, Gemini CLI, Cursor, OpenCode and other ACP agents; accounts |
 | [Changes, Git and review](git-and-review.md) | Diffs, staging, commits, branches, worktrees, pull requests, the review inbox |
 | [Files and search](files-and-search.md) | Command palette, file finder, content search, the editor, external editors |
-| [Browser](browser.md) | The built-in browser for your dev servers, and letting agents look at pages |
+| [Browser](browser.md) | The built-in browser for your dev servers, page errors, before and after pictures, and letting agents look at pages |
 | [Terminal](terminal.md) | Terminal tabs and splits, search, full-screen programs, copy and paste |
-| [Context, notes and goals](context-and-goals.md) | Notes, pinned messages, recaps, project instructions, dev servers, goals |
+| [Context, notes and goals](context-and-goals.md) | Notes, pinned messages, recaps, project instructions, dev servers, goals, budgets |
 | [Automations and tasks](automations-and-tasks.md) | Scheduled prompts and the task board |
 | [Agent gateway and MCP](agent-gateway.md) | Letting agents manage threads, connecting Claude Desktop and Codex |
 | [Settings](settings.md) | Every page of the Settings window |

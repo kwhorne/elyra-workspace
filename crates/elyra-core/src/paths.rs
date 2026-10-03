@@ -16,6 +16,11 @@ pub fn database_path() -> PathBuf {
     data_dir().join("state.db")
 }
 
+/// Pictures of the browser page taken around turns, one folder per thread.
+pub fn snapshots_dir() -> PathBuf {
+    data_dir().join("snapshots")
+}
+
 /// Managed worktrees live outside the project checkout so parallel threads
 /// never write into the user's working copy.
 pub fn worktrees_dir() -> PathBuf {

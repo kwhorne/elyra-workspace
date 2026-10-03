@@ -89,6 +89,10 @@ const MIGRATIONS: &[&str] = &[
         data TEXT NOT NULL
     );
 "#,
+    r#"
+    ALTER TABLE threads ADD COLUMN budget_usd REAL;
+    ALTER TABLE threads ADD COLUMN race_id TEXT;
+"#,
 ];
 
 const PROJECT_COLUMNS: &str =
@@ -96,7 +100,7 @@ const PROJECT_COLUMNS: &str =
 const THREAD_COLUMNS: &str = "id, project_id, title, provider, model, permission_mode,
     provider_session_id, environment, status, archived, created_at, updated_at, effort,
     pinned, done, read_at, last_activity_at, parent_id, notes, recap, pinned_items, account,
-    fork_context, goal, goal_status, goal_runs, debug_mode";
+    fork_context, goal, goal_status, goal_runs, debug_mode, budget_usd, race_id";
 
 pub struct Store {
     pub(crate) conn: Connection,
@@ -284,6 +288,8 @@ impl Store {
             goal_status: None,
             goal_runs: 0,
             debug_mode: false,
+            budget_usd: None,
+            race_id: None,
             created_at: now,
             updated_at: now,
         };
@@ -316,7 +322,8 @@ impl Store {
                 updated_at = ?9, effort = ?10, provider = ?11, pinned = ?12, done = ?13,
                 read_at = ?14, last_activity_at = ?15, parent_id = ?16, notes = ?17, recap = ?18,
                 pinned_items = ?19, account = ?20, fork_context = ?21, goal = ?22,
-                goal_status = ?23, goal_runs = ?24, debug_mode = ?25
+                goal_status = ?23, goal_runs = ?24, debug_mode = ?25, budget_usd = ?26,
+                race_id = ?27
              WHERE id = ?1",
             params![
                 thread.id.to_string(),
@@ -344,6 +351,8 @@ impl Store {
                 thread.goal_status.map(|s| s.as_str()),
                 thread.goal_runs,
                 thread.debug_mode,
+                thread.budget_usd,
+                thread.race_id.map(|id| id.to_string()),
             ],
         )?;
         Ok(())
@@ -775,6 +784,10 @@ fn thread_from_row(row: &Row) -> rusqlite::Result<Thread> {
             .and_then(|s| GoalStatus::parse(&s)),
         goal_runs: row.get(25)?,
         debug_mode: row.get(26)?,
+        budget_usd: row.get(27)?,
+        race_id: row
+            .get::<_, Option<String>>(28)?
+            .and_then(|id| Uuid::parse_str(&id).ok()),
         created_at: parse_time(row, 10)?,
         updated_at: parse_time(row, 11)?,
     })
@@ -983,6 +996,9 @@ mod tests {
         thread.goal_status = Some(GoalStatus::Active);
         thread.goal_runs = 2;
         thread.debug_mode = true;
+        thread.budget_usd = Some(2.5);
+        let race = Uuid::new_v4();
+        thread.race_id = Some(race);
         store.update_thread(&thread).unwrap();
         let loaded = store
             .threads(false)
@@ -999,6 +1015,8 @@ mod tests {
             ),
             (Some("Green CI"), Some(GoalStatus::Active), 2, true)
         );
+        assert_eq!(loaded.budget_usd, Some(2.5));
+        assert_eq!(loaded.race_id, Some(race));
         store
             .append_item(
                 thread.id,

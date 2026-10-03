@@ -17,12 +17,74 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use serde_json::Value;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
 /// How often to check whether a dialog or sheet now covers the page.
 const COVER_CHECK: Duration = Duration::from_millis(150);
+
+/// How often to look for new errors on a local page.
+const ERROR_CHECK: Duration = Duration::from_secs(2);
+
+/// An error on the page: something written with console.error or thrown and
+/// not caught, or a request that failed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PageError {
+    /// Tells the same error apart from a new one across checks.
+    key: String,
+    pub line: String,
+}
+
+/// The errors in what the page's watcher captured (see agent-capture.js).
+/// Requests still under way are left out until they finish.
+pub fn page_errors(captured: &Value) -> Vec<PageError> {
+    let mut errors = Vec::new();
+    for entry in captured["console"].as_array().into_iter().flatten() {
+        if entry["level"] != "error" {
+            continue;
+        }
+        let text = entry["text"].as_str().unwrap_or("");
+        let short: String = text.chars().take(600).collect();
+        errors.push(PageError {
+            key: format!(
+                "c:{}:{}",
+                entry["time"],
+                text.chars().take(80).collect::<String>()
+            ),
+            line: format!("console.error: {short}"),
+        });
+    }
+    for entry in captured["network"].as_array().into_iter().flatten() {
+        let status = entry["status"].as_u64();
+        let error = entry["error"].as_str();
+        let failed = error.is_some() || status.is_some_and(|s| s >= 400);
+        if !failed {
+            continue;
+        }
+        let url = entry["url"].as_str().unwrap_or("");
+        let outcome = match (status, error) {
+            (Some(status), _) if status > 0 => status.to_string(),
+            (_, Some(error)) => error.to_string(),
+            _ => "failed".into(),
+        };
+        let mut line = format!(
+            "{} {url} → {outcome}",
+            entry["method"].as_str().unwrap_or("GET")
+        );
+        if let Some(body) = entry["body"].as_str().filter(|b| !b.trim().is_empty()) {
+            let body: String = body.chars().take(300).collect();
+            line.push_str(&format!(" ({})", body.trim().replace('\n', " ")));
+        }
+        errors.push(PageError {
+            key: format!("n:{}:{url}", entry["time"]),
+            line,
+        });
+    }
+    errors
+}
 
 pub struct BrowserView {
     host: Option<Rc<NativeHost>>,
@@ -36,6 +98,10 @@ pub struct BrowserView {
     shown: bool,
     /// The workspace draws something over the page (palette, About).
     covered: bool,
+    /// Errors on the page the user hasn't added to a message or dismissed.
+    errors: Vec<PageError>,
+    /// Errors already shown and handled, so they don't come back.
+    seen: HashSet<String>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -126,6 +192,39 @@ impl BrowserView {
                 }
             }
         });
+        // Look for new errors on local pages, for the composer's error chip.
+        let errors = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(ERROR_CHECK).await;
+                let (tx, rx) = async_channel::bounded::<Option<String>>(1);
+                let asked = this.update(cx, |this, _| {
+                    let page = this.page.clone()?;
+                    webview::is_local_address(&this.state.url).then(|| {
+                        page.agent_captured(move |json| {
+                            tx.try_send(json).ok();
+                        })
+                    })
+                });
+                match asked {
+                    Err(_) => break,
+                    Ok(None) => continue,
+                    Ok(Some(())) => {}
+                }
+                let captured = rx
+                    .recv()
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|json| serde_json::from_str::<Value>(&json).ok());
+                if let Some(captured) = captured
+                    && this
+                        .update(cx, |this, cx| this.update_errors(&captured, cx))
+                        .is_err()
+                {
+                    break;
+                }
+            }
+        });
         let mut this = Self {
             host,
             page: None,
@@ -136,7 +235,9 @@ impl BrowserView {
             servers: Vec::new(),
             shown: false,
             covered: false,
-            _tasks: vec![drain, cover],
+            errors: Vec::new(),
+            seen: HashSet::new(),
+            _tasks: vec![drain, cover, errors],
             _subscriptions: subscriptions,
         };
         this.scan_servers(cx);
@@ -230,6 +331,57 @@ impl BrowserView {
             page.focus();
         }
         cx.notify();
+    }
+
+    fn update_errors(&mut self, captured: &Value, cx: &mut Context<Self>) {
+        let all = page_errors(captured);
+        // Forget errors the page no longer has (it reloaded or dropped old entries).
+        let current: HashSet<&str> = all.iter().map(|e| e.key.as_str()).collect();
+        self.seen.retain(|key| current.contains(key.as_str()));
+        let fresh: Vec<PageError> = all
+            .into_iter()
+            .filter(|e| !self.seen.contains(&e.key))
+            .collect();
+        if fresh != self.errors {
+            self.errors = fresh;
+            cx.notify();
+        }
+    }
+
+    /// Errors on the page not yet added to a message or dismissed.
+    pub fn new_errors(&self) -> &[PageError] {
+        &self.errors
+    }
+
+    fn mark_seen(&mut self, cx: &mut Context<Self>) {
+        self.seen
+            .extend(self.errors.drain(..).map(|error| error.key));
+        cx.notify();
+    }
+
+    /// The new errors as text for a message, and stop offering them.
+    pub fn take_errors(&mut self, cx: &mut Context<Self>) -> Option<(String, String)> {
+        if self.errors.is_empty() {
+            return None;
+        }
+        let count = self.errors.len();
+        let title = format!(
+            "{count} error{} in the browser at {}",
+            if count == 1 { "" } else { "s" },
+            self.state.url
+        );
+        let content = self
+            .errors
+            .iter()
+            .map(|e| e.line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.mark_seen(cx);
+        Some((title, content))
+    }
+
+    pub fn dismiss_errors(&mut self, cx: &mut Context<Self>) {
+        self.mark_seen(cx);
     }
 
     /// The page, for agent tools.
@@ -440,7 +592,33 @@ impl Render for BrowserView {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_address;
+    use super::{normalize_address, page_errors};
+    use serde_json::json;
+
+    #[test]
+    fn finds_console_errors_and_failed_requests() {
+        let captured = json!({
+            "console": [
+                {"level": "log", "time": 1, "text": "loaded"},
+                {"level": "error", "time": 2, "text": "Uncaught TypeError: x is undefined"},
+            ],
+            "network": [
+                {"method": "GET", "url": "http://localhost/ok", "time": 3, "status": 200},
+                {"method": "POST", "url": "http://localhost/api", "time": 4, "status": 500, "body": "boom\n"},
+                {"method": "GET", "url": "http://localhost/down", "time": 5, "error": "TypeError: Load failed"},
+                {"method": "GET", "url": "http://localhost/pending", "time": 6},
+            ],
+        });
+        let lines: Vec<String> = page_errors(&captured).into_iter().map(|e| e.line).collect();
+        assert_eq!(
+            lines,
+            [
+                "console.error: Uncaught TypeError: x is undefined",
+                "POST http://localhost/api → 500 (boom)",
+                "GET http://localhost/down → TypeError: Load failed",
+            ]
+        );
+    }
 
     #[test]
     fn turns_input_into_addresses() {

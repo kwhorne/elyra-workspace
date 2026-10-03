@@ -232,6 +232,11 @@ pub struct Thread {
     pub goal_runs: u32,
     /// Reproduce-first debugging mode.
     pub debug_mode: bool,
+    /// Spending limit in US dollars: at it, automatic turns (goals) stop.
+    pub budget_usd: Option<f64>,
+    /// Set on the candidates of a best-of-N run: the same task given to
+    /// several agents, each in its own worktree.
+    pub race_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -307,6 +312,13 @@ pub enum ItemContent {
     Notice {
         text: String,
         is_error: bool,
+    },
+    /// The page in the thread's browser before and after a turn (JPEG files).
+    PageSnapshot {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+        after: String,
     },
 }
 

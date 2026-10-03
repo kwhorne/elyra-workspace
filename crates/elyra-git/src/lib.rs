@@ -194,6 +194,17 @@ pub fn diff_stat(repo: &Path) -> Result<DiffStat> {
     Ok(stat)
 }
 
+/// Bring a branch's changes into the working tree and index without
+/// committing (`git merge --squash`), for the user to review and commit.
+pub fn squash_merge(repo: &Path, branch: &str) -> Result<()> {
+    run_ok(repo, &["merge", "--squash", branch]).map(|_| ())
+}
+
+/// The changes between two commits as a unified diff, for an agent to read.
+pub fn diff_text(repo: &Path, from: &str, to: &str) -> Result<String> {
+    run_ok(repo, &["diff", "--no-color", "--find-renames", from, to])
+}
+
 /// Stage everything and commit. Returns the new commit's short SHA.
 pub fn commit_all(repo: &Path, message: &str) -> Result<String> {
     if message.trim().is_empty() {
@@ -286,6 +297,42 @@ pub(crate) mod tests {
         run_ok(&dir, &["config", "user.name", "Test"]).unwrap();
         run_ok(&dir, &["config", "commit.gpgsign", "false"]).unwrap();
         dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn squash_merges_a_worktree_branch_and_diffs_commits() {
+        let repo = temp_repo("squash");
+        std::fs::write(repo.join("a.txt"), "one\n").unwrap();
+        commit_all(&repo, "base").unwrap();
+        let base = run_ok(&repo, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+        let wt = repo.with_extension("wt");
+        create_worktree(&repo, &wt, "elyra/candidate").unwrap();
+        std::fs::write(wt.join("a.txt"), "two\n").unwrap();
+        std::fs::write(wt.join("b.txt"), "new\n").unwrap();
+        commit_all(&wt, "candidate").unwrap();
+        let tip = run_ok(&wt, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string();
+
+        let diff = diff_text(&repo, &base, &tip).unwrap();
+        assert!(diff.contains("-one") && diff.contains("+two") && diff.contains("b.txt"));
+
+        squash_merge(&repo, "elyra/candidate").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(repo.join("a.txt")).unwrap(),
+            "two\n"
+        );
+        let staged = run_ok(&repo, &["diff", "--cached", "--name-only"]).unwrap();
+        assert!(staged.contains("a.txt") && staged.contains("b.txt"));
+        // Nothing is committed for the user.
+        assert_eq!(run_ok(&repo, &["rev-parse", "HEAD"]).unwrap().trim(), base);
+
+        remove_worktree(&repo, &wt).unwrap();
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     #[test]

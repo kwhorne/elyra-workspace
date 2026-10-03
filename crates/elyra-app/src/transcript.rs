@@ -510,6 +510,52 @@ fn render_item(
                 .child(div().h(px(1.)).flex_1().bg(cx.theme().border))
                 .into_any_element()
         }
+        ItemContent::PageSnapshot { url, before, after } => {
+            let picture = |label: &'static str, path: &str| {
+                let path = std::path::PathBuf::from(path);
+                let open = path.clone();
+                v_flex()
+                    .id(SharedString::from(format!("snapshot-{label}-{id}")))
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .cursor_pointer()
+                    .on_click(move |_, _, cx| cx.open_with_system(&open))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(label),
+                    )
+                    .child(
+                        img(path)
+                            .w_full()
+                            .max_h(px(220.))
+                            .object_fit(ObjectFit::Contain)
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().border),
+                    )
+            };
+            v_flex()
+                .gap_1()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(Icon::new(IconName::Globe).xsmall())
+                        .child(format!("The page after this turn · {url}")),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_start()
+                        .children(before.as_deref().map(|before| picture("Before", before)))
+                        .child(picture("After", after)),
+                )
+                .into_any_element()
+        }
         ItemContent::Notice { text, is_error } => h_flex()
             .gap_2()
             .text_sm()

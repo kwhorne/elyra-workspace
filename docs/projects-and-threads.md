@@ -61,6 +61,8 @@ Right-click a thread (or use its **⋯** button):
 | Mark as unread | Show the unread dot again. |
 | Fork | Copy the thread into a new one that continues separately (see below). |
 | Continue with ▸ | Start the same task with another provider (see *Handoff*). |
+| Second opinion from ▸ | Let another provider review the last turn's changes (see *Second opinion*). |
+| Compare best of N | For a best-of-N candidate: open the comparison (see *Best of N*). |
 | Export… | Save the thread as a ZIP file. |
 | Open terminal here | Open the thread's terminal. |
 | Copy path, Copy thread ID | Copy the working folder or the thread's id. |
@@ -105,6 +107,7 @@ The side chat opens in the **Side chat** tab of the tools panel. It is not liste
 in the sidebar. Its header has buttons to:
 
 - **+** start another side chat
+- **Put the last reply in the thread's composer**, to pass an answer on
 - **Open as a thread**: turn it into an ordinary thread with its own tab
 - **Discard** it
 
@@ -127,6 +130,37 @@ conversation. The two then continue separately:
 in the same project and folder (worktree included). The message box is filled
 with a summary of where the task stands: the recap from the Context tab if there
 is one, plus the latest messages. Review it, add instructions, and send.
+
+## Second opinion
+
+**Second opinion from ▸** in the thread menu has another provider review what the
+thread's last turn changed. Agents catch each other's mistakes better than their
+own.
+
+The review runs as a side chat in plan mode, so it reads but doesn't change files.
+It gets your last message and the diff of the turn, and lists what it finds as
+`path:line` with what is wrong and how to fix it. When it's done, the side chat's
+**Put the last reply in the thread's composer** button hands the findings to the
+original agent, with a note to fix what it agrees with.
+
+## Best of N
+
+**Best of N…** in the command palette (⌘K) gives one task to several agents at
+once. Write the task, pick at least two agents and press **Start**. Each agent gets
+its own thread and its own Git worktree, so they don't get in each other's way.
+
+The comparison opens in the middle of the window. For each candidate it shows its
+status, the files and lines it changed, its cost and its reply. **Open** shows the
+thread, with its diff in the Changes tab. When one is done and you like it best:
+
+1. **Use this one** commits the candidate's worktree and brings its changes into
+   the project folder with `git merge --squash`. They are staged, not committed,
+   so you can review them in Changes and commit them yourself. Uncommitted changes
+   in the project that touch the same files may conflict.
+2. **Delete the other N and their worktrees** cleans up the rest.
+
+The candidates are ordinary threads, so you can also talk to them before you
+choose. **Compare best of N** in a candidate's thread menu reopens the comparison.
 
 ## Import sessions
 

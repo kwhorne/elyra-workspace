@@ -25,6 +25,19 @@ Messages you queue yourself are sent before the goal continues. While a goal is
 active, permission requests still stop and wait for you, so choose the permission
 mode with that in mind.
 
+## Budget
+
+A spending limit for the thread, in US dollars. The **Budget** section shows what
+the thread has cost so far, with a bar when a limit is set. Type an amount and
+press **Set** (or Enter); **Remove** takes the limit away.
+
+- At 80% of the limit, Elyra notes it in the conversation.
+- At the limit, a running goal pauses and asks you, and a goal can't be started
+  or resumed until you raise the limit. Messages you send yourself still go.
+
+Costs are the ones the agent reports with each turn. Claude Code reports them;
+agents that don't report costs count as free, so a limit has no effect on them.
+
 ## Notes
 
 A notepad for the thread, saved as you type. The agent doesn't see it.

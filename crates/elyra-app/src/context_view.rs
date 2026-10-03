@@ -2,11 +2,11 @@
 //! the project's agent instructions and dev servers running in the project.
 
 use crate::app_state::AppState;
-use crate::thread_session::ThreadSession;
+use crate::thread_session::{ThreadSession, format_usd};
 use elyra_core::{GoalStatus, ItemContent, ItemId};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -116,6 +116,7 @@ pub struct ContextView {
     notes: Entity<TextareaState>,
     instructions: Entity<TextareaState>,
     goal: Entity<TextareaState>,
+    budget: Entity<InputState>,
     servers: Vec<Server>,
     scanning: bool,
     _save_notes: Option<Task<()>>,
@@ -154,7 +155,17 @@ impl ContextView {
                 .auto_grow(2, 8)
                 .placeholder("e.g. All tests pass and the checkout flow handles discounts")
         });
+        let budget = cx.new(|cx| InputState::new(window, cx).placeholder("Budget in US$, e.g. 5"));
         let subscriptions = vec![
+            cx.subscribe_in(
+                &budget,
+                window,
+                |this, _, event: &InputEvent, window, cx| {
+                    if let InputEvent::PressEnter { .. } = event {
+                        this.apply_budget(window, cx);
+                    }
+                },
+            ),
             cx.subscribe(&notes, |this, _, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     this._save_notes = Some(cx.spawn(async move |this, cx| {
@@ -179,6 +190,7 @@ impl ContextView {
             notes,
             instructions,
             goal,
+            budget,
             servers: Vec::new(),
             scanning: false,
             _save_notes: None,
@@ -226,6 +238,95 @@ impl ContextView {
         })
         .detach();
         cx.notify();
+    }
+
+    fn apply_budget(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self
+            .budget
+            .read(cx)
+            .value()
+            .trim()
+            .trim_start_matches('$')
+            .replace(',', ".");
+        let Ok(amount) = text.parse::<f64>() else {
+            return;
+        };
+        self.budget
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.session
+            .update(cx, |session, cx| session.set_budget(Some(amount), cx));
+    }
+
+    fn render_budget(&self, cx: &Context<Self>) -> AnyElement {
+        let session = self.session.read(cx);
+        let spent = session.spent_usd();
+        let budget = session.thread.budget_usd;
+        let reached = budget.is_some_and(|b| spent >= b);
+        let summary = match budget {
+            Some(budget) => format!("{} of {} spent", format_usd(spent), format_usd(budget)),
+            None => format!("{} spent, no limit", format_usd(spent)),
+        };
+        let fraction = budget.map(|b| (spent / b).clamp(0., 1.) as f32);
+        let bar_color = if reached {
+            cx.theme().danger
+        } else if fraction.is_some_and(|f| f >= 0.8) {
+            cx.theme().warning
+        } else {
+            cx.theme().info
+        };
+        v_flex()
+            .gap_2()
+            .child(Self::section("Budget", cx))
+            .child(
+                div()
+                    .text_sm()
+                    .when(reached, |this| this.text_color(cx.theme().danger))
+                    .child(summary),
+            )
+            .children(fraction.map(|fraction| {
+                div()
+                    .h(px(4.))
+                    .w_full()
+                    .rounded_full()
+                    .bg(cx.theme().muted)
+                    .child(
+                        div()
+                            .h_full()
+                            .w(relative(fraction))
+                            .rounded_full()
+                            .bg(bar_color),
+                    )
+            }))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("At the limit, goals stop and ask you; your own messages still go. Costs are as reported by the agent, and not every agent reports them."),
+            )
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(div().flex_1().child(Input::new(&self.budget).small()))
+                    .child(
+                        Button::new("set-budget")
+                            .small()
+                            .label(if budget.is_some() { "Change" } else { "Set" })
+                            .on_click(cx.listener(|this, _, window, cx| this.apply_budget(window, cx))),
+                    )
+                    .when(budget.is_some(), |this| {
+                        this.child(
+                            Button::new("clear-budget")
+                                .small()
+                                .ghost()
+                                .label("Remove")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.session
+                                        .update(cx, |session, cx| session.set_budget(None, cx));
+                                })),
+                        )
+                    }),
+            )
+            .into_any_element()
     }
 
     fn render_goal(&self, cx: &Context<Self>) -> AnyElement {
@@ -428,6 +529,7 @@ impl Render for ContextView {
                     .p_3()
                     .gap_4()
                     .child(self.render_goal(cx))
+                    .child(self.render_budget(cx))
                     .child(
                         v_flex()
                             .gap_2()

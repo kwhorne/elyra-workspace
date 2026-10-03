@@ -18,6 +18,7 @@ mod onboarding;
 mod palette;
 mod pr_view;
 mod preferences;
+mod race;
 mod review_inbox;
 mod search;
 mod settings_window;

@@ -34,6 +34,7 @@ fn thread_menu(
     let id = thread.id;
     let current_provider = thread.provider;
     let handoff_workspace = workspace.clone();
+    let review_workspace = workspace.clone();
     let on = |workspace: &WeakEntity<Workspace>,
               f: fn(&mut Workspace, ThreadId, &mut Window, &mut Context<Workspace>)| {
         let workspace = workspace.clone();
@@ -118,6 +119,37 @@ fn thread_menu(
                     move |_, window, cx| {
                         let _ = workspace
                             .update(cx, |this, cx| this.handoff_thread(id, kind, window, cx));
+                    },
+                ));
+            }
+            menu
+        },
+    )
+    .when_some(thread.race_id, |menu, race| {
+        let workspace = workspace.clone();
+        menu.item(
+            PopupMenuItem::new("Compare best of N")
+                .icon(IconName::Trophy)
+                .on_click(move |_, window, cx| {
+                    let _ = workspace.update(cx, |this, cx| this.show_race(race, window, cx));
+                }),
+        )
+    })
+    .submenu_with_icon(
+        Some(Icon::new(IconName::Eye)),
+        "Second opinion from",
+        window,
+        cx,
+        move |mut menu, _, cx| {
+            for kind in crate::preferences::Preferences::global(cx).enabled_providers() {
+                if kind == current_provider {
+                    continue;
+                }
+                let workspace = review_workspace.clone();
+                menu = menu.item(PopupMenuItem::new(kind.label()).on_click(
+                    move |_, window, cx| {
+                        let _ = workspace
+                            .update(cx, |this, cx| this.second_opinion(id, kind, window, cx));
                     },
                 ));
             }

@@ -62,6 +62,7 @@ pub(crate) enum Panel {
     Automations,
     Tasks,
     Stats,
+    Race,
 }
 
 pub struct Workspace {
@@ -77,6 +78,9 @@ pub struct Workspace {
     pub(crate) pr_views: HashMap<ThreadId, Entity<crate::pr_view::PrView>>,
     pub(crate) files_views: HashMap<ThreadId, Entity<FilesView>>,
     pub(crate) browser_views: HashMap<ThreadId, Entity<crate::browser_view::BrowserView>>,
+    /// Picture of the browser page taken when a thread's turn started: (url, file).
+    page_before: HashMap<ThreadId, (String, String)>,
+    race: Option<Entity<crate::race::RaceView>>,
     pub(crate) context_views: HashMap<ThreadId, Entity<crate::context_view::ContextView>>,
     palette: Option<Entity<Palette>>,
     /// Second thread shown beside the active one (⌘\).
@@ -187,6 +191,8 @@ impl Workspace {
             pr_views: HashMap::new(),
             files_views: HashMap::new(),
             browser_views: HashMap::new(),
+            page_before: HashMap::new(),
+            race: None,
             context_views: HashMap::new(),
             palette: None,
             split: None,
@@ -326,6 +332,11 @@ impl Workspace {
             &session,
             window,
             move |this, _, event: &SessionEvent, window, cx| {
+                match event {
+                    SessionEvent::TurnStarted => this.picture_page_before(id, cx),
+                    SessionEvent::TurnCompleted => this.picture_page_after(id, cx),
+                    SessionEvent::NeedsAttention => {}
+                }
                 if let SessionEvent::TurnCompleted = event {
                     if let Some(changes) = this.changes_views.get(&id) {
                         changes.update(cx, |changes, cx| changes.refresh(cx));
@@ -347,6 +358,9 @@ impl Workspace {
             },
         ));
         let view = cx.new(|cx| ThreadView::new(session, window, cx));
+        if let Some(browser) = self.browser_views.get(&id).cloned() {
+            view.update(cx, |view, cx| view.set_browser(browser, cx));
+        }
         self.thread_views.insert(id, view.clone());
         Some(view)
     }
@@ -637,6 +651,12 @@ impl Workspace {
                 Some(stats) => stats.update(cx, |stats, cx| stats.refresh(cx)),
                 None => self.stats = Some(cx.new(|cx| crate::stats::StatsView::new(app, cx))),
             },
+            Panel::Race => match &self.race {
+                Some(race) => race.update(cx, |race, cx| race.refresh(cx)),
+                None => {
+                    self.race = Some(cx.new(|cx| crate::race::RaceView::new(app, workspace, cx)))
+                }
+            },
         }
         cx.notify();
     }
@@ -804,6 +824,7 @@ impl Workspace {
             }
             SessionEvent::TurnCompleted => ("Finished", NotificationType::Success),
             SessionEvent::NeedsAttention => ("Needs your input", NotificationType::Warning),
+            SessionEvent::TurnStarted => return,
         };
         let workspace = cx.weak_entity();
         let note = Notification::new()
@@ -1223,6 +1244,10 @@ impl Workspace {
             return view.clone();
         }
         let view = cx.new(|cx| crate::browser_view::BrowserView::new(cwd, window, cx));
+        if let Some(thread) = self.thread_views.get(&id) {
+            let browser = view.clone();
+            thread.update(cx, |thread, cx| thread.set_browser(browser, cx));
+        }
         self.browser_views.insert(id, view.clone());
         view
     }
@@ -1310,6 +1335,282 @@ impl Workspace {
     fn on_fork_thread(&mut self, _: &ForkThread, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.active {
             self.fork_thread(id, window, cx);
+        }
+    }
+
+    // ---- page pictures around turns ------------------------------------------
+
+    /// Ask the thread's browser for a picture of its page, when it shows a
+    /// local page on screen (WebKit only pictures what is on screen).
+    fn picture_page(
+        &self,
+        id: ThreadId,
+        cx: &App,
+    ) -> Option<(String, async_channel::Receiver<Option<Vec<u8>>>)> {
+        let browser = self.browser_views.get(&id)?.read(cx);
+        let url = browser.page_state().url.clone();
+        if !browser.is_on_screen() || !crate::webview::is_local_address(&url) {
+            return None;
+        }
+        let page = browser.web_view()?;
+        let (tx, rx) = async_channel::bounded(1);
+        page.agent_snapshot(move |jpeg| {
+            tx.try_send(jpeg).ok();
+        });
+        Some((url, rx))
+    }
+
+    fn picture_page_before(&mut self, id: ThreadId, cx: &mut Context<Self>) {
+        self.page_before.remove(&id);
+        let Some((url, rx)) = self.picture_page(id, cx) else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let Some(path) = save_page_picture(id, rx, cx).await else {
+                return;
+            };
+            let _ = this.update(cx, |this, _| this.page_before.insert(id, (url, path)));
+        })
+        .detach();
+    }
+
+    /// After a turn: reload the page, give the dev server a moment, and keep
+    /// a picture next to the one from before the turn.
+    fn picture_page_after(&mut self, id: ThreadId, cx: &mut Context<Self>) {
+        let on_screen = self.browser_views.get(&id).is_some_and(|browser| {
+            let browser = browser.read(cx);
+            browser.is_on_screen() && crate::webview::is_local_address(&browser.page_state().url)
+        });
+        if !on_screen {
+            self.page_before.remove(&id);
+            return;
+        }
+        if let Some(page) = self.browser_views[&id].read(cx).web_view() {
+            page.reload();
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(PAGE_SETTLE).await;
+            let Ok(Some((url, rx))) = this.update(cx, |this, cx| this.picture_page(id, cx)) else {
+                return;
+            };
+            let Some(after) = save_page_picture(id, rx, cx).await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                let before = this
+                    .page_before
+                    .remove(&id)
+                    .filter(|(before_url, _)| *before_url == url)
+                    .map(|(_, path)| path);
+                if let Some(session) = this.app.update(cx, |app, cx| app.session(id, cx)) {
+                    session.update(cx, |session, cx| {
+                        session.add_page_snapshot(url, before, after, cx)
+                    });
+                }
+            });
+        })
+        .detach();
+    }
+
+    // ---- best of N --------------------------------------------------------
+
+    fn on_best_of_n(&mut self, _: &BestOfN, window: &mut Window, cx: &mut Context<Self>) {
+        let project = self
+            .active
+            .and_then(|id| self.app.read(cx).thread(id).map(|t| t.project_id))
+            .or(self.current_project);
+        match project {
+            Some(project) => crate::race::start_dialog(cx.weak_entity(), project, window, cx),
+            None => window.push_notification(
+                Notification::info("Open a project first: best of N runs in a project's folder."),
+                cx,
+            ),
+        }
+    }
+
+    /// Give `prompt` to each provider in a new thread with its own worktree.
+    pub(crate) fn start_race(
+        &mut self,
+        project: ProjectId,
+        prompt: String,
+        providers: Vec<elyra_core::ProviderKind>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let race = uuid::Uuid::new_v4();
+        let short: String = prompt
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(40)
+            .collect();
+        for provider in providers {
+            let thread = match self
+                .app
+                .update(cx, |app, cx| app.create_thread(project, cx))
+            {
+                Ok(thread) => thread,
+                Err(err) => {
+                    window.push_notification(Notification::error(format!("{err:#}")), cx);
+                    continue;
+                }
+            };
+            let Some(session) = self.app.update(cx, |app, cx| app.session(thread.id, cx)) else {
+                continue;
+            };
+            let prompt = prompt.clone();
+            session.update(cx, |session, cx| {
+                session.set_provider(provider, cx);
+                session.thread.race_id = Some(race);
+                session.use_worktree = true;
+                session.rename(format!("{short} · {}", provider.label()), cx);
+                session.submit(elyra_provider::Prompt::text(prompt), cx);
+            });
+        }
+        self.show_race(race, window, cx);
+    }
+
+    /// Open the comparison for a best-of-N run.
+    pub(crate) fn show_race(
+        &mut self,
+        race: uuid::Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = match &self.race {
+            Some(view) => view.clone(),
+            None => {
+                let (app, workspace) = (self.app.clone(), cx.weak_entity());
+                let view = cx.new(|cx| crate::race::RaceView::new(app, workspace, cx));
+                self.race = Some(view.clone());
+                view
+            }
+        };
+        view.update(cx, |view, cx| view.set_race(race, cx));
+        if self.panel != Some(Panel::Race) {
+            self.toggle_panel(Panel::Race, window, cx);
+        }
+    }
+
+    // ---- second opinion --------------------------------------------------
+
+    /// Have another provider review what the thread's last turn changed, in a
+    /// read-only side chat.
+    pub(crate) fn second_opinion(
+        &mut self,
+        id: ThreadId,
+        provider: elyra_core::ProviderKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.app.update(cx, |app, cx| app.session(id, cx)) else {
+            return;
+        };
+        let (root, from, request, author) = {
+            let session = session.read(cx);
+            (
+                session.working_dir(),
+                session
+                    .turn_checkpoints()
+                    .last()
+                    .map(|(_, sha)| sha.clone()),
+                session.last_request().unwrap_or_default(),
+                session.thread.provider,
+            )
+        };
+        let Some(from) = from else {
+            window.push_notification(
+                Notification::info(
+                    "Nothing to review yet: the thread has no turn with a checkpoint.",
+                ),
+                cx,
+            );
+            return;
+        };
+        let job = cx.background_executor().spawn(async move {
+            let to = elyra_git::checkpoint::snapshot(&root, "elyra: second opinion")?;
+            elyra_git::diff_text(&root, &from, &to)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let diff = job.await;
+            let _ = this.update_in(cx, |this, window, cx| match diff {
+                Ok(diff) if diff.trim().is_empty() => window.push_notification(
+                    Notification::info(
+                        "The last turn changed no files, so there is nothing to review.",
+                    ),
+                    cx,
+                ),
+                Ok(diff) => this.start_review(id, provider, author, &request, &diff, window, cx),
+                Err(err) => window.push_notification(
+                    Notification::error(format!("Could not read the changes: {err:#}")),
+                    cx,
+                ),
+            });
+        })
+        .detach();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn start_review(
+        &mut self,
+        id: ThreadId,
+        provider: elyra_core::ProviderKind,
+        author: elyra_core::ProviderKind,
+        request: &str,
+        diff: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let session = match self
+            .app
+            .update(cx, |app, cx| app.create_review_chat(id, provider, cx))
+        {
+            Ok(session) => session,
+            Err(err) => {
+                window.push_notification(Notification::error(format!("{err:#}")), cx);
+                return;
+            }
+        };
+        let prompt = review_prompt(author.label(), request, diff);
+        session.update(cx, |session, cx| {
+            session.submit(elyra_provider::Prompt::text(prompt), cx)
+        });
+        let review = session.read(cx).thread.id;
+        if self.thread_view(review, window, cx).is_some() {
+            self.show_right_tab(RightTab::SideChat, window, cx);
+        }
+    }
+
+    /// Put a side chat's last reply in its parent thread's composer.
+    fn send_side_reply(&mut self, side: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.app.update(cx, |app, cx| app.session(side, cx)) else {
+            return;
+        };
+        let (reply, parent, title) = {
+            let session = session.read(cx);
+            (
+                session.last_reply(),
+                session.thread.parent_id,
+                session.thread.title.clone(),
+            )
+        };
+        let (Some(parent), false) = (parent, reply.trim().is_empty()) else {
+            return;
+        };
+        let text = if title.starts_with("Second opinion") {
+            format!(
+                "Another agent reviewed your last changes. Fix what you agree with and say why you disagree with the rest:\n\n{}",
+                reply.trim()
+            )
+        } else {
+            reply.trim().to_string()
+        };
+        if let Some(view) = self.thread_view(parent, window, cx) {
+            view.update(cx, |view, cx| {
+                view.append_to_composer(&text, window, cx);
+                view.focus_composer(window, cx);
+            });
         }
     }
 
@@ -1715,6 +2016,16 @@ impl Workspace {
                             })),
                     )
                     .child(
+                        Button::new("side-send")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::CornerDownLeft)
+                            .tooltip("Put the last reply in the thread's composer")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.send_side_reply(side, window, cx)
+                            })),
+                    )
+                    .child(
                         Button::new("side-promote")
                             .ghost()
                             .xsmall()
@@ -1784,6 +2095,7 @@ impl Render for Workspace {
             Some(Panel::Automations) => self.automations.clone().map(|v| v.into_any_element()),
             Some(Panel::Tasks) => self.tasks.clone().map(|v| v.into_any_element()),
             Some(Panel::Stats) => self.stats.clone().map(|v| v.into_any_element()),
+            Some(Panel::Race) => self.race.clone().map(|v| v.into_any_element()),
             None => None,
         };
         let panel_open = panel.is_some();
@@ -1844,6 +2156,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_tasks))
             .on_action(cx.listener(Self::on_show_stats))
             .on_action(cx.listener(Self::on_show_browser))
+            .on_action(cx.listener(Self::on_best_of_n))
             .on_action(cx.listener(Self::on_export_thread))
             .on_action(cx.listener(Self::on_fork_thread))
             .on_action(cx.listener(Self::on_toggle_split))
@@ -1908,9 +2221,46 @@ impl Render for Workspace {
     }
 }
 
+/// How long a reloaded page gets to settle before its picture is taken.
+const PAGE_SETTLE: std::time::Duration = std::time::Duration::from_millis(2500);
+
+/// Wait for a page picture and keep it under the thread's snapshot folder.
+async fn save_page_picture(
+    id: ThreadId,
+    rx: async_channel::Receiver<Option<Vec<u8>>>,
+    cx: &mut AsyncApp,
+) -> Option<String> {
+    let jpeg = rx.recv().await.ok().flatten()?;
+    cx.background_executor()
+        .spawn(async move {
+            let dir = elyra_core::paths::snapshots_dir().join(id.to_string());
+            std::fs::create_dir_all(&dir).ok()?;
+            let path = dir.join(format!("{}.jpg", uuid::Uuid::new_v4().simple()));
+            std::fs::write(&path, jpeg).ok()?;
+            Some(path.to_string_lossy().into_owned())
+        })
+        .await
+}
+
+/// The request to a reviewing agent: what was asked, the diff, and how to
+/// report findings.
+fn review_prompt(author: &str, request: &str, diff: &str) -> String {
+    const MAX_DIFF: usize = 80_000;
+    let request: String = request.chars().take(1_500).collect();
+    let mut diff_text: String = diff.chars().take(MAX_DIFF).collect();
+    if diff_text.len() < diff.len() {
+        diff_text.push_str("\n… (diff cut; read the files for the rest)");
+    }
+    format!(
+        "Give a second opinion on changes another coding agent ({author}) just made in this repository.\n\nWhat it was asked:\n\n> {}\n\nThe changes:\n\n```diff\n{}\n```\n\nRead the surrounding code as needed, but do not change any files. Look for bugs, missed cases, security problems and anything that does not do what was asked. List each finding as `path:line` — what is wrong — how to fix it, most important first. If nothing is worth changing, say so in one line.",
+        request.trim().replace('\n', "\n> "),
+        diff_text.trim_end()
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::format_age;
+    use super::{format_age, review_prompt};
 
     #[test]
     fn formats_relative_age() {
@@ -1918,5 +2268,18 @@ mod tests {
         assert_eq!(format_age(chrono::Duration::minutes(5)), "5m");
         assert_eq!(format_age(chrono::Duration::hours(3)), "3h");
         assert_eq!(format_age(chrono::Duration::days(2)), "2d");
+    }
+
+    #[test]
+    fn review_prompt_quotes_the_request_and_includes_the_diff() {
+        let prompt = review_prompt("Claude Code", "Fix totals\nand tax", "+a\n-b\n");
+        assert!(prompt.contains("(Claude Code)"));
+        assert!(prompt.contains("> Fix totals\n> and tax"));
+        assert!(prompt.contains("```diff\n+a\n-b\n```"));
+        assert!(prompt.contains("do not change any files"));
+        assert!(!prompt.contains("diff cut"));
+
+        let long = "x".repeat(90_000);
+        assert!(review_prompt("Codex", "r", &long).contains("diff cut"));
     }
 }

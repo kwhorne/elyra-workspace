@@ -27,6 +27,29 @@ The browser uses Safari's engine (WebKit). Pages share cookies and storage acros
 threads, as in one Safari window with several tabs. Closing a thread's tab closes
 its browser.
 
+## Errors on the page
+
+While a local page is open, Elyra watches it for errors: anything written with
+`console.error`, exceptions nothing caught, and requests that fail or return an
+error status. When new ones appear, a chip above the message box says so:
+**3 new errors in the browser**.
+
+- **Add to message** attaches them to your next message, with the page address,
+  so you don't have to copy them from the console.
+- **×** dismisses them. Either way they aren't offered again.
+
+## Pictures before and after a turn
+
+When the Browser tab shows a local page while you send a message, Elyra keeps a
+picture of the page from before the turn. When the turn ends it reloads the
+page, waits a moment for the dev server, and takes another. Both appear under the
+turn in the conversation, so you see what the change did to the page. Click a
+picture to open it full size.
+
+This only happens while the Browser tab is on screen, since the page can only be
+pictured then. The pictures are kept in `~/.elyra/snapshots` and deleted with the
+thread.
+
 ## Letting the agent look at the page
 
 With the [agent gateway](agent-gateway.md) on, agents get tools to open a page in

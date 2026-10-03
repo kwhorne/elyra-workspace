@@ -133,6 +133,12 @@ fn commands() -> Vec<Command> {
         ),
         command!("Show browser", "⇧⌘B", IconName::Globe, actions::ShowBrowser),
         command!(
+            "Best of N… (one task, several agents)",
+            "",
+            IconName::Trophy,
+            actions::BestOfN
+        ),
+        command!(
             "Toggle terminal",
             "⌘J",
             IconName::SquareTerminal,

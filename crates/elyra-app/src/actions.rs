@@ -61,6 +61,7 @@ gpui_kit::actions!(
         ExportThread,
         OpenDocumentation,
         ShowBrowser,
+        BestOfN,
     ]
 );
 
@@ -233,6 +234,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ShowAutomations
     ),
     shortcut!("stats", "Panels", "Usage statistics", "", WS, ShowStats),
+    shortcut!("best_of_n", "Threads", "Best of N", "", WS, BestOfN),
     shortcut!(
         "focus_composer",
         "Threads",

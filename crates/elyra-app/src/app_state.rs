@@ -223,6 +223,37 @@ impl AppState {
         Ok(session)
     }
 
+    /// A second opinion: a read-only side chat with another provider in the
+    /// same folder, which reviews what the thread's agent changed.
+    pub fn create_review_chat(
+        &mut self,
+        parent_id: ThreadId,
+        provider: ProviderKind,
+        cx: &mut Context<Self>,
+    ) -> Result<Entity<ThreadSession>> {
+        let parent = self
+            .thread(parent_id)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("thread not found"))?;
+        let mut thread = self.store.create_thread(
+            parent.project_id,
+            provider,
+            None,
+            elyra_core::PermissionMode::Plan,
+            parent.environment.clone(),
+        )?;
+        thread.title = format!("Second opinion · {}", provider.label());
+        thread.parent_id = Some(parent_id);
+        self.store.update_thread(&thread)?;
+        let id = thread.id;
+        self.threads.insert(0, thread);
+        let session = self
+            .session(id, cx)
+            .ok_or_else(|| anyhow::anyhow!("could not start the review"))?;
+        cx.notify();
+        Ok(session)
+    }
+
     /// Copy a thread into a new one that continues on its own. Providers that
     /// can branch a session do so natively; others get the conversation so
     /// far as context with the first message.
@@ -444,6 +475,7 @@ impl AppState {
             .or_else(|| self.archived_threads().into_iter().find(|t| t.id == id));
         self.sessions.remove(&id);
         self.store.delete_thread(id)?;
+        let _ = std::fs::remove_dir_all(elyra_core::paths::snapshots_dir().join(id.to_string()));
         if let Some(thread) = &thread
             && let Some(project) = self.project(thread.project_id)
         {

@@ -53,6 +53,8 @@ pub struct ThreadView {
     follow: bool,
     is_git_repo: bool,
     warmed_up: bool,
+    /// The thread's browser, for the chip that offers its new errors.
+    browser: Option<Entity<crate::browser_view::BrowserView>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -118,6 +120,7 @@ impl ThreadView {
             find: None,
             follow: true,
             is_git_repo,
+            browser: None,
             warmed_up: false,
             _subscriptions: subscriptions,
         }
@@ -1231,6 +1234,79 @@ impl ThreadView {
         )
     }
 
+    /// Show the thread's browser errors above the composer.
+    pub fn set_browser(
+        &mut self,
+        browser: Entity<crate::browser_view::BrowserView>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.browser.as_ref() == Some(&browser) {
+            return;
+        }
+        self._subscriptions
+            .push(cx.observe(&browser, |_, _, cx| cx.notify()));
+        self.browser = Some(browser);
+        cx.notify();
+    }
+
+    fn add_browser_errors(&mut self, cx: &mut Context<Self>) {
+        let Some(browser) = self.browser.clone() else {
+            return;
+        };
+        if let Some((title, content)) = browser.update(cx, |browser, cx| browser.take_errors(cx)) {
+            self.attachments
+                .push(Attachment::Context { title, content });
+        }
+        cx.notify();
+    }
+
+    fn render_page_errors(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let count = self.browser.as_ref()?.read(cx).new_errors().len();
+        if count == 0 {
+            return None;
+        }
+        Some(
+            h_flex()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().danger.opacity(0.4))
+                .bg(cx.theme().danger.opacity(0.08))
+                .text_xs()
+                .child(
+                    Icon::new(IconName::Bug)
+                        .xsmall()
+                        .text_color(cx.theme().danger),
+                )
+                .child(div().flex_1().child(format!(
+                    "{count} new error{} in the browser",
+                    if count == 1 { "" } else { "s" }
+                )))
+                .child(
+                    Button::new("add-browser-errors")
+                        .xsmall()
+                        .outline()
+                        .label("Add to message")
+                        .on_click(cx.listener(|this, _, _, cx| this.add_browser_errors(cx))),
+                )
+                .child(
+                    Button::new("dismiss-browser-errors")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::X)
+                        .tooltip("Dismiss")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(browser) = &this.browser {
+                                browser.update(cx, |browser, cx| browser.dismiss_errors(cx));
+                            }
+                        })),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn render_attachments(&self, cx: &Context<Self>) -> Option<AnyElement> {
         if self.attachments.is_empty() {
             return None;
@@ -1249,10 +1325,10 @@ impl ThreadView {
                     .bg(cx.theme().muted)
                     .text_xs()
                     .child(
-                        Icon::new(if attachment.is_image() {
-                            IconName::Image
-                        } else {
-                            IconName::FileText
+                        Icon::new(match attachment {
+                            Attachment::Image { .. } => IconName::Image,
+                            Attachment::Text { .. } => IconName::FileText,
+                            Attachment::Context { .. } => IconName::Bug,
                         })
                         .xsmall(),
                     )
@@ -1495,6 +1571,7 @@ impl Render for ThreadView {
         let queue = self.render_queue(cx);
         let interrupted = self.render_interrupted(cx);
         let attachments = self.render_attachments(cx);
+        let page_errors = self.render_page_errors(cx);
         let popup = self.render_popup(cx);
         let find = self.render_find(cx);
 
@@ -1577,6 +1654,7 @@ impl Render for ThreadView {
                         .children(interrupted)
                         .children(popup)
                         .children(queue)
+                        .children(page_errors)
                         .child(
                             v_flex()
                                 .id("composer-frame")

@@ -20,7 +20,8 @@
   };
   const show = (value) => {
     try {
-      if (value instanceof Error) return value.stack || String(value);
+      // WebKit's stack has no message in it, so put name and message first.
+      if (value instanceof Error) return `${value.name}: ${value.message}${value.stack ? `\n${value.stack}` : ''}`;
       if (value !== null && typeof value === 'object') return JSON.stringify(value).slice(0, 2000);
       return String(value);
     } catch (_) {
@@ -36,6 +37,16 @@
       return original.apply(this, args);
     };
   }
+
+  // Errors nothing caught never reach console.error; record them as if they had.
+  window.addEventListener('error', (event) => {
+    const where = event.filename ? ` (${event.filename}:${event.lineno}:${event.colno})` : '';
+    const text = event.error ? show(event.error) : String(event.message || 'Script error');
+    keep(store.console, { level: 'error', time: Date.now(), text: `Uncaught ${text}${where}`.slice(0, 4000) });
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    keep(store.console, { level: 'error', time: Date.now(), text: `Unhandled rejection: ${show(event.reason)}`.slice(0, 4000) });
+  });
 
   const textual = (type) => /json|text|xml|javascript/.test(type || '');
   const absolute = (url) => {
