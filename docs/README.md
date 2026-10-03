@@ -24,6 +24,8 @@ and the agents run as the command-line tools you already have installed.
 | [Keyboard shortcuts](keyboard-shortcuts.md) | All shortcuts and how to change them |
 | [Data, privacy and troubleshooting](troubleshooting.md) | Where data lives, logs, common problems |
 
+Building Elyra Workspace yourself, or contributing? See [Development](development.md).
+
 ## The window at a glance
 
 ```
