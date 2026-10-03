@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.4
+
+No changes to the app itself.
+
+- Releases are now built, signed, notarized and published by GitHub Actions
+  when a version tag is pushed; this is the first release made that way.
+- New README with a screenshot, and a development guide
+  ([docs/development.md](docs/development.md)) for building and releasing.
+
 ## 0.1.3
 
 - Maintenance release with no functional changes, published to verify that
