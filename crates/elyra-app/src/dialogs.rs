@@ -560,6 +560,9 @@ pub fn worktrees(app: Entity<AppState>, window: &mut Window, cx: &mut App) {
 pub struct ImportList {
     app: Entity<AppState>,
     workspace: WeakEntity<Workspace>,
+    /// Claude Code or Codex.
+    source: elyra_core::ProviderKind,
+    error: Option<String>,
     sessions: Option<Vec<elyra_provider::claude_history::SessionSummary>>,
     selected: std::collections::HashSet<String>,
     filter: Entity<InputState>,
@@ -567,49 +570,129 @@ pub struct ImportList {
 }
 
 impl ImportList {
+    /// The Codex executable from provider settings or PATH.
+    fn codex(cx: &App) -> Option<std::path::PathBuf> {
+        crate::preferences::Preferences::global(cx)
+            .launch(elyra_core::ProviderKind::Codex, None)
+            .executable
+            .or_else(elyra_provider::codex::find_executable)
+    }
+
+    /// (Re)load the session list for the current source.
+    fn load(&mut self, cx: &mut Context<Self>) {
+        self.sessions = None;
+        self.error = None;
+        self.selected.clear();
+        let source = self.source;
+        let codex = Self::codex(cx);
+        let job = cx.background_executor().spawn(async move {
+            match source {
+                elyra_core::ProviderKind::Codex => match codex {
+                    Some(codex) => elyra_provider::codex_history::list_sessions(&codex, 200)
+                        .map_err(|e| format!("{e:#}")),
+                    None => Err("Codex (`codex`) is not installed.".to_string()),
+                },
+                _ => Ok(elyra_provider::claude_history::projects_dir()
+                    .map(|root| elyra_provider::claude_history::list_sessions(&root, 300))
+                    .unwrap_or_default()),
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this: &mut ImportList, cx| {
+                if this.source != source {
+                    return;
+                }
+                match result {
+                    Ok(sessions) => this.sessions = Some(sessions),
+                    Err(error) => {
+                        this.sessions = Some(Vec::new());
+                        this.error = Some(error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn set_source(&mut self, source: elyra_core::ProviderKind, cx: &mut Context<Self>) {
+        if self.source != source {
+            self.source = source;
+            self.load(cx);
+        }
+    }
+
     fn imported(&self, session_id: &str, cx: &App) -> bool {
         self.app.read(cx).threads.iter().any(|t| {
-            t.provider == elyra_core::ProviderKind::Claude
-                && t.provider_session_id.as_deref() == Some(session_id)
+            t.provider == self.source && t.provider_session_id.as_deref() == Some(session_id)
         })
     }
 
     fn import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let paths: Vec<std::path::PathBuf> = self
+        let picked: Vec<(String, std::path::PathBuf)> = self
             .sessions
             .iter()
             .flatten()
             .filter(|s| self.selected.contains(&s.session_id))
-            .map(|s| s.path.clone())
+            .map(|s| (s.session_id.clone(), s.path.clone()))
             .collect();
-        if paths.is_empty() {
+        if picked.is_empty() {
             return;
         }
         self.importing = true;
         cx.notify();
-        let mut last = None;
-        let mut errors = Vec::new();
-        for path in paths {
-            match self
-                .app
-                .update(cx, |app, cx| app.import_claude_session(&path, cx))
-            {
-                Ok(id) => last = Some(id),
-                Err(err) => errors.push(format!("{err:#}")),
-            }
-        }
-        self.importing = false;
-        self.selected.clear();
-        if let Some(error) = errors.first() {
-            window.push_notification(Notification::error(error.clone()), cx);
-        }
-        if let Some(id) = last {
-            window.close_dialog(cx);
-            let _ = self
-                .workspace
-                .update(cx, |workspace, cx| workspace.activate(id, window, cx));
-        }
-        cx.notify();
+        // Reading sessions can take a moment (Codex starts its app server).
+        let source = self.source;
+        let codex = Self::codex(cx);
+        let job = cx.background_executor().spawn(async move {
+            picked
+                .into_iter()
+                .map(|(id, path)| match (source, &codex) {
+                    (elyra_core::ProviderKind::Codex, Some(codex)) => {
+                        elyra_provider::codex_history::load_session(codex, &id)
+                            .map_err(|e| format!("{e:#}"))
+                    }
+                    (elyra_core::ProviderKind::Codex, None) => {
+                        Err("Codex (`codex`) is not installed.".to_string())
+                    }
+                    _ => elyra_provider::claude_history::load_session(&path)
+                        .ok_or_else(|| format!("could not read {}", path.display())),
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let loaded = job.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let mut last = None;
+                let mut errors = Vec::new();
+                for session in loaded {
+                    let result = session.and_then(|session| {
+                        this.app
+                            .update(cx, |app, cx| app.import_session(source, session, cx))
+                            .map_err(|e| format!("{e:#}"))
+                    });
+                    match result {
+                        Ok(id) => last = Some(id),
+                        Err(error) => errors.push(error),
+                    }
+                }
+                this.importing = false;
+                this.selected.clear();
+                if let Some(error) = errors.first() {
+                    window.push_notification(Notification::error(error.clone()), cx);
+                }
+                if let Some(id) = last {
+                    window.close_dialog(cx);
+                    let _ = this
+                        .workspace
+                        .update(cx, |workspace, cx| workspace.activate(id, window, cx));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 
@@ -621,7 +704,10 @@ impl Render for ImportList {
                 .text_sm()
                 .text_center()
                 .text_color(cx.theme().muted_foreground)
-                .child("Reading Claude Code history…")
+                .child(match self.source {
+                    elyra_core::ProviderKind::Codex => "Reading Codex history…",
+                    _ => "Reading Claude Code history…",
+                })
                 .into_any_element();
         };
         let query = self.filter.read(cx).value().to_lowercase();
@@ -714,8 +800,35 @@ impl Render for ImportList {
             })
             .collect();
         let count = self.selected.len();
+        let source = self.source;
+        let tab = |id: &'static str, label: &'static str, kind: elyra_core::ProviderKind| {
+            let selected = source == kind;
+            Button::new(id)
+                .small()
+                .when(selected, |b| b.primary())
+                .when(!selected, |b| b.ghost())
+                .label(label)
+                .on_click(cx.listener(move |this, _, _, cx| this.set_source(kind, cx)))
+        };
         v_flex()
             .gap_2()
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(tab(
+                        "import-claude",
+                        "Claude Code",
+                        elyra_core::ProviderKind::Claude,
+                    ))
+                    .child(tab(
+                        "import-codex",
+                        "Codex",
+                        elyra_core::ProviderKind::Codex,
+                    )),
+            )
+            .when_some(self.error.clone(), |this, error| {
+                this.child(div().text_sm().text_color(cx.theme().danger).child(error))
+            })
             .child(Input::new(&self.filter).small())
             .child(
                 v_flex()
@@ -732,7 +845,12 @@ impl Render for ImportList {
                             .flex_1()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Imported threads resume the same Claude Code session."),
+                            .child(match source {
+                                elyra_core::ProviderKind::Codex => {
+                                    "Imported threads resume the same Codex session."
+                                }
+                                _ => "Imported threads resume the same Claude Code session.",
+                            }),
                     )
                     .child(
                         Button::new("import-selected")
@@ -764,31 +882,22 @@ pub fn import_claude_sessions(
         cx.subscribe(&filter, |_, _, _: &InputEvent, cx| cx.notify())
             .detach();
         cx.observe(&app, |_, _, cx| cx.notify()).detach();
-        let job = cx.background_executor().spawn(async move {
-            elyra_provider::claude_history::projects_dir()
-                .map(|root| elyra_provider::claude_history::list_sessions(&root, 300))
-                .unwrap_or_default()
-        });
-        cx.spawn(async move |this, cx| {
-            let sessions = job.await;
-            let _ = this.update(cx, |this: &mut ImportList, cx| {
-                this.sessions = Some(sessions);
-                cx.notify();
-            });
-        })
-        .detach();
-        ImportList {
+        let mut list = ImportList {
             app,
             workspace,
+            source: elyra_core::ProviderKind::Claude,
+            error: None,
             sessions: None,
             selected: Default::default(),
             filter,
             importing: false,
-        }
+        };
+        list.load(cx);
+        list
     });
     window.open_dialog(cx, move |dialog, _, _| {
         dialog
-            .title("Import from Claude Code")
+            .title("Import sessions")
             .w(px(620.))
             .child(list.clone())
     });

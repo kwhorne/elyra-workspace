@@ -5,6 +5,8 @@
 pub mod acp;
 pub mod claude;
 pub mod claude_history;
+pub mod codex;
+pub mod codex_history;
 pub mod elyra;
 mod events;
 mod process;
@@ -69,6 +71,7 @@ pub fn capabilities(kind: ProviderKind) -> Capabilities {
     match kind {
         ProviderKind::Claude => claude::CAPABILITIES,
         ProviderKind::Elyra | ProviderKind::Pi => elyra::CAPABILITIES,
+        ProviderKind::Codex => codex::CAPABILITIES,
         ProviderKind::Gemini
         | ProviderKind::Cursor
         | ProviderKind::OpenCode
@@ -90,6 +93,7 @@ pub fn install_info(kind: ProviderKind) -> Option<(&'static str, &'static str)> 
         ProviderKind::Claude => Some(("claude", "npm install -g @anthropic-ai/claude-code")),
         ProviderKind::Elyra => Some(("elyra", "npm install -g @elyracode/coding-agent")),
         ProviderKind::Pi => Some(("pi", "npm install -g @mariozechner/pi-coding-agent")),
+        ProviderKind::Codex => Some(("codex", "npm install -g @openai/codex")),
         ProviderKind::CustomAcp => None,
         other => acp::agent(other).map(|a| (a.binary, a.install_hint)),
     }
@@ -104,6 +108,7 @@ pub fn login_command(kind: ProviderKind) -> Option<&'static str> {
         ProviderKind::Gemini => Some("gemini"),
         ProviderKind::Cursor => Some("cursor-agent login"),
         ProviderKind::OpenCode => Some("opencode auth login"),
+        ProviderKind::Codex => Some("codex login"),
         ProviderKind::CustomAcp => None,
     }
 }
@@ -114,6 +119,7 @@ pub fn find_executable(kind: ProviderKind) -> Option<PathBuf> {
         ProviderKind::Claude => claude::find_executable(),
         ProviderKind::Elyra => elyra::find_executable(),
         ProviderKind::Pi => elyra::find_pi(),
+        ProviderKind::Codex => codex::find_executable(),
         ProviderKind::CustomAcp => None,
         other => acp::find_executable(other),
     }
@@ -171,6 +177,10 @@ pub fn start_session(
             let (session, events) = elyra::ElyraSession::start_pi(config)?;
             Ok((Box::new(session), events))
         }
+        ProviderKind::Codex => {
+            let (session, events) = codex::CodexSession::start(config)?;
+            Ok((Box::new(session), events))
+        }
         ProviderKind::Gemini
         | ProviderKind::Cursor
         | ProviderKind::OpenCode
@@ -219,6 +229,13 @@ fn generate_with(
         ProviderKind::Gemini => vec!["-p", prompt],
         ProviderKind::Cursor => vec!["-p", "--output-format", "text", prompt],
         ProviderKind::OpenCode => vec!["run", prompt],
+        ProviderKind::Codex => vec![
+            "exec",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+            prompt,
+        ],
         ProviderKind::CustomAcp => return Ok(None),
     };
     let output = std::process::Command::new(executable)

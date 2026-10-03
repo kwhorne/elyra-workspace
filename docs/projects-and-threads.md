@@ -98,7 +98,7 @@ it on the left.
 
 A side chat (**⌥⌘S**) is a quick conversation that branches from the current
 thread. Use it to ask about something without derailing the main thread. It
-starts with the same agent, model and folder. For Claude Code, Elyra and Pi it
+starts with the same agent, model and folder. For Claude Code, Codex, Elyra and Pi it
 also starts from the main thread's conversation so far.
 
 The side chat opens in the **Side chat** tab of the tools panel. It is not listed
@@ -116,7 +116,7 @@ never used, whose parent thread is gone, or that have been idle for a week.
 **Fork** (⇧⌘K, or the thread menu) copies a thread into a new one, including the
 conversation. The two then continue separately:
 
-- With Claude Code, Elyra and Pi, the new thread branches the agent's own session,
+- With Claude Code, Codex, Elyra and Pi, the new thread branches the agent's own session,
   so the agent remembers everything.
 - With other providers, Elyra sends the earlier conversation along with your first
   message in the fork.
@@ -128,16 +128,23 @@ in the same project and folder (worktree included). The message box is filled
 with a summary of where the task stands: the recap from the Context tab if there
 is one, plus the latest messages. Review it, add instructions, and send.
 
-## Import from Claude Code
+## Import sessions
 
-**⌘I** (or **File → Import from Claude Code…**) lists your recent Claude Code
-sessions from `~/.claude/projects`, with title, folder, number of messages and age.
-Filter by title or folder, tick the sessions you want, and press **Import**.
+**⌘I** (or **File → Import Sessions…**) imports sessions you ran outside Elyra.
+Choose the source at the top:
+
+- **Claude Code**: your recent sessions from `~/.claude/projects`.
+- **Codex**: your recent Codex threads. Elyra asks Codex for them, so Codex must
+  be installed.
+
+Each session is listed with title, folder, size and age. Filter by title or
+folder, tick the sessions you want, and press **Import**.
 
 - Each session becomes a thread with its conversation.
 - It belongs to the project for its folder. That project is added if needed.
   Sessions whose folder no longer exists go to *Chats*.
-- The thread resumes the same Claude Code session, so you can just continue.
+- The thread resumes the same Claude Code or Codex session, so you can just
+  continue.
 - Sessions you already imported are marked and can't be imported twice.
 
 ## Export

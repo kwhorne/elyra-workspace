@@ -26,7 +26,7 @@ Press **⌘/** in the app to see all shortcuts, including any you changed.
 | ⌘\\ | Split chat |
 | ⌥⌘S | New side chat |
 | ⇧⌘K | Fork thread |
-| ⌘I | Import from Claude Code |
+| ⌘I | Import sessions (Claude Code, Codex) |
 | ⌘L | Focus the message box |
 | ⌘F | Find in thread (message box focused) |
 | ⌃C | Stop the agent (message box focused) |

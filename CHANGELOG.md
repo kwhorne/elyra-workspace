@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1
+
+- **Codex** as a provider through `codex app-server`: streaming, reasoning,
+  commands with live output, diffs, plans, questions, approvals mapped to Codex's
+  approval policy and sandbox, steer, compact, models, effort, native fork and
+  resume, project instructions, and the agent gateway (MCP)
+- Import Codex threads alongside Claude Code sessions (⌘I)
+- Fix: the shortcuts and command palette entries for fork (⇧⌘K), import (⌘I),
+  the task board (⌥⌘T), automations (⌥⌘A), statistics and export were missing
+
 ## 0.1.0
 
 First release, for macOS (Apple Silicon). See [docs/](docs/README.md) for the user

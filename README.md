@@ -22,7 +22,8 @@ gateway, settings, keyboard shortcuts and troubleshooting.
 
 - Projects and threads in a sidebar, open threads as tabs, restored on restart
 - Providers behind one `AgentSession` trait, chosen per thread: **Claude Code**
-  (`claude -p` stream-json), **Elyra** and **Pi** (`--mode rpc`), and any
+  (`claude -p` stream-json), **Codex** (`codex app-server`), **Elyra** and **Pi**
+  (`--mode rpc`), and any
   [Agent Client Protocol](https://agentclientprotocol.com) agent — **Gemini CLI**,
   **Cursor Agent**, **OpenCode** built in, plus a custom ACP command
 - Providers settings: enable/disable, executable, arguments, environment variables,
@@ -30,7 +31,7 @@ gateway, settings, keyboard shortcuts and troubleshooting.
   and "Sign in…" in Terminal; starred model presets in the model menu
 - Fork a thread (native session branch where supported, otherwise with the
   conversation as context), continue a thread with another provider (handoff with
-  recap), import Claude Code sessions (⌘I) that resume where they left off
+  recap), import Claude Code and Codex sessions (⌘I) that resume where they left off
 - Agent chat: streaming text and reasoning, tool calls with live output, Edit/Write
   diffs, subagents with nested calls, task lists, plan review (approve / keep
   planning), structured questions (AskUserQuestion and Elyra extension dialogs),
@@ -168,7 +169,7 @@ Any ACP agent: `ACP_COMMAND="npx -y @agentclientprotocol/claude-agent-acp" cargo
 | ⌘\       | Split chat          |
 | ⌥⌘S      | New side chat       |
 | ⇧⌘K      | Fork thread         |
-| ⌘I       | Import from Claude Code |
+| ⌘I       | Import sessions (Claude Code, Codex) |
 | ⇧⌘E      | Files               |
 | ⇧⌘I      | Context and notes   |
 | ⇧⌘J      | Full-width terminal |

@@ -13,7 +13,7 @@ and the agents run as the command-line tools you already have installed.
 | [Getting started](getting-started.md) | Installing, first launch, your first project and thread |
 | [Projects and threads](projects-and-threads.md) | The sidebar, tabs, spaces, archiving, forking, side chats, import and export |
 | [Working with an agent](chat.md) | The composer, attachments, `@` and `/`, models, approvals, plans, checkpoints |
-| [Providers](providers.md) | Claude Code, Elyra, Pi, Gemini CLI, Cursor, OpenCode and other ACP agents; accounts |
+| [Providers](providers.md) | Claude Code, Codex, Elyra, Pi, Gemini CLI, Cursor, OpenCode and other ACP agents; accounts |
 | [Changes, Git and review](git-and-review.md) | Diffs, staging, commits, branches, worktrees, pull requests, the review inbox |
 | [Files and search](files-and-search.md) | Command palette, file finder, content search, the editor, external editors |
 | [Terminal](terminal.md) | Terminal tabs and splits, search, full-screen programs, copy and paste |

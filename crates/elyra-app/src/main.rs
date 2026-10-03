@@ -137,7 +137,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("New Chat", actions::NewChat),
                 MenuItem::action("New Side Chat", actions::NewSideChat),
                 MenuItem::action("Fork Thread", actions::ForkThread),
-                MenuItem::action("Import from Claude Code…", actions::ImportThreads),
+                MenuItem::action("Import Sessions…", actions::ImportThreads),
                 MenuItem::action("Export Thread…", actions::ExportThread),
                 MenuItem::action("Add Project…", actions::AddProject),
                 MenuItem::action("Open in Editor", actions::OpenInEditor),

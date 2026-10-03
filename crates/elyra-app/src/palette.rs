@@ -153,6 +153,37 @@ fn commands() -> Vec<Command> {
             IconName::MessagesSquare,
             actions::NewSideChat
         ),
+        command!("Fork thread", "⇧⌘K", IconName::GitFork, actions::ForkThread),
+        command!(
+            "Import sessions from Claude Code or Codex…",
+            "⌘I",
+            IconName::Import,
+            actions::ImportThreads
+        ),
+        command!(
+            "Export thread…",
+            "",
+            IconName::Download,
+            actions::ExportThread
+        ),
+        command!(
+            "Task board",
+            "⌥⌘T",
+            IconName::SquareKanban,
+            actions::ShowTasks
+        ),
+        command!(
+            "Automations",
+            "⌥⌘A",
+            IconName::CalendarClock,
+            actions::ShowAutomations
+        ),
+        command!(
+            "Usage statistics",
+            "",
+            IconName::ChartColumn,
+            actions::ShowStats
+        ),
         command!(
             "Show context and notes",
             "⇧⌘I",

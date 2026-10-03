@@ -7,6 +7,7 @@ Sign-in, billing and limits are handled by each tool.
 | Provider | Command | How Elyra talks to it | Approvals | Effort | Fork | MCP gateway |
 | --- | --- | --- | --- | --- | --- | --- |
 | Claude Code | `claude` | stream-json | yes | low – max | yes | yes |
+| Codex | `codex app-server` | JSON-RPC (app-server v2) | yes | minimal – extra high | yes | yes |
 | Elyra | `elyra --mode rpc` | RPC | no (tools run directly) | off – extra high | yes | no |
 | Pi | `pi --mode rpc` | RPC (same as Elyra) | no | off – extra high | yes | no |
 | Gemini CLI | `gemini --experimental-acp` | Agent Client Protocol | yes | — | via context | yes |
@@ -31,6 +32,32 @@ The most complete integration:
 
 Sessions are resumed by id, so a thread continues where it left off after a
 restart. Sessions from Claude Code in the terminal can be imported with ⌘I.
+
+## Codex
+
+OpenAI's Codex runs through `codex app-server`:
+
+- Replies and reasoning summaries stream in.
+- Commands show their output live. File changes show as diffs.
+- Task plans appear as a task card.
+- When Codex asks a question, it appears as a form.
+- Messages can be sent into a running turn (steer).
+- `/compact` compacts the conversation.
+- Models come from Codex itself. Effort sets the reasoning effort.
+- Fork branches the Codex thread natively. Threads resume by id after a restart.
+
+The permission mode maps to Codex's approval policy and sandbox:
+
+| Elyra mode | Approval policy | Sandbox |
+| --- | --- | --- |
+| Ask for approval | untrusted | read-only |
+| Accept edits | on-request | workspace-write |
+| Plan only | never | read-only |
+| Full access | never | danger-full-access |
+
+Project instructions and debug mode are passed as developer instructions. Sign in
+with `codex login` (or **Sign in…** in Settings). Codex sessions can be imported
+with ⌘I ([Projects and threads](projects-and-threads.md#import-sessions)).
 
 ## Elyra and Pi
 

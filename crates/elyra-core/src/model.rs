@@ -48,11 +48,14 @@ pub enum ProviderKind {
     Pi,
     /// A user-configured Agent Client Protocol command.
     CustomAcp,
+    /// OpenAI Codex (`codex app-server`).
+    Codex,
 }
 
 impl ProviderKind {
-    pub const ALL: [ProviderKind; 7] = [
+    pub const ALL: [ProviderKind; 8] = [
         ProviderKind::Claude,
+        ProviderKind::Codex,
         ProviderKind::Elyra,
         ProviderKind::Gemini,
         ProviderKind::Cursor,
@@ -70,6 +73,7 @@ impl ProviderKind {
             ProviderKind::OpenCode => "opencode",
             ProviderKind::Pi => "pi",
             ProviderKind::CustomAcp => "acp",
+            ProviderKind::Codex => "codex",
         }
     }
 
@@ -86,6 +90,7 @@ impl ProviderKind {
             ProviderKind::OpenCode => "OpenCode",
             ProviderKind::Pi => "Pi",
             ProviderKind::CustomAcp => "Custom agent (ACP)",
+            ProviderKind::Codex => "Codex",
         }
     }
 }

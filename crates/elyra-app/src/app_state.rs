@@ -310,18 +310,17 @@ impl AppState {
         Ok((new_id, draft))
     }
 
-    /// Import a Claude Code session as a thread that resumes it. Returns the
-    /// existing thread when it was imported before.
-    pub fn import_claude_session(
+    /// Add an imported provider session as a thread that resumes it.
+    /// Returns the existing thread when it was imported before.
+    pub fn import_session(
         &mut self,
-        path: &Path,
+        provider: ProviderKind,
+        session: elyra_provider::claude_history::ImportedSession,
         cx: &mut Context<Self>,
     ) -> Result<ThreadId> {
-        let session = elyra_provider::claude_history::load_session(path)
-            .ok_or_else(|| anyhow::anyhow!("could not read {}", path.display()))?;
         let summary = session.summary;
         if let Some(existing) = self.threads.iter().find(|t| {
-            t.provider == ProviderKind::Claude
+            t.provider == provider
                 && t.provider_session_id.as_deref() == Some(summary.session_id.as_str())
         }) {
             return Ok(existing.id);
@@ -332,7 +331,7 @@ impl AppState {
         };
         let mut thread = self.store.create_thread(
             project.id,
-            ProviderKind::Claude,
+            provider,
             None,
             PermissionMode::default(),
             Environment::Local,

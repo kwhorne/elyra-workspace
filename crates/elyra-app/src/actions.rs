@@ -190,6 +190,40 @@ pub const SHORTCUTS: &[Shortcut] = &[
         NewSideChat
     ),
     shortcut!(
+        "fork_thread",
+        "Threads",
+        "Fork thread",
+        "cmd-shift-k",
+        WS,
+        ForkThread
+    ),
+    shortcut!(
+        "import_threads",
+        "Threads",
+        "Import sessions (Claude Code, Codex)",
+        "cmd-i",
+        WS,
+        ImportThreads
+    ),
+    shortcut!(
+        "export_thread",
+        "Threads",
+        "Export thread",
+        "",
+        WS,
+        ExportThread
+    ),
+    shortcut!("tasks", "Panels", "Task board", "cmd-alt-t", WS, ShowTasks),
+    shortcut!(
+        "automations",
+        "Panels",
+        "Automations",
+        "cmd-alt-a",
+        WS,
+        ShowAutomations
+    ),
+    shortcut!("stats", "Panels", "Usage statistics", "", WS, ShowStats),
+    shortcut!(
         "focus_composer",
         "Threads",
         "Focus composer",

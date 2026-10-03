@@ -46,8 +46,8 @@ conversation.
 
 Instructions that every agent in the project gets in addition to its normal
 system prompt, such as conventions, commands to run, or things to avoid. They
-apply from the next message, in every thread of the project. Claude Code, Elyra
-and Pi support this. ACP agents don't take extra instructions.
+apply from the next message, in every thread of the project. Claude Code, Codex,
+Elyra and Pi support this. ACP agents don't take extra instructions.
 
 ## Local servers
 

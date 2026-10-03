@@ -12,7 +12,7 @@ anywhere.
 - While the agent is working, the send button turns into **Queue**. Your message
   waits and is sent when the turn ends. Queued messages are shown above the
   message box. You can remove them, or press **Send now** to deliver one into the
-  running turn (Claude Code, Elyra and Pi).
+  running turn (Claude Code, Codex, Elyra and Pi).
 - **Stop** (or **⌃C** in the message box) interrupts the agent.
 
 If Elyra quit while a turn was running, the thread shows *The last turn was
@@ -60,7 +60,7 @@ arguments before sending.
 
 The row below the message box controls the thread:
 
-- **Agent**: Claude Code, Elyra, Pi, Gemini CLI, Cursor Agent, OpenCode or your
+- **Agent**: Claude Code, Codex, Elyra, Pi, Gemini CLI, Cursor Agent, OpenCode or your
   custom agent. You can change it only before the first message. To switch later,
   use *Continue with* ([Projects and threads](projects-and-threads.md#handoff-to-another-provider)).
   Agents you switched off in Settings are not listed.
@@ -71,8 +71,8 @@ The row below the message box controls the thread:
   switches the agent.
 - **Account**: only shown when you set up accounts for the agent in Settings.
   Like the agent, it can be chosen only before the first message.
-- **Effort**: how hard the model thinks (Claude Code: low to max; Elyra and Pi:
-  off to extra high). Not every agent supports it.
+- **Effort**: how hard the model thinks (Claude Code: low to max; Codex: minimal
+  to extra high; Elyra and Pi: off to extra high). Not every agent supports it.
 - **Permission mode**:
 
 | Mode | The agent… |

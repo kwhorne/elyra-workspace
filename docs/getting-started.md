@@ -10,6 +10,7 @@
 | Agent | Install | Sign in |
 | --- | --- | --- |
 | Claude Code | `npm install -g @anthropic-ai/claude-code` | run `claude` and use `/login` |
+| Codex | `npm install -g @openai/codex` | `codex login` |
 | Elyra | `npm install -g @elyracode/coding-agent` | run `elyra` |
 | Pi | `npm install -g @mariozechner/pi-coding-agent` | run `pi` |
 | Gemini CLI | `npm install -g @google/gemini-cli` | run `gemini` |
