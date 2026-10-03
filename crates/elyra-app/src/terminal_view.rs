@@ -37,12 +37,15 @@ gpui_kit::actions!(
         FindNext,
         FindPrevious,
         CloseFind,
+        ClearTerminal,
     ]
 );
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-f", FindInTerminal, Some("TerminalPanel")),
+        // Like Terminal.app; takes precedence over the command palette here.
+        KeyBinding::new("cmd-k", ClearTerminal, Some("TerminalPanel")),
         KeyBinding::new("cmd-g", FindPrevious, Some("TerminalFind")),
         KeyBinding::new("cmd-shift-g", FindNext, Some("TerminalFind")),
         KeyBinding::new("escape", CloseFind, Some("TerminalFind")),
@@ -1029,6 +1032,12 @@ impl TerminalPanel {
         cx.notify();
     }
 
+    fn on_clear(&mut self, _: &ClearTerminal, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(terminal) = self.active_terminal(cx) {
+            terminal.clear();
+        }
+    }
+
     fn on_new(&mut self, _: &NewTerminal, window: &mut Window, cx: &mut Context<Self>) {
         self.add(window, cx);
     }
@@ -1168,6 +1177,7 @@ impl Render for TerminalPanel {
             .key_context("TerminalPanel")
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::on_split))
+            .on_action(cx.listener(Self::on_clear))
             .on_action(cx.listener(Self::on_find))
             .on_action(cx.listener(Self::on_new))
             .on_action(cx.listener(Self::on_close))

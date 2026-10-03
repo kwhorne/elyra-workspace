@@ -12,7 +12,13 @@ conversation, and the tools around it — changes, Git and a terminal — in one
 | **Provider** | The locally installed coding agent: Claude Code or Elyra |
 | **Tools**    | Changes/diff, commit/push, terminal                          |
 
-## Features (MVP)
+## Documentation
+
+The user guide is in [docs/](docs/README.md): getting started, threads, working
+with agents, providers, Git and review, files, terminal, automations, the agent
+gateway, settings, keyboard shortcuts and troubleshooting.
+
+## Features
 
 - Projects and threads in a sidebar, open threads as tabs, restored on restart
 - Providers behind one `AgentSession` trait, chosen per thread: **Claude Code**
