@@ -1,6 +1,6 @@
 # Elyra Workspace agent instructions
 
-Rust + GPUI desktop workspace for coding agents (a Rust rewrite inspired by Synara).
+Rust + GPUI desktop workspace for coding agents.
 See docs/development.md for the crate map, checks and the release process.
 
 ## Boundaries

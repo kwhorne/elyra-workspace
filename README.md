@@ -3,8 +3,7 @@
 A local-first desktop workspace for coding agents. Add your project folders, give
 each task its own thread, and work with Claude Code, Codex or another agent, with
 the changes it makes, Git, a terminal and your files in the same window. Written in
-Rust with [GPUI](https://www.gpui.rs/) and [GPUI Kit](https://gpui-kit.com), inspired by
-[Synara](https://github.com/Emanuele-web04/synara).
+Rust with [GPUI](https://www.gpui.rs/) and [GPUI Kit](https://gpui-kit.com).
 
 ![Elyra Workspace: projects and threads on the left, an agent conversation with a task list, a question and a plan in the middle, and the Changes panel with a diff on the right](assets/screenshot.png)
 
