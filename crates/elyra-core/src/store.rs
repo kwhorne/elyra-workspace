@@ -93,6 +93,9 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE threads ADD COLUMN budget_usd REAL;
     ALTER TABLE threads ADD COLUMN race_id TEXT;
 "#,
+    r#"
+    ALTER TABLE threads ADD COLUMN felagi_issue TEXT;
+"#,
 ];
 
 const PROJECT_COLUMNS: &str =
@@ -100,7 +103,7 @@ const PROJECT_COLUMNS: &str =
 const THREAD_COLUMNS: &str = "id, project_id, title, provider, model, permission_mode,
     provider_session_id, environment, status, archived, created_at, updated_at, effort,
     pinned, done, read_at, last_activity_at, parent_id, notes, recap, pinned_items, account,
-    fork_context, goal, goal_status, goal_runs, debug_mode, budget_usd, race_id";
+    fork_context, goal, goal_status, goal_runs, debug_mode, budget_usd, race_id, felagi_issue";
 
 pub struct Store {
     pub(crate) conn: Connection,
@@ -290,6 +293,7 @@ impl Store {
             debug_mode: false,
             budget_usd: None,
             race_id: None,
+            felagi_issue: None,
             created_at: now,
             updated_at: now,
         };
@@ -323,7 +327,7 @@ impl Store {
                 read_at = ?14, last_activity_at = ?15, parent_id = ?16, notes = ?17, recap = ?18,
                 pinned_items = ?19, account = ?20, fork_context = ?21, goal = ?22,
                 goal_status = ?23, goal_runs = ?24, debug_mode = ?25, budget_usd = ?26,
-                race_id = ?27
+                race_id = ?27, felagi_issue = ?28
              WHERE id = ?1",
             params![
                 thread.id.to_string(),
@@ -353,6 +357,7 @@ impl Store {
                 thread.debug_mode,
                 thread.budget_usd,
                 thread.race_id.map(|id| id.to_string()),
+                thread.felagi_issue,
             ],
         )?;
         Ok(())
@@ -788,6 +793,7 @@ fn thread_from_row(row: &Row) -> rusqlite::Result<Thread> {
         race_id: row
             .get::<_, Option<String>>(28)?
             .and_then(|id| Uuid::parse_str(&id).ok()),
+        felagi_issue: row.get(29)?,
         created_at: parse_time(row, 10)?,
         updated_at: parse_time(row, 11)?,
     })
@@ -999,6 +1005,7 @@ mod tests {
         thread.budget_usd = Some(2.5);
         let race = Uuid::new_v4();
         thread.race_id = Some(race);
+        thread.felagi_issue = Some("ACM-231".into());
         store.update_thread(&thread).unwrap();
         let loaded = store
             .threads(false)
@@ -1017,6 +1024,7 @@ mod tests {
         );
         assert_eq!(loaded.budget_usd, Some(2.5));
         assert_eq!(loaded.race_id, Some(race));
+        assert_eq!(loaded.felagi_issue.as_deref(), Some("ACM-231"));
         store
             .append_item(
                 thread.id,

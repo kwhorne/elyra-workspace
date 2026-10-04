@@ -72,3 +72,49 @@ board with three columns: **Draft**, **In progress** and **Done**.
   thread as done or archive it, the card moves to *Done* automatically.
 - The **⋯** menu on a card: **Edit…** (title and notes), **Move to…**, **Delete**.
 - The menu in the top-right corner filters the board by project.
+
+## Félagi tasks and time
+
+With [Elyra Félagi](https://github.com/kwhorne/Felagi) connected, the task board
+has a **Félagi** tab next to **Local**: the issues assigned to you, in the
+columns *To do*, *In progress*, *In review* and *Done*, each with its identifier
+(such as `ACM-231`), priority, and time spent against its estimate.
+
+### Connecting
+
+In Félagi, make a personal token under **Settings → API tokens**, with **Read and
+write** so work can be reported back. In Elyra Workspace, open **Settings →
+Félagi → Connect…**, give Félagi's address and the token, and press
+**Connect**. Elyra checks the token with Félagi and keeps it in the macOS
+Keychain, not in its own database. **Disconnect** removes it again.
+
+### Choosing what to see
+
+With a project selected in the board's filter, the menu at the top of the Félagi
+tab links it to a Félagi project, so the tab shows only that project's issues.
+*All my issues* shows everything assigned to you. The tab asks Félagi again every
+90 seconds; the refresh button asks right away.
+
+### Working on an issue
+
+**Start** on a card opens a thread in the selected project, named after the
+issue, and sends the issue's text and acceptance criteria as the first message.
+The issue moves to *In progress* and Félagi's timer starts on it. **Open thread**
+jumps to it later; **Open in Félagi** opens the issue in your browser.
+
+A thread working on an issue shows a banner above the message box: the issue,
+its status in Félagi and, while it runs, the timer.
+
+### Reporting back
+
+**Report…** on the banner writes back to Félagi:
+
+- **What was done**: a comment. The thread's agent writes a draft from the
+  conversation and the uncommitted changes; edit it as you like.
+- **Status**: suggested as *In review*; any status can be chosen.
+- **Time to log**: filled in from Félagi's timer, in Félagi's notation
+  (`1h 30m`, `45m`, `1.5h`). Leave it empty to log nothing.
+
+**Send to Félagi** logs the hours (replacing the running timer, so nothing is
+counted twice), posts the comment and sets the status, and the thread notes what
+was sent. A read-only token can show issues but not report.

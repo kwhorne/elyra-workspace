@@ -1677,6 +1677,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-web-kit",
  "raw-window-handle",
+ "security-framework",
  "serde",
  "serde_json",
  "uuid",

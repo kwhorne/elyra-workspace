@@ -514,8 +514,189 @@ impl SettingsView {
             terminal,
             providers,
             external_page(),
+            felagi_page(),
         ]
     }
+}
+
+fn felagi_page() -> SettingPage {
+    SettingPage::new("Félagi").icon(IconName::SquareKanban).group(
+        SettingGroup::new()
+            .title("Tasks and time")
+            .description(
+                "Elyra Félagi issues on the task board, work started from them in a thread, and what was done, its status and the hours written back.",
+            )
+            .item(SettingItem::new(
+                "Connection",
+                SettingField::render(|_, _, cx| render_felagi_connection(cx)),
+            )),
+    )
+}
+
+fn render_felagi_connection(cx: &mut App) -> AnyElement {
+    let Some(app) = preferences::app_state(cx) else {
+        return div().into_any_element();
+    };
+    let connection = crate::felagi::connection(&app.read(cx).store);
+    let summary = match &connection {
+        Some(c) => format!(
+            "{} as {} · {} · {}",
+            c.workspace,
+            c.user,
+            c.url,
+            if c.can_write {
+                "read and write"
+            } else {
+                "read only"
+            }
+        ),
+        None => "Not connected".to_string(),
+    };
+    let connect_app = app.clone();
+    h_flex()
+        .gap_2()
+        .text_sm()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_color(cx.theme().muted_foreground)
+                .child(summary),
+        )
+        .child(
+            Button::new("felagi-connect")
+                .xsmall()
+                .outline()
+                .label(if connection.is_some() {
+                    "Change…"
+                } else {
+                    "Connect…"
+                })
+                .on_click(move |_, window, cx| {
+                    felagi_connect_dialog(connect_app.clone(), window, cx)
+                }),
+        )
+        .when_some(connection, |this, connection| {
+            this.child(
+                Button::new("felagi-disconnect")
+                    .xsmall()
+                    .ghost()
+                    .label("Disconnect")
+                    .on_click(move |_, window, cx| {
+                        crate::felagi::forget_token(&connection.url);
+                        crate::felagi::save_connection(&app.read(cx).store, None);
+                        window.refresh();
+                    }),
+            )
+        })
+        .into_any_element()
+}
+
+/// Ask for the address and a personal token, check them against `/me`, and
+/// keep the token in the Keychain.
+fn felagi_connect_dialog(
+    app: Entity<crate::app_state::AppState>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    use gpui_kit::component::WindowExt as _;
+    use gpui_kit::component::input::{Input, InputState};
+    let current = crate::felagi::connection(&app.read(cx).store);
+    let url = cx.new(|cx| {
+        let mut state = InputState::new(window, cx).placeholder("https://felagi.example.com");
+        if let Some(current) = &current {
+            state.set_value(current.url.clone(), window, cx);
+        }
+        state
+    });
+    let token = cx.new(|cx| InputState::new(window, cx).placeholder("fat_…"));
+    let status = cx.new(|_| String::new());
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let (url, token, status, app) = (url.clone(), token.clone(), status.clone(), app.clone());
+        let message = status.read(cx).clone();
+        dialog
+            .title("Connect to Félagi")
+            .w(px(520.))
+            .child(
+                v_flex()
+                    .gap_3()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child("Address"))
+                            .child(Input::new(&url)),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_sm().child("Personal token"))
+                            .child(Input::new(&token).mask_toggle())
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Make one in Félagi under Settings → API tokens, with Read and write so work can be reported back. It is kept in the macOS Keychain."),
+                            ),
+                    )
+                    .when(!message.is_empty(), |this| {
+                        this.child(div().text_sm().text_color(cx.theme().danger).child(message))
+                    }),
+            )
+            .footer(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("felagi-cancel")
+                            .small()
+                            .label("Cancel")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("felagi-check")
+                            .small()
+                            .primary()
+                            .label("Connect")
+                            .on_click(move |_, window, cx| {
+                                let address = url.read(cx).value().trim().trim_end_matches('/').to_string();
+                                let secret = token.read(cx).value().trim().to_string();
+                                if address.is_empty() || secret.is_empty() {
+                                    status.update(cx, |s, cx| {
+                                        *s = "Give the address and a token.".into();
+                                        cx.notify();
+                                    });
+                                    window.refresh();
+                                    return;
+                                }
+                                let (status, app) = (status.clone(), app.clone());
+                                let job = cx.background_executor().spawn(async move {
+                                    let me = crate::felagi::Client::new(&address, &secret).me()?;
+                                    crate::felagi::save_token(&me.url, &secret)?;
+                                    anyhow::Ok(me)
+                                });
+                                window
+                                    .spawn(cx, async move |cx| {
+                                        let result = job.await;
+                                        let _ = cx.update(|window, cx| match result {
+                                            Ok(me) => {
+                                                crate::felagi::save_connection(&app.read(cx).store, Some(&me));
+                                                window.close_dialog(cx);
+                                                window.refresh();
+                                            }
+                                            Err(err) => {
+                                                status.update(cx, |s, cx| {
+                                                    *s = format!("{err:#}");
+                                                    cx.notify();
+                                                });
+                                                window.refresh();
+                                            }
+                                        });
+                                    })
+                                    .detach();
+                            }),
+                    ),
+            )
+    });
 }
 
 fn external_page() -> SettingPage {

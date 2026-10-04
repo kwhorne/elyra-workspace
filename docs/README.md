@@ -19,7 +19,7 @@ and the agents run as the command-line tools you already have installed.
 | [Browser](browser.md) | The built-in browser for your dev servers, page errors, before and after pictures, and letting agents look at pages |
 | [Terminal](terminal.md) | Terminal tabs and splits, search, full-screen programs, copy and paste |
 | [Context, notes and goals](context-and-goals.md) | Notes, pinned messages, recaps, project instructions, dev servers, goals, budgets |
-| [Automations and tasks](automations-and-tasks.md) | Scheduled prompts and the task board |
+| [Automations and tasks](automations-and-tasks.md) | Scheduled prompts, the task board, and Félagi tasks and time |
 | [Agent gateway and MCP](agent-gateway.md) | Letting agents manage threads, connecting Claude Desktop and Codex |
 | [Settings](settings.md) | Every page of the Settings window |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | All shortcuts and how to change them |

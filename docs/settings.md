@@ -67,6 +67,13 @@ arguments (ACP agents), environment and accounts. See [Providers](providers.md).
 | External clients | Pair, configure and revoke Claude Desktop, Codex and other MCP clients |
 | Activity | The audit log of gateway calls |
 
+## Félagi
+
+**Connection**: the [Elyra Félagi](automations-and-tasks.md#félagi-tasks-and-time)
+workspace the task board's Félagi tab and thread reports talk to, and as whom.
+**Connect…** asks for the address and a personal token (kept in the macOS
+Keychain); **Disconnect** removes it.
+
 ## Settings that follow your use
 
 Some defaults aren't on a settings page; Elyra takes them from what you do:

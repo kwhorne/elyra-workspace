@@ -42,6 +42,9 @@ pub struct TasksView {
     workspace: WeakEntity<Workspace>,
     project: Option<ProjectId>,
     new_title: Entity<InputState>,
+    /// Showing the Félagi tab (issues from Elyra Félagi) instead of local tasks.
+    show_felagi: bool,
+    felagi: Option<Entity<crate::felagi_board::FelagiBoard>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -74,10 +77,34 @@ impl TasksView {
             workspace,
             project,
             new_title,
+            show_felagi: false,
+            felagi: None,
             _subscriptions: subscriptions,
         };
         this.sync_with_threads(cx);
         this
+    }
+
+    fn set_project(&mut self, project: Option<ProjectId>, cx: &mut Context<Self>) {
+        self.project = project;
+        if let Some(board) = &self.felagi {
+            board.update(cx, |board, cx| board.set_project(project, cx));
+        }
+        cx.notify();
+    }
+
+    fn show_felagi(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.show_felagi = on;
+        if on && self.felagi.is_none() {
+            let (app, workspace, project) =
+                (self.app.clone(), self.workspace.clone(), self.project);
+            self.felagi = Some(
+                cx.new(|cx| crate::felagi_board::FelagiBoard::new(app, workspace, project, cx)),
+            );
+        } else if on && let Some(board) = &self.felagi {
+            board.update(cx, |board, cx| board.refresh(cx));
+        }
+        cx.notify();
     }
 
     fn tasks(&self, cx: &App) -> Vec<Task> {
@@ -461,10 +488,34 @@ impl Render for TasksView {
                     .child(Icon::new(IconName::SquareKanban).small())
                     .child(
                         div()
-                            .flex_1()
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Tasks"),
+                    )
+                    .child(
+                        h_flex()
+                            .flex_1()
+                            .gap_1()
+                            .child(
+                                Button::new("tasks-local")
+                                    .xsmall()
+                                    .when(!self.show_felagi, |b| b.primary())
+                                    .when(self.show_felagi, |b| b.ghost())
+                                    .label("Local")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.show_felagi(false, cx)),
+                                    ),
+                            )
+                            .child(
+                                Button::new("tasks-felagi")
+                                    .xsmall()
+                                    .when(self.show_felagi, |b| b.primary())
+                                    .when(!self.show_felagi, |b| b.ghost())
+                                    .label("Félagi")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.show_felagi(true, cx)),
+                                    ),
+                            ),
                     )
                     .child(
                         Button::new("tasks-project")
@@ -477,10 +528,7 @@ impl Render for TasksView {
                                     let view = view.clone();
                                     menu = menu.item(PopupMenuItem::new(name).on_click(
                                         move |_, _, cx| {
-                                            let _ = view.update(cx, |v, cx| {
-                                                v.project = id;
-                                                cx.notify();
-                                            });
+                                            let _ = view.update(cx, |v, cx| v.set_project(id, cx));
                                         },
                                     ));
                                 }
@@ -488,6 +536,19 @@ impl Render for TasksView {
                             }),
                     ),
             )
-            .child(h_flex().flex_1().min_h_0().p_3().gap_3().children(columns))
+            .child(match (&self.felagi, self.show_felagi) {
+                (Some(board), true) => div()
+                    .flex_1()
+                    .min_h_0()
+                    .child(board.clone())
+                    .into_any_element(),
+                _ => h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .p_3()
+                    .gap_3()
+                    .children(columns)
+                    .into_any_element(),
+            })
     }
 }

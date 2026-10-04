@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Félagi tasks and time.** Connect [Elyra Félagi](https://github.com/kwhorne/Felagi)
+  in Settings → Félagi (the token is kept in the macOS Keychain), and the task
+  board gets a Félagi tab with the issues assigned to you. **Start** opens a
+  thread on an issue, moves it to In progress and starts Félagi's timer; the
+  thread's banner shows the issue and the timer, and **Report…** writes back
+  what was done (drafted by the agent), the status and the hours.
+
 ## 0.6.0
 
 More with [Elyra Grove](https://github.com/kwhorne/grove):

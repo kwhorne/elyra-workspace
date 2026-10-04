@@ -237,6 +237,8 @@ pub struct Thread {
     /// Set on the candidates of a best-of-N run: the same task given to
     /// several agents, each in its own worktree.
     pub race_id: Option<Uuid>,
+    /// The Félagi issue the thread works on (`ACM-231`).
+    pub felagi_issue: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

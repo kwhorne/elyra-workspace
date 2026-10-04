@@ -59,6 +59,8 @@ pub struct ThreadView {
     follow: bool,
     is_git_repo: bool,
     warmed_up: bool,
+    /// The Félagi issue the thread works on, with its banner.
+    felagi: Option<Entity<crate::felagi_report::FelagiLink>>,
     /// The thread's browser, for the chip that offers its new errors.
     browser: Option<Entity<crate::browser_view::BrowserView>>,
     /// Server errors (5xx) Grove recorded for the project's app since the
@@ -142,6 +144,10 @@ impl ThreadView {
                 }
             }
         });
+        let felagi = session.read(cx).thread.felagi_issue.clone().map(|id| {
+            let session = session.clone();
+            cx.new(|cx| crate::felagi_report::FelagiLink::new(session, id, cx))
+        });
         let scroll = ScrollHandle::new();
         scroll.scroll_to_bottom();
         Self {
@@ -158,6 +164,7 @@ impl ThreadView {
             find: None,
             follow: true,
             is_git_repo,
+            felagi,
             browser: None,
             server_errors: Vec::new(),
             server_seen: None,
@@ -1798,6 +1805,7 @@ impl Render for ThreadView {
                         .children(interrupted)
                         .children(popup)
                         .children(queue)
+                        .children(self.felagi.clone())
                         .children(page_errors)
                         .child(
                             v_flex()
