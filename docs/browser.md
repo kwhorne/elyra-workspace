@@ -27,6 +27,21 @@ The browser uses Safari's engine (WebKit). Pages share cookies and storage acros
 threads, as in one Safari window with several tabs. Closing a thread's tab closes
 its browser.
 
+## Pointing at an element
+
+To show the agent exactly what you mean, press the **target** button in the
+toolbar and click the thing on the page: a button that sits too low, a heading in
+the wrong colour. While picking, the element under the pointer is outlined and
+the page doesn't react to clicks; **Esc** or the button again stops.
+
+The element is attached to your message as a picture of it with a little of its
+surroundings, and its details: a selector that matches only it, its position and
+size, its text, its computed styles (layout, spacing, colours, fonts) and its
+HTML. Write what's wrong, *this button sits too low*, and send.
+
+It works on any page, since it only adds to the message you send. Password field
+values are left out.
+
 ## Errors on the page
 
 While a local page is open, Elyra watches it for errors: anything written with

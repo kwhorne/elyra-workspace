@@ -359,7 +359,7 @@ impl Workspace {
         ));
         let view = cx.new(|cx| ThreadView::new(session, window, cx));
         if let Some(browser) = self.browser_views.get(&id).cloned() {
-            view.update(cx, |view, cx| view.set_browser(browser, cx));
+            view.update(cx, |view, cx| view.set_browser(browser, window, cx));
         }
         self.thread_views.insert(id, view.clone());
         Some(view)
@@ -1246,7 +1246,7 @@ impl Workspace {
         let view = cx.new(|cx| crate::browser_view::BrowserView::new(cwd, window, cx));
         if let Some(thread) = self.thread_views.get(&id) {
             let browser = view.clone();
-            thread.update(cx, |thread, cx| thread.set_browser(browser, cx));
+            thread.update(cx, |thread, cx| thread.set_browser(browser, window, cx));
         }
         self.browser_views.insert(id, view.clone());
         view

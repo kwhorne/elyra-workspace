@@ -29,6 +29,55 @@ const COVER_CHECK: Duration = Duration::from_millis(150);
 /// How often to look for new errors on a local page.
 const ERROR_CHECK: Duration = Duration::from_secs(2);
 
+/// How often to look whether the user picked an element.
+const PICK_CHECK: Duration = Duration::from_millis(150);
+
+/// Room around a picked element in its picture.
+const PICK_MARGIN: f64 = 16.;
+
+pub enum BrowserEvent {
+    /// The user picked an element on the page for the next message.
+    ElementPicked {
+        title: String,
+        details: String,
+        picture: Option<Vec<u8>>,
+    },
+}
+
+/// A picked element (see element-pick.js) as a title and text for the agent.
+pub fn element_details(picked: &Value) -> (String, String) {
+    let text = |key: &str| picked[key].as_str().unwrap_or("").to_string();
+    let number = |value: &Value| value.as_f64().unwrap_or(0.).round() as i64;
+    let selector = text("selector");
+    let title = format!("Element {selector} on {}", text("url"));
+    let b = &picked["box"];
+    let v = &picked["viewport"];
+    let mut out = format!(
+        "Selector: {selector}\nBox: x {}, y {}, {}×{} px (viewport {}×{})\n",
+        number(&b["x"]),
+        number(&b["y"]),
+        number(&b["width"]),
+        number(&b["height"]),
+        number(&v["width"]),
+        number(&v["height"]),
+    );
+    let inner = text("text");
+    if !inner.is_empty() {
+        out.push_str(&format!("Text: {inner}\n"));
+    }
+    if let Some(styles) = picked["styles"].as_object() {
+        out.push_str("Computed styles:\n");
+        for (name, value) in styles {
+            let value = value.as_str().unwrap_or("");
+            if !value.is_empty() {
+                out.push_str(&format!("  {name}: {value}\n"));
+            }
+        }
+    }
+    out.push_str(&format!("HTML:\n{}", text("html")));
+    (title, out)
+}
+
 /// An error on the page: something written with console.error or thrown and
 /// not caught, or a request that failed.
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +151,9 @@ pub struct BrowserView {
     errors: Vec<PageError>,
     /// Errors already shown and handled, so they don't come back.
     seen: HashSet<String>,
+    /// "Pick element" is on: the next click on the page picks.
+    picking: bool,
+    _pick: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -237,6 +289,8 @@ impl BrowserView {
             covered: false,
             errors: Vec::new(),
             seen: HashSet::new(),
+            picking: false,
+            _pick: None,
             _tasks: vec![drain, cover, errors],
             _subscriptions: subscriptions,
         };
@@ -333,6 +387,89 @@ impl BrowserView {
         cx.notify();
     }
 
+    /// Start or stop "Pick element".
+    pub fn toggle_pick(&mut self, cx: &mut Context<Self>) {
+        let Some(page) = self.page.clone() else {
+            return;
+        };
+        if self.picking {
+            page.pick("stop()", |_| {});
+            self.stop_picking(cx);
+            return;
+        }
+        self.picking = true;
+        page.pick("start()", |_| {});
+        page.focus();
+        self._pick = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(PICK_CHECK).await;
+                let (tx, rx) = async_channel::bounded::<Option<String>>(1);
+                let asked = this.update(cx, |this, _| {
+                    let page = this.page.clone().filter(|_| this.picking)?;
+                    page.pick("take()", move |json| {
+                        tx.try_send(json).ok();
+                    });
+                    Some(())
+                });
+                if !matches!(asked, Ok(Some(()))) {
+                    break;
+                }
+                let json = rx.recv().await.ok().flatten().unwrap_or_default();
+                let Ok(picked) = serde_json::from_str::<Value>(&json) else {
+                    continue;
+                };
+                let _ = this.update(cx, |this, cx| this.picked(picked, cx));
+                break;
+            }
+        }));
+        cx.notify();
+    }
+
+    fn stop_picking(&mut self, cx: &mut Context<Self>) {
+        self.picking = false;
+        self._pick = None;
+        cx.notify();
+    }
+
+    /// The user clicked an element (or pressed Escape): take a picture of it
+    /// and hand both to the thread.
+    fn picked(&mut self, picked: Value, cx: &mut Context<Self>) {
+        self.picking = false;
+        cx.notify();
+        if picked["cancelled"].as_bool() == Some(true) {
+            return;
+        }
+        let (title, details) = element_details(&picked);
+        let area = {
+            let b = &picked["box"];
+            let n = |key: &str| b[key].as_f64().unwrap_or(0.);
+            (
+                n("x") - PICK_MARGIN,
+                n("y") - PICK_MARGIN,
+                n("width") + 2. * PICK_MARGIN,
+                n("height") + 2. * PICK_MARGIN,
+            )
+        };
+        let Some(page) = self.page.clone() else {
+            return;
+        };
+        let (tx, rx) = async_channel::bounded::<Option<Vec<u8>>>(1);
+        page.snapshot_area(area, move |jpeg| {
+            tx.try_send(jpeg).ok();
+        });
+        cx.spawn(async move |this, cx| {
+            let picture = rx.recv().await.ok().flatten();
+            let _ = this.update(cx, |_, cx| {
+                cx.emit(BrowserEvent::ElementPicked {
+                    title,
+                    details,
+                    picture,
+                })
+            });
+        })
+        .detach();
+    }
+
     fn update_errors(&mut self, captured: &Value, cx: &mut Context<Self>) {
         let all = page_errors(captured);
         // Forget errors the page no longer has (it reloaded or dropped old entries).
@@ -401,7 +538,12 @@ impl BrowserView {
         match event {
             WebEvent::Changed => {
                 if let Some(page) = &self.page {
+                    let previous = self.state.url.clone();
                     self.state = page.state();
+                    // A new page has no picker running.
+                    if self.picking && (self.state.loading || self.state.url != previous) {
+                        self.stop_picking(cx);
+                    }
                     let editing = self.address.read(cx).focus_handle(cx).is_focused(window);
                     if !editing {
                         let url = self.state.url.clone();
@@ -488,6 +630,20 @@ impl BrowserView {
                     .child(Input::new(&self.address).small()),
             )
             .child(
+                Button::new("browser-pick")
+                    .xsmall()
+                    .when(self.picking, |this| this.primary())
+                    .when(!self.picking, |this| this.ghost())
+                    .icon(IconName::Target)
+                    .tooltip(if self.picking {
+                        "Click an element on the page (Esc to stop)"
+                    } else {
+                        "Pick an element to show the agent"
+                    })
+                    .disabled(!has_page)
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_pick(cx))),
+            )
+            .child(
                 Button::new("browser-external")
                     .ghost()
                     .xsmall()
@@ -546,6 +702,8 @@ impl BrowserView {
     }
 }
 
+impl EventEmitter<BrowserEvent> for BrowserView {}
+
 impl Render for BrowserView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let progress = self
@@ -592,8 +750,29 @@ impl Render for BrowserView {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_address, page_errors};
+    use super::{element_details, normalize_address, page_errors};
     use serde_json::json;
+
+    #[test]
+    fn describes_a_picked_element() {
+        let picked = json!({
+            "url": "http://localhost:5173/cart",
+            "selector": "#buy",
+            "text": "Add to cart",
+            "html": "<button id=\"buy\">Add to cart</button>",
+            "box": {"x": 60, "y": 230.4, "width": 108, "height": 38},
+            "viewport": {"width": 520, "height": 760},
+            "styles": {"display": "inline-block", "padding": "8px 16px", "transform": ""},
+        });
+        let (title, details) = element_details(&picked);
+        assert_eq!(title, "Element #buy on http://localhost:5173/cart");
+        assert!(details.starts_with(
+            "Selector: #buy\nBox: x 60, y 230, 108×38 px (viewport 520×760)\nText: Add to cart\n"
+        ));
+        assert!(details.contains("  padding: 8px 16px\n"));
+        assert!(!details.contains("transform"));
+        assert!(details.ends_with("HTML:\n<button id=\"buy\">Add to cart</button>"));
+    }
 
     #[test]
     fn finds_console_errors_and_failed_requests() {

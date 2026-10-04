@@ -1238,6 +1238,7 @@ impl ThreadView {
     pub fn set_browser(
         &mut self,
         browser: Entity<crate::browser_view::BrowserView>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.browser.as_ref() == Some(&browser) {
@@ -1245,6 +1246,27 @@ impl ThreadView {
         }
         self._subscriptions
             .push(cx.observe(&browser, |_, _, cx| cx.notify()));
+        self._subscriptions.push(cx.subscribe_in(
+            &browser,
+            window,
+            |this, _, event: &crate::browser_view::BrowserEvent, window, cx| {
+                let crate::browser_view::BrowserEvent::ElementPicked {
+                    title,
+                    details,
+                    picture,
+                } = event;
+                if let Some(picture) = picture {
+                    this.attachments
+                        .push(Attachment::image("image/jpeg", picture));
+                }
+                this.attachments.push(Attachment::Context {
+                    title: title.clone(),
+                    content: details.clone(),
+                });
+                this.focus_composer(window, cx);
+                cx.notify();
+            },
+        ));
         self.browser = Some(browser);
         cx.notify();
     }

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Point at an element.** The target button in the Browser tab lets you click
+  something on the page; your message gets a picture of it and its selector,
+  position, text, computed styles and HTML, so the agent knows exactly which
+  element you mean.
+- **Agents ask before changing another thread.** The first time an agent sends a
+  message to, stops, renames or archives another thread through the gateway, you
+  choose Don't allow, Allow once or Always allow; remembered pairs can be
+  forgotten in Settings → Agents & MCP. Threads an agent starts itself are its
+  own and need no asking.
+- **Updates wait for your agents.** Restarting for an update while agents are
+  working offers *Restart when they finish*, which restarts by itself once no
+  turn is running, as well as *Restart now*.
+
 ## 0.3.1
 
 - **Conventional Commits.** Generated commit messages and pull request titles

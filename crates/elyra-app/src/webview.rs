@@ -516,6 +516,56 @@ impl WebView {
         });
     }
 
+    /// "Pick element": `call` on resources/element-pick.js (`start()`,
+    /// `stop()`, `take()`) in the isolated world; `done` gets its string.
+    pub fn pick(&self, call: &str, done: impl Fn(Option<String>) + 'static) {
+        let script = format!(
+            "{}\nwindow.__elyraPick.{call}",
+            include_str!("../resources/element-pick.js")
+        );
+        self.evaluate_isolated(&script, move |result| {
+            done(
+                result
+                    .and_then(|value| value.downcast_ref::<NSString>())
+                    .map(|value| value.to_string()),
+            );
+        });
+    }
+
+    /// A JPEG of part of the page (CSS pixels from the top left of the
+    /// view), or `None` when it isn't on screen.
+    pub fn snapshot_area(
+        &self,
+        (x, y, width, height): (f64, f64, f64, f64),
+        done: impl Fn(Option<Vec<u8>>) + 'static,
+    ) {
+        let mtm = MainThreadMarker::new().expect("main thread");
+        let bounds = self.view.bounds().size;
+        if bounds.width < 1. || self.view.window().is_none() {
+            done(None);
+            return;
+        }
+        let (left, top) = (x.max(0.), y.max(0.));
+        let right = (x + width).min(bounds.width);
+        let bottom = (y + height).min(bounds.height);
+        if right - left < 1. || bottom - top < 1. {
+            done(None);
+            return;
+        }
+        let handler = block2::RcBlock::new(move |image: *mut NSImage, _error: *mut NSError| {
+            done(unsafe { image.as_ref() }.and_then(|image| encode_jpeg(image, 0.8)));
+        });
+        unsafe {
+            let config = WKSnapshotConfiguration::new(mtm);
+            config.setRect(NSRect::new(
+                NSPoint::new(left, top),
+                NSSize::new(right - left, bottom - top),
+            ));
+            self.view
+                .takeSnapshotWithConfiguration_completionHandler(Some(&config), &handler);
+        }
+    }
+
     /// For an agent: what resources/agent-capture.js kept of the page's
     /// console and network, as JSON, or `None` if it isn't running.
     pub fn agent_captured(&self, done: impl Fn(Option<String>) + 'static) {
