@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 More with [Elyra Grove](https://github.com/kwhorne/grove):
 
