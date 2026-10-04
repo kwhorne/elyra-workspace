@@ -34,8 +34,10 @@ Elyra Workspace updates itself:
    - Gatekeeper must accept its notarization
    - it must report the expected version
 3. A notification says the new version is ready. Click it to restart into the
-   new version. Agents that are still working are stopped first, after asking, and
-   can be resumed. If you don't click, the update installs the next time you quit.
+   new version. If agents are still working, you choose: **Restart when they
+   finish** waits and restarts by itself once no turn is running; **Restart now**
+   stops them, and each thread can be resumed after the update. If you don't
+   click, the update installs the next time you quit.
 
 **Elyra Workspace → Check for Updates…** checks right away and shows the
 progress. To download only when you choose, turn off **Download and install

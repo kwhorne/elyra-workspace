@@ -5,9 +5,11 @@
 use crate::app_state::AppState;
 use crate::preferences::Preferences;
 use crate::updates::{self, Release};
-use gpui_kit::component::WindowExt as _;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::notification::Notification;
-use gpui_kit::{App, AsyncApp, Entity, Global};
+use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex};
+use gpui_kit::prelude::*;
+use gpui_kit::{App, AsyncApp, Entity, Global, Window, div, px};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -29,7 +31,12 @@ struct Updater {
     status: Status,
     /// Start the new version after quitting.
     relaunch: bool,
+    /// Restart as soon as no agent is working.
+    waiting: bool,
 }
+
+/// How often to look whether the agents have finished, while waiting to restart.
+const IDLE_CHECK: Duration = Duration::from_secs(2);
 
 impl Global for Updater {}
 
@@ -38,6 +45,7 @@ pub fn init(app: Entity<AppState>, cx: &mut App) {
         app,
         status: Status::Idle,
         relaunch: false,
+        waiting: false,
     });
     cx.spawn(async move |cx| {
         loop {
@@ -207,14 +215,113 @@ fn ready_note(version: &str) -> Notification {
     .on_click(|_, _, cx| restart(cx))
 }
 
-/// Quit (asking first if agents are working), install, and start again.
+/// Install and start again. While agents are working, offer to wait for
+/// them instead of stopping them.
 pub fn restart(cx: &mut App) {
     if !matches!(cx.global::<Updater>().status, Status::Ready { .. }) {
         return;
     }
-    cx.global_mut::<Updater>().relaunch = true;
     let app = cx.global::<Updater>().app.clone();
-    crate::request_quit(&app, cx);
+    let running = app.read(cx).running_threads(cx);
+    let window = cx.active_window().or_else(|| cx.windows().first().copied());
+    let (false, Some(window)) = (running.is_empty(), window) else {
+        restart_now(cx);
+        return;
+    };
+    let names = running
+        .iter()
+        .take(5)
+        .map(|t| format!("• {}", t.title))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let count = running.len();
+    let _ = window.update(cx, move |_, window, cx| {
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .title(if count == 1 {
+                    "An agent is still working".to_string()
+                } else {
+                    format!("{count} agents are still working")
+                })
+                .w(px(460.))
+                .child(div().text_sm().whitespace_normal().child(format!(
+                    "{names}\n\nRestart when they finish, or now: that stops them, and you can resume each thread after the update."
+                )))
+                .footer(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("update-cancel")
+                                .small()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("update-now")
+                                .small()
+                                .danger()
+                                .label("Restart now")
+                                .on_click(|_, window: &mut Window, cx| {
+                                    window.close_dialog(cx);
+                                    restart_now(cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("update-when-idle")
+                                .small()
+                                .primary()
+                                .label("Restart when they finish")
+                                .on_click(|_, window: &mut Window, cx| {
+                                    window.close_dialog(cx);
+                                    restart_when_idle(cx);
+                                }),
+                        ),
+                )
+        });
+    });
+}
+
+/// Quit, stopping any agents, then install and start again.
+fn restart_now(cx: &mut App) {
+    let updater = cx.global_mut::<Updater>();
+    updater.relaunch = true;
+    updater.waiting = false;
+    let app = updater.app.clone();
+    app.update(cx, |app, cx| app.prepare_quit(cx));
+    cx.quit();
+}
+
+/// Restart once no agent is working.
+fn restart_when_idle(cx: &mut App) {
+    if cx.global::<Updater>().waiting {
+        return;
+    }
+    cx.global_mut::<Updater>().waiting = true;
+    notify(
+        Notification::info("Elyra Workspace restarts to update when the agents have finished."),
+        cx,
+    );
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor().timer(IDLE_CHECK).await;
+            let done = cx.update(|cx| {
+                let updater = cx.global::<Updater>();
+                if !updater.waiting {
+                    return true;
+                }
+                let idle = updater.app.read(cx).running_threads(cx).is_empty();
+                if idle {
+                    restart_now(cx);
+                }
+                idle
+            });
+            if done {
+                break;
+            }
+        }
+    })
+    .detach();
 }
 
 /// Called while the app quits: swap in a staged update and relaunch if asked.
