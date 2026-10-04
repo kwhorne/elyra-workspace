@@ -496,9 +496,15 @@ impl Render for WorktreeList {
                         .icon(IconName::Trash)
                         .tooltip("Remove worktree (its branch is kept)")
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            let result = match &repo {
-                                Some(repo) => elyra_git::remove_worktree(repo, &remove_path),
-                                None => std::fs::remove_dir_all(&remove_path).map_err(Into::into),
+                            // A worktree Grove runs goes with its site and database copy.
+                            let result = match (crate::grove::try_at(&remove_path), &repo) {
+                                (Some(record), _) => crate::grove::end_try(&record),
+                                (None, Some(repo)) => {
+                                    elyra_git::remove_worktree(repo, &remove_path)
+                                }
+                                (None, None) => {
+                                    std::fs::remove_dir_all(&remove_path).map_err(Into::into)
+                                }
                             };
                             this.message = Some(match result {
                                 Ok(()) => format!("Removed {}", remove_path.display()),

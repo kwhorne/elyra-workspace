@@ -60,6 +60,12 @@ Grove's explanation of each (up to three): the request and its body, the SQL it
 ran and the mail it sent, and the error log with its stack trace. The page in the
 Browser tab doesn't have to be open for these.
 
+When the turn after such a message ends, Elyra sends those requests again
+(`grove replay --same-data`, so a request that writes starts from the same data
+each time) and says in the conversation whether the fix worked: *Replayed POST
+/checkout: was 500, now 200 ✓*, or *still 500*. A turn that fails keeps them for
+the next one.
+
 ## Pictures before and after a turn
 
 When the Browser tab shows a local page while you send a message, Elyra keeps a

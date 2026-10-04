@@ -14,6 +14,8 @@ use std::collections::HashMap;
 pub enum SessionEvent {
     /// A message went to the agent and a turn began.
     TurnStarted,
+    /// Grove runs the thread's worktree as its own site, at this address.
+    SiteReady(String),
     /// A turn finished; the working tree may have changed.
     TurnCompleted,
     /// The agent needs the user (approval or question).
@@ -51,6 +53,9 @@ pub struct ThreadSession {
     pub models: Vec<ModelOption>,
     /// Unsent composer text, kept across tab switches.
     pub draft: String,
+    /// Failed requests (Grove id, `METHOD /path → status`) the last message
+    /// carried, replayed when the turn ends.
+    pub replay_after_turn: Vec<(u64, String)>,
     provider: Option<Box<dyn AgentSession>>,
     /// Settings changed that only apply when the provider restarts.
     pub(crate) needs_restart: bool,
@@ -105,6 +110,7 @@ impl ThreadSession {
             agents: Vec::new(),
             models,
             draft: String::new(),
+            replay_after_turn: Vec::new(),
             provider: None,
             needs_restart: false,
             fork_pending: false,
@@ -270,18 +276,37 @@ impl ThreadSession {
             self.thread.id.simple(),
             self.items.len()
         );
+        // In an app Grove runs, the database goes into the checkpoint too.
+        let with_database = crate::preferences::Preferences::global(cx).grove_db_checkpoints;
+        let snapshots = db_snapshot_dir(self.thread.id);
+        let note = format!(
+            "Elyra Workspace: before a turn in \u{201c}{}\u{201d}",
+            self.thread.title
+        );
         let job = cx.background_executor().spawn(async move {
             let root = elyra_git::repo_root(&cwd).ok()?;
-            elyra_git::checkpoint::create(&root, &refname, "elyra: before turn")
+            let sha = elyra_git::checkpoint::create(&root, &refname, "elyra: before turn")
                 .map_err(|err| log::warn!("checkpoint failed: {err:#}"))
-                .ok()
+                .ok()?;
+            let database = (with_database && crate::grove::app_for(&cwd).is_some())
+                .then(|| crate::grove::database_of(&cwd))
+                .flatten()
+                .and_then(|database| {
+                    crate::grove::snapshot_database(&database, &snapshots, &note)
+                        .map_err(|err| log::warn!("database snapshot failed: {err:#}"))
+                        .ok()
+                });
+            Some((sha, database))
         });
         cx.spawn(async move |this, cx| {
             let checkpoint = job.await;
             let _ = this.update(cx, |this, cx| {
-                if let (Some(sha), Some(id)) = (checkpoint, item_id)
+                if let (Some((sha, database)), Some(id)) = (checkpoint, item_id)
                     && let Some(index) = this.items.iter().position(|item| item.id == id)
                 {
+                    if let Some(database) = database {
+                        this.remember_db_snapshot(&sha, database, cx);
+                    }
                     if let ItemContent::User { checkpoint, .. } = &mut this.items[index].content {
                         *checkpoint = Some(sha);
                     }
@@ -291,6 +316,41 @@ impl ThreadSession {
             });
         })
         .detach();
+    }
+
+    /// Database snapshots taken with this thread's checkpoints, oldest first:
+    /// (checkpoint commit, snapshot reference).
+    fn db_snapshots(&self, cx: &App) -> Vec<(String, String)> {
+        let Some(app) = self.app.upgrade() else {
+            return Vec::new();
+        };
+        db_snapshots(&app.read(cx).store, self.thread.id)
+    }
+
+    /// Keep a checkpoint's database snapshot; drop the oldest beyond the limit.
+    fn remember_db_snapshot(&mut self, sha: &str, reference: String, cx: &mut Context<Self>) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let mut snapshots = self.db_snapshots(cx);
+        snapshots.push((sha.to_string(), reference));
+        let excess = snapshots.len().saturating_sub(MAX_DB_SNAPSHOTS);
+        let dropped: Vec<String> = snapshots.drain(..excess).map(|(_, r)| r).collect();
+        let key = db_snapshots_key(self.thread.id);
+        if let Ok(json) = serde_json::to_string(&snapshots)
+            && let Err(err) = app.read(cx).store.set_setting(&key, &json)
+        {
+            log::warn!("saving database snapshots: {err:#}");
+        }
+        if !dropped.is_empty() {
+            cx.background_executor()
+                .spawn(async move {
+                    for reference in dropped {
+                        crate::grove::drop_snapshot(&reference);
+                    }
+                })
+                .detach();
+        }
     }
 
     /// Checkpoints of this thread's turns, oldest first: (label, commit).
@@ -324,17 +384,38 @@ impl ThreadSession {
             return;
         }
         let cwd = self.working_dir();
+        let snapshot = self
+            .db_snapshots(cx)
+            .into_iter()
+            .find(|(s, _)| *s == sha)
+            .map(|(_, r)| r);
         let job = cx.background_executor().spawn(async move {
             let root = elyra_git::repo_root(&cwd)?;
-            elyra_git::checkpoint::restore(&root, &sha)
+            elyra_git::checkpoint::restore(&root, &sha)?;
+            // The database too, when the checkpoint has it.
+            let database = snapshot.and_then(|reference| {
+                let database = crate::grove::database_of(&cwd)?;
+                Some(crate::grove::restore_database(&database, &reference))
+            });
+            anyhow::Ok(database)
         });
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok(()) => this.notice(
+                    Ok(None) => this.notice(
                         "Files restored to how they were before that message. The conversation is unchanged.",
                         false,
+                        cx,
+                    ),
+                    Ok(Some(Ok(()))) => this.notice(
+                        "Files and database restored to how they were before that message. The conversation is unchanged.",
+                        false,
+                        cx,
+                    ),
+                    Ok(Some(Err(err))) => this.notice(
+                        format!("Files restored, but not the database: {err:#}"),
+                        true,
                         cx,
                     ),
                     Err(err) => this.notice(format!("Could not restore files: {err:#}"), true, cx),
@@ -393,22 +474,60 @@ impl ThreadSession {
             .join(sanitize(&self.project.name))
             .join(&short);
         let repo = self.project.path.clone();
-        self.preparing = Some("Preparing worktree…".into());
+        // In an app Grove runs, Grove makes the worktree: with its own copy
+        // of the database, migrated, and its own site.
+        let grove_site = crate::preferences::Preferences::global(cx)
+            .grove_worktrees
+            .then(|| crate::grove::site_for(&crate::grove::cached_sites(), &repo))
+            .flatten()
+            .filter(crate::grove::Site::is_app);
+        self.preparing = Some(if grove_site.is_some() {
+            "Preparing worktree, database copy and site with Grove…".into()
+        } else {
+            "Preparing worktree…".into()
+        });
         cx.notify();
 
         let job = {
             let (dest, branch) = (dest.clone(), branch.clone());
-            cx.background_executor()
-                .spawn(async move { elyra_git::create_worktree(&repo, &dest, &branch) })
+            cx.background_executor().spawn(async move {
+                if let Some(site) = grove_site {
+                    match crate::grove::start_try(&site.name, &branch) {
+                        Ok(record) => return Ok((record.path.clone(), Some(record), None)),
+                        Err(err) => {
+                            let note = format!(
+                                "Grove couldn't run this branch ({err:#}), so it has a plain worktree without its own site or database."
+                            );
+                            elyra_git::create_worktree(&repo, &dest, &branch)?;
+                            return Ok((dest, None, Some(note)));
+                        }
+                    }
+                }
+                elyra_git::create_worktree(&repo, &dest, &branch).map(|()| (dest, None, None))
+            })
         };
         cx.spawn(async move |this, cx| {
-            let result = job.await;
+            let result: anyhow::Result<_> = job.await;
             let _ = this.update(cx, |this, cx| {
                 this.preparing = None;
                 match result {
-                    Ok(()) => {
-                        this.thread.environment = Environment::Worktree { path: dest, branch };
+                    Ok((path, record, note)) => {
+                        this.thread.environment = Environment::Worktree { path, branch };
                         this.save_thread(cx);
+                        if let Some(note) = note {
+                            this.notice(note, false, cx);
+                        }
+                        if let Some(record) = record {
+                            this.notice(
+                                format!(
+                                    "Grove runs this worktree at {} with its own copy of the database.",
+                                    record.url
+                                ),
+                                false,
+                                cx,
+                            );
+                            cx.emit(SessionEvent::SiteReady(record.url));
+                        }
                         this.checkpoint_then_deliver(prompt, item_id, cx);
                     }
                     Err(err) => {
@@ -1203,6 +1322,10 @@ impl ThreadSession {
             let _ = provider.refresh_usage();
         }
         self.check_budget(spent_before, cx);
+        // A failed turn keeps them for the next one.
+        if !is_error {
+            self.replay_requests(cx);
+        }
         cx.emit(SessionEvent::TurnCompleted);
         // Deliver the next queued message.
         if !self.queued.is_empty() {
@@ -1350,6 +1473,32 @@ impl ThreadSession {
     // ---- budget -----------------------------------------------------------
 
     /// What the thread's turns have cost, as reported by its providers.
+    /// After a turn: replay the failed requests the message carried.
+    fn replay_requests(&mut self, cx: &mut Context<Self>) {
+        let requests = std::mem::take(&mut self.replay_after_turn);
+        if requests.is_empty() {
+            return;
+        }
+        let job = cx.background_executor().spawn(async move {
+            requests
+                .into_iter()
+                .map(|(id, line)| {
+                    let status = crate::grove::replay(id).map_err(|err| format!("{err:#}"));
+                    crate::grove::replay_note(&line, status)
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let notes = job.await;
+            let _ = this.update(cx, |this, cx| {
+                for (note, failed) in notes {
+                    this.notice(note, failed, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     pub fn spent_usd(&self) -> f64 {
         self.items
             .iter()
@@ -1439,6 +1588,41 @@ impl ThreadSession {
         }
         (!parts.is_empty()).then(|| parts.join("\n\n"))
     }
+}
+
+/// Database snapshots kept per thread (they can be large).
+const MAX_DB_SNAPSHOTS: usize = 10;
+
+fn db_snapshots_key(thread: elyra_core::ThreadId) -> String {
+    format!("db_snapshots:{thread}")
+}
+
+/// Where a thread's SQLite snapshots are kept.
+fn db_snapshot_dir(thread: elyra_core::ThreadId) -> std::path::PathBuf {
+    elyra_core::paths::snapshots_dir()
+        .join(thread.to_string())
+        .join("db")
+}
+
+/// A thread's database snapshots: (checkpoint commit, snapshot reference).
+pub fn db_snapshots(
+    store: &elyra_core::Store,
+    thread: elyra_core::ThreadId,
+) -> Vec<(String, String)> {
+    store
+        .setting(&db_snapshots_key(thread))
+        .ok()
+        .flatten()
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default()
+}
+
+/// Forget a thread's database snapshots and delete them.
+pub fn drop_db_snapshots(store: &elyra_core::Store, thread: elyra_core::ThreadId) {
+    for (_, reference) in db_snapshots(store, thread) {
+        crate::grove::drop_snapshot(&reference);
+    }
+    let _ = store.set_setting(&db_snapshots_key(thread), "[]");
 }
 
 /// `$1.23`, or `$0.004` for amounts under a cent.

@@ -555,6 +555,26 @@ fn external_page() -> SettingPage {
                 )
                 .item(
                     SettingItem::new(
+                        "Grove runs worktrees",
+                        switch(|p| p.grove_worktrees, |p, v| p.grove_worktrees = v)
+                            .default_value(true),
+                    )
+                    .description(
+                        "In projects Elyra Grove runs as an app, a thread's new worktree is made by Grove (grove try): it gets its own copy of the database, migrated, and its own .test address, which opens in the thread's browser.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
+                        "Database in checkpoints",
+                        switch(|p| p.grove_db_checkpoints, |p, v| p.grove_db_checkpoints = v)
+                            .default_value(true),
+                    )
+                    .description(
+                        "In projects Elyra Grove runs as an app, the checkpoint before each turn also snapshots the app's database (SQLite, MySQL, PostgreSQL or ElyraSQL), and restoring the checkpoint restores it. The latest 10 per thread are kept.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
                         "Agents changing other threads",
                         SettingField::render(|_, _, cx| render_thread_pairs(cx)),
                     )

@@ -474,6 +474,7 @@ impl AppState {
             .cloned()
             .or_else(|| self.archived_threads().into_iter().find(|t| t.id == id));
         self.sessions.remove(&id);
+        crate::thread_session::drop_db_snapshots(&self.store, id);
         self.store.delete_thread(id)?;
         let _ = std::fs::remove_dir_all(elyra_core::paths::snapshots_dir().join(id.to_string()));
         if let Some(thread) = &thread
@@ -503,7 +504,11 @@ impl AppState {
             && let Environment::Worktree { path, .. } = &thread.environment
             && let Some(project) = self.project(thread.project_id)
         {
-            elyra_git::remove_worktree(&project.path, path)?;
+            // A worktree Grove runs goes with its site and database copy.
+            match crate::grove::try_at(path) {
+                Some(record) => crate::grove::end_try(&record)?,
+                None => elyra_git::remove_worktree(&project.path, path)?,
+            }
         }
         Ok(())
     }

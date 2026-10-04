@@ -60,6 +60,10 @@ pub struct Preferences {
     pub conventional_titles: bool,
     /// Give agents in Grove sites Grove's MCP tools (read-only).
     pub grove_mcp: bool,
+    /// Let Grove make worktrees for apps it runs: own site and database copy.
+    pub grove_worktrees: bool,
+    /// Snapshot the database of apps Grove runs with every checkpoint.
+    pub grove_db_checkpoints: bool,
 }
 
 /// How to launch one provider.
@@ -174,6 +178,8 @@ impl Default for Preferences {
             goal_max_turns: 10,
             conventional_titles: true,
             grove_mcp: true,
+            grove_worktrees: true,
+            grove_db_checkpoints: true,
         }
     }
 }

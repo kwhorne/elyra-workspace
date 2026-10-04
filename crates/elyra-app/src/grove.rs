@@ -176,6 +176,263 @@ pub fn new_server_errors(seen: Option<u64>, requests: Vec<Request>) -> (u64, Vec
     (seen.max(newest), fresh)
 }
 
+/// A branch Grove runs beside the main checkout (`grove try`): its own git
+/// worktree, its own copy of the database, migrated, and its own site.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct TryRecord {
+    /// The site it was made from.
+    pub site: String,
+    pub branch: String,
+    /// The worktree.
+    pub path: PathBuf,
+    pub url: String,
+    /// `mysql`, `sqlite` or `none`.
+    #[serde(default)]
+    pub engine: String,
+    #[serde(default)]
+    pub database: String,
+}
+
+/// The output of a `grove` command that doesn't speak JSON, or its error.
+fn run_plain(args: &[&str]) -> Result<String> {
+    let grove = executable().context("Grove is not installed")?;
+    let output = std::process::Command::new(&grove)
+        .args(args)
+        .output()
+        .with_context(|| format!("running {}", grove.display()))?;
+    let text = |bytes: &[u8]| String::from_utf8_lossy(bytes).trim().to_string();
+    if !output.status.success() {
+        let stderr = text(&output.stderr);
+        bail!(
+            "grove {}: {}",
+            args.join(" "),
+            if stderr.is_empty() {
+                text(&output.stdout)
+            } else {
+                stderr
+            }
+        );
+    }
+    Ok(text(&output.stdout))
+}
+
+/// Every branch Grove runs beside a checkout.
+pub fn tries() -> Vec<TryRecord> {
+    run_plain(&["try", "--list", "--json"])
+        .ok()
+        .and_then(|json| {
+            serde_json::from_str::<std::collections::BTreeMap<String, TryRecord>>(&json).ok()
+        })
+        .map(|tries| tries.into_values().collect())
+        .unwrap_or_default()
+}
+
+/// The try whose worktree is `path`, if Grove runs one there.
+pub fn try_at(path: &Path) -> Option<TryRecord> {
+    tries().into_iter().find(|t| t.path == path)
+}
+
+/// `grove try --new <branch>`: a new branch from `site`'s current commit in
+/// its own worktree, with a migrated copy of the database, served at its own
+/// address. Takes a while: Grove installs dependencies and migrates.
+pub fn start_try(site: &str, branch: &str) -> Result<TryRecord> {
+    run_plain(&["try", "--new", branch, "--site", site])?;
+    // The try is a new site: learn it now, for code that reads the cache.
+    if let Ok(mut cache) = SITES.lock() {
+        *cache = None;
+    }
+    sites();
+    tries()
+        .into_iter()
+        .find(|t| t.site == site && t.branch == branch)
+        .context("Grove started the branch but doesn't list it")
+}
+
+/// Take a try down: its site, its database copy and its worktree. The branch
+/// and its commits stay.
+pub fn end_try(record: &TryRecord) -> Result<()> {
+    run_plain(&[
+        "try",
+        "--done",
+        &record.branch,
+        "--site",
+        &record.site,
+        "--force",
+    ])
+    .map(|_| ())
+}
+
+/// The database a project's `.env` points to.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Database {
+    Sqlite(PathBuf),
+    /// One of Grove's servers: `mysql`, `postgres` or `elyrasql`.
+    Server {
+        engine: String,
+        name: String,
+    },
+}
+
+/// `KEY=value` lines of a `.env` file (quotes removed; comments skipped).
+fn parse_env(text: &str) -> std::collections::HashMap<String, String> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.starts_with('#') {
+                return None;
+            }
+            let (key, value) = line.split_once('=')?;
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            Some((key.trim().to_string(), value.to_string()))
+        })
+        .collect()
+}
+
+/// Which database `env` (a project's `.env` in `dir`) uses. A MySQL
+/// connection on ElyraSQL's port is ElyraSQL: it speaks MySQL's protocol.
+pub fn database_from_env(
+    env: &std::collections::HashMap<String, String>,
+    dir: &Path,
+    elyrasql_port: Option<u16>,
+) -> Option<Database> {
+    let connection = env.get("DB_CONNECTION").map(String::as_str).unwrap_or("");
+    match connection {
+        "sqlite" => {
+            let file = env
+                .get("DB_DATABASE")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("database/database.sqlite"));
+            Some(Database::Sqlite(if file.is_absolute() {
+                file
+            } else {
+                dir.join(file)
+            }))
+        }
+        "mysql" | "mariadb" | "pgsql" => {
+            let name = env.get("DB_DATABASE").filter(|n| !n.is_empty())?.clone();
+            let engine = if connection == "pgsql" {
+                "postgres"
+            } else {
+                let port = env
+                    .get("DB_PORT")
+                    .and_then(|p| p.parse().ok())
+                    .unwrap_or(3306);
+                if elyrasql_port == Some(port) {
+                    "elyrasql"
+                } else {
+                    "mysql"
+                }
+            };
+            Some(Database::Server {
+                engine: engine.into(),
+                name,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The database of the app in `dir`, from its `.env`.
+pub fn database_of(dir: &Path) -> Option<Database> {
+    let env = parse_env(&std::fs::read_to_string(dir.join(".env")).ok()?);
+    let elyrasql_port = run(&["service", "list"]).ok().and_then(|data| {
+        data["services"].as_array()?.iter().find_map(|s| {
+            (s["key"] == "elyrasql" && s["installed"] == true)
+                .then(|| s["port"].as_u64().map(|p| p as u16))
+                .flatten()
+        })
+    });
+    database_from_env(&env, dir, elyrasql_port)
+}
+
+/// Take a snapshot of `database`; the returned reference restores it. SQLite
+/// files are copied under `into`; Grove's servers are dumped by Grove.
+pub fn snapshot_database(database: &Database, into: &Path, note: &str) -> Result<String> {
+    match database {
+        Database::Sqlite(file) => {
+            std::fs::create_dir_all(into)?;
+            let copy = into.join(format!("{}.sqlite", uuid::Uuid::new_v4().simple()));
+            std::fs::copy(file, &copy).with_context(|| format!("copying {}", file.display()))?;
+            Ok(format!("sqlite:{}", copy.display()))
+        }
+        Database::Server { engine, name } => {
+            let data = run(&[
+                "db", "snapshot", "--engine", engine, "--db", name, "--note", note,
+            ])?;
+            let message = data
+                .as_str()
+                .or_else(|| data["message"].as_str())
+                .unwrap_or_default();
+            // "snapshot <id> created (…)"
+            let id = message
+                .split_whitespace()
+                .nth(1)
+                .filter(|_| message.starts_with("snapshot "))
+                .with_context(|| format!("unexpected answer from grove db snapshot: {message}"))?;
+            Ok(format!("grove:{id}"))
+        }
+    }
+}
+
+/// Put a database back as a snapshot found it.
+pub fn restore_database(database: &Database, reference: &str) -> Result<()> {
+    match (database, reference.split_once(':')) {
+        (Database::Sqlite(file), Some(("sqlite", copy))) => {
+            std::fs::copy(copy, file).with_context(|| format!("restoring {}", file.display()))?;
+            // Journal files from after the snapshot would replay newer writes.
+            for suffix in ["-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", file.display()));
+            }
+            Ok(())
+        }
+        (Database::Server { .. }, Some(("grove", id))) => run(&["db", "restore", id]).map(|_| ()),
+        _ => bail!("the snapshot {reference} doesn't belong to this database"),
+    }
+}
+
+/// Delete a snapshot that is no longer needed.
+pub fn drop_snapshot(reference: &str) {
+    match reference.split_once(':') {
+        Some(("sqlite", copy)) => {
+            let _ = std::fs::remove_file(copy);
+        }
+        Some(("grove", id)) => {
+            let _ = run(&["db", "rm", id]);
+        }
+        _ => {}
+    }
+}
+
+/// Send a recorded request again (`grove replay --same-data`: from the same
+/// data every time) and return its new status.
+pub fn replay(id: u64) -> Result<u16> {
+    let data = run(&["replay", &id.to_string(), "--same-data"])?;
+    let replayed = if data["replayed_same_data"].is_object() {
+        &data["replayed_same_data"]
+    } else {
+        &data["replayed"]
+    };
+    replayed["status"]
+        .as_u64()
+        .map(|status| status as u16)
+        .context("grove replay gave no status")
+}
+
+/// What a replay says about a request that failed before.
+pub fn replay_note(line: &str, status: Result<u16, String>) -> (String, bool) {
+    let before = line.rsplit(' ').next().unwrap_or("");
+    let request = line.rsplit_once(" → ").map_or(line, |(request, _)| request);
+    match status {
+        Ok(status) if status < 500 => (
+            format!("Replayed {request}: was {before}, now {status} ✓"),
+            false,
+        ),
+        Ok(status) => (format!("Replayed {request}: still {status}"), true),
+        Err(err) => (format!("Couldn't replay {request}: {err}"), true),
+    }
+}
+
 /// Whether `grove dev` runs `site`'s dev processes.
 pub fn dev_running(site: &str) -> bool {
     run(&["dev", "list"])
@@ -326,11 +583,119 @@ mod tests {
         if let Some(first) = requests.first() {
             println!("explain:\n{}", super::explain(first.id).unwrap());
         }
+        if let Some(get) = requests.iter().find(|r| r.method == "GET") {
+            println!("replay {} → {:?}", get.line(), super::replay(get.id));
+            // Leave no --same-data baseline behind.
+            let _ = super::run(&["replay", &get.id.to_string(), "--forget"]);
+        }
         println!(
             "dev vidrplay: {}  mail: {}",
             super::dev_running("vidrplay"),
             super::mail_count()
         );
+    }
+
+    /// Needs a Grove app named `elyratryshop` in a git repository:
+    /// `cargo test -p elyra-app live_grove_try -- --ignored`.
+    #[test]
+    #[ignore]
+    fn live_grove_try() {
+        let record = super::start_try("elyratryshop", "elyra/livetest").expect("try starts");
+        println!(
+            "try: {} {} {}",
+            record.url,
+            record.path.display(),
+            record.engine
+        );
+        assert_eq!(super::try_at(&record.path), Some(record.clone()));
+        let site = super::app_for(&record.path).expect("the try is a site");
+        println!("site for worktree: {} {}", site.name, site.url());
+        let status = std::process::Command::new("curl")
+            .args(["-s", "-o", "/dev/null", "-w", "%{http_code}", &record.url])
+            .output()
+            .unwrap();
+        println!(
+            "GET {} → {}",
+            record.url,
+            String::from_utf8_lossy(&status.stdout)
+        );
+        super::end_try(&record).expect("try ends");
+        assert!(super::try_at(&record.path).is_none());
+        assert!(!record.path.exists());
+    }
+
+    #[test]
+    fn reads_the_database_from_env() {
+        use super::{Database, database_from_env, parse_env};
+        let dir = PathBuf::from("/app");
+        let env = parse_env("# local\nDB_CONNECTION=sqlite\n");
+        assert_eq!(
+            database_from_env(&env, &dir, None),
+            Some(Database::Sqlite(PathBuf::from(
+                "/app/database/database.sqlite"
+            )))
+        );
+        let env = parse_env("DB_CONNECTION=mysql\nDB_PORT=3307\nDB_DATABASE=\"shop\"\n");
+        assert_eq!(
+            database_from_env(&env, &dir, Some(3307)),
+            Some(Database::Server {
+                engine: "elyrasql".into(),
+                name: "shop".into()
+            })
+        );
+        assert_eq!(
+            database_from_env(&env, &dir, Some(3310)),
+            Some(Database::Server {
+                engine: "mysql".into(),
+                name: "shop".into()
+            })
+        );
+        let env = parse_env("DB_CONNECTION=pgsql\nDB_DATABASE=shop\n");
+        assert_eq!(
+            database_from_env(&env, &dir, None),
+            Some(Database::Server {
+                engine: "postgres".into(),
+                name: "shop".into()
+            })
+        );
+        assert_eq!(
+            database_from_env(&parse_env("DB_CONNECTION=mysql\n"), &dir, None),
+            None
+        );
+    }
+
+    #[test]
+    fn snapshots_and_restores_sqlite() {
+        use super::{Database, drop_snapshot, restore_database, snapshot_database};
+        let dir = std::env::temp_dir().join(format!("elyra-grove-db-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("app.sqlite");
+        std::fs::write(&file, "before").unwrap();
+        let database = Database::Sqlite(file.clone());
+        let reference = snapshot_database(&database, &dir.join("snaps"), "test").unwrap();
+        std::fs::write(&file, "after").unwrap();
+        std::fs::write(dir.join("app.sqlite-wal"), "journal").unwrap();
+        restore_database(&database, &reference).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "before");
+        assert!(!dir.join("app.sqlite-wal").exists());
+        drop_snapshot(&reference);
+        assert!(!PathBuf::from(reference.trim_start_matches("sqlite:")).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn says_what_a_replay_found() {
+        use super::replay_note;
+        assert_eq!(
+            replay_note("POST /checkout → 500", Ok(200)),
+            ("Replayed POST /checkout: was 500, now 200 ✓".into(), false)
+        );
+        assert_eq!(
+            replay_note("POST /checkout → 500", Ok(502)),
+            ("Replayed POST /checkout: still 502".into(), true)
+        );
+        assert!(replay_note("GET / → 500", Err("no request".into())).1);
     }
 
     #[test]

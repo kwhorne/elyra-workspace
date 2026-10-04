@@ -228,9 +228,9 @@ impl ContextView {
         }
         self.scanning = true;
         let root = self.session.read(cx).working_dir();
-        let project = self.session.read(cx).project.path.clone();
         let job = cx.background_executor().spawn(async move {
-            let grove = crate::grove::app_for(&project).map(|site| GroveInfo {
+            // A worktree Grove runs has its own site.
+            let grove = crate::grove::app_for(&root).map(|site| GroveInfo {
                 dev: crate::grove::dev_running(&site.name),
                 mail: crate::grove::mail_count(),
                 site,

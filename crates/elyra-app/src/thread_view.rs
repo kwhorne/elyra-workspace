@@ -116,15 +116,19 @@ impl ThreadView {
             }),
         ];
         let is_git_repo = elyra_git::is_repo(&session.read(cx).project.path);
-        let project = session.read(cx).project.path.clone();
         let grove_watch = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(SERVER_ERROR_CHECK).await;
-                let project = project.clone();
+                // The folder the thread works in: a worktree Grove runs has
+                // its own site.
+                let Ok(dir) = this.update(cx, |this, cx| this.session.read(cx).working_dir())
+                else {
+                    break;
+                };
                 let requests = cx
                     .background_executor()
                     .spawn(async move {
-                        let site = crate::grove::app_for(&project)?;
+                        let site = crate::grove::app_for(&dir)?;
                         crate::grove::requests(&site.name, 30).ok()
                     })
                     .await;
@@ -456,7 +460,23 @@ impl ThreadView {
             self.set_composer("", None, window, cx);
             return;
         }
+        // Failed requests sent along are replayed after the turn.
+        let replays: Vec<(u64, String)> = self
+            .attachments
+            .iter()
+            .filter_map(|attachment| match attachment {
+                Attachment::Context {
+                    replay: Some(request),
+                    ..
+                } => Some(request.clone()),
+                _ => None,
+            })
+            .collect();
         let prompt = composer::build_prompt(&text, std::mem::take(&mut self.attachments));
+        if !replays.is_empty() {
+            self.session
+                .update(cx, |session, _| session.replay_after_turn.extend(replays));
+        }
         self.set_composer("", None, window, cx);
         self.history = None;
         self.follow = true;
@@ -1299,6 +1319,7 @@ impl ThreadView {
                 this.attachments.push(Attachment::Context {
                     title: title.clone(),
                     content: details.clone(),
+                    replay: None,
                 });
                 this.focus_composer(window, cx);
                 cx.notify();
@@ -1323,8 +1344,11 @@ impl ThreadView {
             && let Some((title, content)) =
                 browser.update(cx, |browser, cx| browser.take_errors(cx))
         {
-            self.attachments
-                .push(Attachment::Context { title, content });
+            self.attachments.push(Attachment::Context {
+                title,
+                content,
+                replay: None,
+            });
         }
         // Server errors come with Grove's explanation: the request, its SQL
         // and mail, and the error log.
@@ -1343,6 +1367,7 @@ impl ThreadView {
                         (
                             format!("Server error {} (Grove request {})", error.line(), error.id),
                             content,
+                            (error.id, error.line()),
                         )
                     })
                     .collect::<Vec<_>>()
@@ -1350,9 +1375,12 @@ impl ThreadView {
             cx.spawn(async move |this, cx| {
                 let explained = job.await;
                 let _ = this.update(cx, |this, cx| {
-                    for (title, content) in explained {
-                        this.attachments
-                            .push(Attachment::Context { title, content });
+                    for (title, content, request) in explained {
+                        this.attachments.push(Attachment::Context {
+                            title,
+                            content,
+                            replay: Some(request),
+                        });
                     }
                     cx.notify();
                 });

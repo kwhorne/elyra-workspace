@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+More with [Elyra Grove](https://github.com/kwhorne/grove):
+
+- **Worktrees with their own running app.** In projects Grove runs as an app, a
+  thread's new worktree comes from Grove (`grove try --new`): its own copy of
+  the database, migrated, and its own `.test` address, which opens in the
+  thread's browser. Best of N candidates each run as their own app. Removing the
+  worktree takes the site and database copy with it.
+- **The database in every checkpoint.** In Grove apps the checkpoint before each
+  turn also snapshots the database (SQLite, MySQL, PostgreSQL or ElyraSQL), and
+  *Restore files* puts it back, undoing the agent's data changes and migrations
+  with its code. The latest 10 per thread are kept.
+- **Did the fix work?** Server errors you send to the agent are replayed when
+  its turn ends (`grove replay --same-data`), and the conversation says *was
+  500, now 200 ✓* or *still 500*.
+- The error chip, the Grove box in the Context tab and the browser's start page
+  follow a worktree's own site.
+
 ## 0.5.0
 
 Working with [Elyra Grove](https://github.com/kwhorne/grove), the local

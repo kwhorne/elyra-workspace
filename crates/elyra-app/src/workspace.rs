@@ -335,6 +335,7 @@ impl Workspace {
                 match event {
                     SessionEvent::TurnStarted => this.picture_page_before(id, cx),
                     SessionEvent::TurnCompleted => this.picture_page_after(id, cx),
+                    SessionEvent::SiteReady(url) => this.open_site(id, url, window, cx),
                     SessionEvent::NeedsAttention => {}
                 }
                 if let SessionEvent::TurnCompleted = event {
@@ -824,7 +825,7 @@ impl Workspace {
             }
             SessionEvent::TurnCompleted => ("Finished", NotificationType::Success),
             SessionEvent::NeedsAttention => ("Needs your input", NotificationType::Warning),
-            SessionEvent::TurnStarted => return,
+            SessionEvent::TurnStarted | SessionEvent::SiteReady(_) => return,
         };
         let workspace = cx.weak_entity();
         let note = Notification::new()
@@ -1336,6 +1337,18 @@ impl Workspace {
         if let Some(id) = self.active {
             self.fork_thread(id, window, cx);
         }
+    }
+
+    /// Load a thread's own Grove site in its browser, without switching tabs.
+    fn open_site(&mut self, id: ThreadId, url: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(cwd) = self.app.read(cx).thread(id).and_then(|thread| {
+            let project = self.app.read(cx).project(thread.project_id)?;
+            Some(thread.working_dir(project))
+        }) else {
+            return;
+        };
+        let browser = self.browser_view(id, cwd, window, cx);
+        browser.update(cx, |browser, cx| browser.open(url, window, cx));
     }
 
     // ---- page pictures around turns ------------------------------------------

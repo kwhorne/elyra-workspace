@@ -157,3 +157,11 @@ a Git repository. The snapshot is stored as a hidden Git reference and does not
 touch your branch, index or stash. Snapshots make **Restore files** possible and
 let the Changes tab show what one turn changed ([Git](git-and-review.md#scopes)).
 Deleting a thread deletes its snapshots.
+
+When [Elyra Grove](context-and-goals.md#grove) runs the project as an app, the
+checkpoint also takes a snapshot of the app's **database**: a copy of a SQLite
+file, or a `grove db snapshot` of MySQL, PostgreSQL or ElyraSQL, found from the
+app's `.env`. **Restore files** then puts the database back too, so data and
+migrations the agent changed are undone with the code. The latest 10 database
+snapshots per thread are kept; turn this off in **Settings → Agents & MCP →
+Database in checkpoints**.

@@ -24,6 +24,9 @@ pub enum Attachment {
     Context {
         title: String,
         content: String,
+        /// A failed request Grove recorded (id, `METHOD /path → status`),
+        /// replayed after the turn to see whether it is fixed.
+        replay: Option<(u64, String)>,
     },
 }
 
@@ -106,7 +109,7 @@ pub fn build_prompt(text: &str, attachments: Vec<Attachment>) -> Prompt {
                 text.push_str(content.trim_end());
                 text.push_str("\n```");
             }
-            Attachment::Context { title, content } => {
+            Attachment::Context { title, content, .. } => {
                 if !text.is_empty() {
                     text.push_str("\n\n");
                 }
@@ -444,6 +447,7 @@ mod tests {
                 Attachment::Context {
                     title: "Errors in the browser".into(),
                     content: "boom\n".into(),
+                    replay: None,
                 },
             ],
         );

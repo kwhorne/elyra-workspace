@@ -95,6 +95,22 @@ threads can work in parallel.
 - When you delete a thread that has a worktree, **Delete with worktree** removes
   both.
 
+### Worktrees with their own running app
+
+When [Elyra Grove](context-and-goals.md#grove) runs the project as an app, Grove
+makes the worktree instead (`grove try --new`, under `~/.grove/try`): on the
+same new branch, but with its **own copy of the database**, migrated, and its
+**own address**, such as `shop--elyra-1a2b3c4d.test`. The thread says
+where it runs, and the address opens in the thread's browser. Each thread can
+change data and run migrations without touching yours, and with
+[best of N](projects-and-threads.md#best-of-n) every candidate runs as its own
+app you can look at.
+
+Removing such a worktree (deleting its thread with the worktree, or in Manage
+Worktrees) takes its site and database copy down with it; the branch stays. If
+Grove can't start the branch, the thread gets a plain worktree and says why.
+Turn this off in **Settings → Agents & MCP → Grove runs worktrees**.
+
 ## Pull requests
 
 The **PR** tab in the tools panel works with GitHub through the

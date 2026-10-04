@@ -60,6 +60,8 @@ arguments (ACP agents), environment and accounts. See [Providers](providers.md).
 | --- | --- |
 | Let agents manage threads | Gives Claude Code, Codex, Elyra and ACP agents tools to list, read, create and steer threads and to look at local pages in the browser ([Agent gateway](agent-gateway.md)). Off by default. |
 | Server | The address of Elyra's local MCP server |
+| Grove runs worktrees | In Grove apps, new worktrees come from Grove with their own database copy and address ([Worktrees](git-and-review.md#worktrees-with-their-own-running-app)). On by default. |
+| Database in checkpoints | In Grove apps, each checkpoint also snapshots the database, and restoring puts it back ([Checkpoints](chat.md#checkpoints)). On by default. |
 | Grove tools for agents | In projects [Elyra Grove](context-and-goals.md#grove) runs as an app, agents also get Grove's MCP server, read-only: sites, recent requests, request chains and explanations, logs and database schema. On by default. |
 | Automatic turns per goal | How many turns a [goal](context-and-goals.md#goal) may take on its own before it pauses (default 10) |
 | External clients | Pair, configure and revoke Claude Desktop, Codex and other MCP clients |
