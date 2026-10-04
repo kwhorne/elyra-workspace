@@ -55,6 +55,9 @@ pub struct Preferences {
     pub agent_gateway: bool,
     /// Automatic turns a thread goal may take before pausing.
     pub goal_max_turns: u32,
+    /// Commit messages and pull request titles in Conventional Commits form,
+    /// `type(scope): summary`.
+    pub conventional_titles: bool,
 }
 
 /// How to launch one provider.
@@ -167,6 +170,7 @@ impl Default for Preferences {
             starred_models: Vec::new(),
             agent_gateway: false,
             goal_max_turns: 10,
+            conventional_titles: true,
         }
     }
 }

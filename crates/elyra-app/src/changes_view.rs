@@ -448,6 +448,14 @@ impl ChangesView {
         if self.areas.is_empty() {
             return;
         }
+        if crate::preferences::Preferences::global(cx).conventional_titles
+            && let Some(problem) =
+                crate::conventional::problem(message.lines().next().unwrap_or(""))
+        {
+            self.message = Some((format!("First line: {problem}."), true));
+            cx.notify();
+            return;
+        }
         let only_staged = self.areas.iter().any(|a| a.area == Area::Staged);
         self.commit_input
             .update(cx, |input, cx| input.set_value("", window, cx));
@@ -488,6 +496,7 @@ impl ChangesView {
         self.busy = Some("Writing message…");
         cx.notify();
         let provider = self.provider(cx);
+        let conventional = crate::preferences::Preferences::global(cx).conventional_titles;
         let job = cx.background_executor().spawn(async move {
             let staged = elyra_git::has_staged(&root)?;
             let diff = std::process::Command::new("git")
@@ -500,8 +509,13 @@ impl ChangesView {
                 .output()?;
             let diff: String = String::from_utf8_lossy(&diff.stdout).chars().take(MAX_GENERATION_DIFF).collect();
             anyhow::ensure!(!diff.trim().is_empty(), "there are no tracked changes to describe");
+            let first_line = if conventional {
+                crate::conventional::RULES.to_string()
+            } else {
+                "First line: imperative summary, at most 72 characters.".to_string()
+            };
             let prompt = format!(
-                "Write a Git commit message for this diff. First line: imperative summary, at most 72 characters. \
+                "Write a Git commit message for this diff. {first_line} \
                  Then a blank line and a short body only if it adds information. Reply with the message only, no code fences.\n\n{diff}"
             );
             elyra_provider::generate_text(provider, &root, &prompt)
@@ -512,7 +526,12 @@ impl ChangesView {
                 this.busy = None;
                 match result {
                     Ok(text) => {
-                        let text = text.trim().trim_matches('`').trim().to_string();
+                        let text =
+                            if crate::preferences::Preferences::global(cx).conventional_titles {
+                                crate::conventional::normalize_message(&text)
+                            } else {
+                                text.trim().trim_matches('`').trim().to_string()
+                            };
                         this.commit_input
                             .update(cx, |input, cx| input.set_value(text, window, cx));
                     }

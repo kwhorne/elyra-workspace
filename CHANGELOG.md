@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Conventional Commits.** Generated commit messages and pull request titles
+  follow `type(scope): summary`, such as
+  `fix(nightwatch-exceptions): employee service create`, and *Commit* and
+  *Create pull request* check the format and say what to fix. On by default;
+  turn it off in Settings → Code → Commits and pull requests.
+
 ## 0.3.0
 
 - **Best of N.** Give one task to several agents at once (command palette →

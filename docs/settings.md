@@ -31,6 +31,12 @@ Font family and size for diffs, tool output, the editor and code in the
 conversation. The list shows the monospaced fonts installed on your Mac (Menlo,
 Monaco, SF Mono, JetBrains Mono, Fira Code, …).
 
+**Commits and pull requests → Conventional format** (on by default): commit
+messages and pull request titles as `type(scope): summary`, such as
+`fix(nightwatch-exceptions): employee service create`. Generated ones follow it,
+and committing or creating a pull request checks it. See
+[Conventional Commits](git-and-review.md#conventional-commits).
+
 ## Terminal
 
 | Setting | Meaning |

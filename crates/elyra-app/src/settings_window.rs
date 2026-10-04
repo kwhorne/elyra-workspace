@@ -351,6 +351,25 @@ impl SettingsView {
                         )
                         .default_value(defaults.mono_font_size as f64),
                     )),
+            )
+            .group(
+                SettingGroup::new()
+                    .title("Commits and pull requests")
+                    .item(
+                        SettingItem::new(
+                            "Conventional format",
+                            switch(
+                                |p| p.conventional_titles,
+                                |p, v| p.conventional_titles = v,
+                            )
+                            .default_value(defaults.conventional_titles),
+                        )
+                        .description(format!(
+                            "Commit messages and pull request titles as type(scope): summary, such as {}. Generated ones follow it, and Commit and Create check it.",
+                            crate::conventional::EXAMPLE
+                        ))
+                        .keywords(["conventional", "commits", "pr", "title", "scope"]),
+                    ),
             );
 
         let cursor_shapes = options([

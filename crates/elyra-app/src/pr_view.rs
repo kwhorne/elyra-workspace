@@ -56,7 +56,14 @@ impl PrView {
             state: PrState::Loading,
             busy: None,
             message: None,
-            title: cx.new(|cx| InputState::new(window, cx).placeholder("Pull request title")),
+            title: cx.new(|cx| {
+                let placeholder = if Self::conventional(cx) {
+                    format!("Title, e.g. {}", crate::conventional::EXAMPLE)
+                } else {
+                    "Pull request title".into()
+                };
+                InputState::new(window, cx).placeholder(placeholder)
+            }),
             body: cx.new(|cx| {
                 TextareaState::new(window, cx)
                     .auto_grow(4, 14)
@@ -162,6 +169,10 @@ impl PrView {
         .detach();
     }
 
+    fn conventional(cx: &App) -> bool {
+        crate::preferences::Preferences::global(cx).conventional_titles
+    }
+
     fn create(&mut self, cx: &mut Context<Self>) {
         let title = self.title.read(cx).value().trim().to_string();
         let body = self.body.read(cx).value().to_string();
@@ -171,6 +182,13 @@ impl PrView {
                 "Give the pull request a title (or generate one).".into(),
                 true,
             ));
+            cx.notify();
+            return;
+        }
+        if Self::conventional(cx)
+            && let Some(problem) = crate::conventional::problem(&title)
+        {
+            self.message = Some((format!("Title: {problem}."), true));
             cx.notify();
             return;
         }
@@ -188,6 +206,7 @@ impl PrView {
     fn generate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let cwd = self.cwd.clone();
         let provider = self.provider(cx);
+        let conventional = Self::conventional(cx);
         self.busy = Some("Writing description…");
         cx.notify();
         let job = cx.background_executor().spawn(async move {
@@ -219,9 +238,14 @@ impl PrView {
             .chars()
             .take(16_000)
             .collect();
+            let rules = if conventional {
+                format!("{}\n\n", crate::conventional::RULES)
+            } else {
+                String::new()
+            };
             let prompt = format!(
                 "Write a GitHub pull request title and description for these changes. \
-                 Format exactly:\nTITLE: <title, at most 72 characters>\n\n<description in Markdown: summary, then a short list of notable changes and how it was tested if known>\n\n{context}"
+                 {rules}Format exactly:\nTITLE: <title, at most 72 characters>\n\n<description in Markdown: summary, then a short list of notable changes and how it was tested if known>\n\n{context}"
             );
             elyra_provider::generate_text(provider, &root, &prompt)
         });
@@ -231,7 +255,7 @@ impl PrView {
                 this.busy = None;
                 match result {
                     Ok(text) => {
-                        let (title, body) = match text.split_once('\n') {
+                        let (title, body) = match text.trim().split_once('\n') {
                             Some((first, rest)) => (
                                 first.trim_start_matches("TITLE:").trim().to_string(),
                                 rest.trim().to_string(),
@@ -240,6 +264,11 @@ impl PrView {
                                 text.trim_start_matches("TITLE:").trim().to_string(),
                                 String::new(),
                             ),
+                        };
+                        let title = if Self::conventional(cx) {
+                            crate::conventional::normalize(&title)
+                        } else {
+                            title
                         };
                         this.title
                             .update(cx, |input, cx| input.set_value(title, window, cx));

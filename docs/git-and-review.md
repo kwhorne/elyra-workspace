@@ -60,7 +60,27 @@ The scope menu chooses what the diff compares:
   nothing is staged.
 - The **sparkle** button writes a commit message from the diff with the thread's
   agent. You can edit it before committing.
+- The first line of a commit message follows the same
+  [Conventional Commits](#conventional-commits) format as pull request titles;
+  **Commit** says what to fix if it doesn't.
 - **Commit and push** (⌃⌘P, from anywhere) commits and pushes in one go.
+
+### Conventional Commits
+
+Commit messages (their first line) and pull request titles are written as
+[Conventional Commits](https://www.conventionalcommits.org): `type(scope): summary`,
+for example `fix(nightwatch-exceptions): employee service create`.
+
+- **type** is one of `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`,
+  `ci`, `chore`, `style` or `revert`. `feat!` or `feat(api)!` marks a breaking
+  change.
+- **scope** is the area that changed, in lowercase kebab-case.
+- **summary** is a short lowercase phrase without a trailing period; the whole
+  line is at most 72 characters.
+
+What the agent generates is written that way and tidied up (lowercase type and
+scope, no trailing period). Turn the format off in **Settings → Code → Commits and
+pull requests**.
 
 ## Worktrees
 
@@ -84,6 +104,8 @@ If the branch has no pull request yet, you can create one:
 
 - Write a title and description, or press **Generate** to have the agent write
   them from the branch's commits.
+- Titles follow [Conventional Commits](#conventional-commits);
+  **Create pull request** says what to fix if a title doesn't.
 - Tick **Draft** to open it as a draft.
 - Press **Create pull request**. The branch is pushed first if needed.
 
