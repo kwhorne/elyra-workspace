@@ -543,7 +543,16 @@ fn external_page() -> SettingPage {
                             .text_color(cx.theme().muted_foreground)
                             .child(crate::gateway::url(cx).unwrap_or_else(|| "not running".into()))
                     }),
-                )),
+                ))
+                .item(
+                    SettingItem::new(
+                        "Agents changing other threads",
+                        SettingField::render(|_, _, cx| render_thread_pairs(cx)),
+                    )
+                    .description(
+                        "The first time an agent messages, stops, renames or archives another thread, you are asked. Always allow remembers the pair.",
+                    ),
+                ),
         )
         .group(
             SettingGroup::new().title("Thread goals").item(
@@ -577,6 +586,38 @@ fn external_page() -> SettingPage {
                     SettingField::render(|_, _, cx| render_audit(cx)),
                 )),
         )
+}
+
+fn render_thread_pairs(cx: &mut App) -> AnyElement {
+    let Some(app) = preferences::app_state(cx) else {
+        return div().into_any_element();
+    };
+    let count = crate::thread_access::approved(app.read(cx)).len();
+    h_flex()
+        .gap_2()
+        .text_sm()
+        .child(
+            div()
+                .text_color(cx.theme().muted_foreground)
+                .child(match count {
+                    0 => "No pairs remembered".to_string(),
+                    1 => "1 pair remembered".to_string(),
+                    n => format!("{n} pairs remembered"),
+                }),
+        )
+        .when(count > 0, |this| {
+            this.child(
+                Button::new("forget-thread-pairs")
+                    .xsmall()
+                    .outline()
+                    .label("Forget")
+                    .on_click(move |_, window, cx| {
+                        crate::thread_access::forget_all(app.read(cx));
+                        window.refresh();
+                    }),
+            )
+        })
+        .into_any_element()
 }
 
 fn render_clients(cx: &mut App) -> AnyElement {

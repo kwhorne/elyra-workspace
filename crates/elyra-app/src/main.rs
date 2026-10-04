@@ -29,6 +29,7 @@ mod stats;
 mod tasks;
 mod terminal_view;
 mod themes;
+mod thread_access;
 mod thread_session;
 mod thread_view;
 mod transcript;

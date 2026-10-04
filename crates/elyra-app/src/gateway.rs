@@ -350,6 +350,8 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
     let started = Instant::now();
     let result = if !call.caller.can_write() && !is_read_tool(&call.tool) {
         Err("This client has read-only access.".to_string())
+    } else if let Err(denied) = allowed_to_change(&app, &call, cx).await {
+        Err(denied)
     } else if call.tool == "wait_for_thread" {
         wait_for_thread(&app, &call, cx).await.map(Output::Text)
     } else if crate::browser_tools::is_browser_tool(&call.tool) {
@@ -384,6 +386,41 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         }
     });
     let _ = call.reply.send(result).await;
+}
+
+/// An agent changing another thread needs the user's say-so once per pair.
+async fn allowed_to_change(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<(), String> {
+    use crate::thread_access::{self, Answer};
+    let Caller::Thread(from) = call.caller else {
+        return Ok(());
+    };
+    if !thread_access::WRITES.contains(&call.tool.as_str()) {
+        return Ok(());
+    }
+    // An unknown or own thread is reported by the tool itself.
+    let Ok(to) = cx.update(|cx| thread_arg(&call.args, app, cx)) else {
+        return Ok(());
+    };
+    if to == from || cx.update(|cx| thread_access::is_approved(app.read(cx), from, to)) {
+        return Ok(());
+    }
+    let (tx, rx) = async_channel::bounded(1);
+    let asked = cx.update(|cx| thread_access::ask(app, from, to, &call.tool, &call.args, tx, cx));
+    if !asked {
+        return Err("Elyra Workspace has no window to ask the user whether this agent may change that thread.".into());
+    }
+    match rx.recv().await {
+        Ok(Answer::Always) => {
+            cx.update(|cx| thread_access::remember(app.read(cx), from, to));
+            Ok(())
+        }
+        Ok(Answer::Once) => Ok(()),
+        _ => Err("The user did not allow this agent to change that thread.".into()),
+    }
 }
 
 fn caller_label(app: &Entity<AppState>, caller: &Caller, cx: &App) -> String {
@@ -546,6 +583,10 @@ fn run_tool(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String,
                 }
                 session.submit(Prompt::text(prompt), cx);
             });
+            // An agent may steer the threads it starts without asking again.
+            if let Caller::Thread(from) = call.caller {
+                crate::thread_access::remember(app.read(cx), from, thread.id);
+            }
             Ok(json!({ "thread_id": thread.id.to_string() }).to_string())
         }
         "send_message" => {

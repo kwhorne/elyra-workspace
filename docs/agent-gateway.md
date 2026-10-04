@@ -51,6 +51,13 @@ appear as `mcp__elyra__…`.
   have to reach them through `mcp_search` and `mcp_call` first.
 - Tool calls follow the thread's permission mode like any other tool. In *Ask for
   approval* mode you approve each one.
+- An agent may read any thread, but the first time it messages, stops, renames
+  or archives *another* thread, Elyra asks you: **Don't allow**, **Allow once** or
+  **Always allow**. *Always* remembers that pair of threads; **Settings → Agents &
+  MCP → Agents changing other threads** shows how many are remembered and forgets
+  them. Threads an agent started with `create_thread` are its own, so it isn't
+  asked about those. Paired clients such as Claude Desktop aren't asked: pairing
+  them was the permission.
 - Each agent gets its own token, which only lasts while Elyra is running.
 
 Example prompt:
