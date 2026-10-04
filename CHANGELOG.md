@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1
 
 - **Elyra Workspace as a Félagi runtime.** Turn on Settings → Félagi → Run
   Félagi's agents on this Mac (with a daemon token and a unique machine name),
