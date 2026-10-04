@@ -326,15 +326,17 @@ pub fn forget_token(_: &str) {}
 
 // ---- requests ------------------------------------------------------------
 
-/// A request to the API; `body` is sent as JSON. Returns the parsed answer,
-/// or the API's own message on an error status.
-fn request(
-    url: &str,
-    token: &str,
-    method: &str,
-    path: &str,
-    body: Option<&Value>,
-) -> Result<Value> {
+/// What a request sends.
+enum Body<'a> {
+    None,
+    Json(&'a Value),
+    /// One file, as the multipart part `file`.
+    File(&'a std::path::Path),
+}
+
+/// A request to the API. Returns the parsed answer, or the API's own message
+/// on an error status.
+fn request(url: &str, token: &str, method: &str, path: &str, body: Body) -> Result<Value> {
     let endpoint = format!("{}/api/v1{path}", url.trim_end_matches('/'));
     let mut command = Command::new("curl");
     command
@@ -347,7 +349,11 @@ fn request(
             "-w",
             "\n%{http_code}",
         ])
-        .args(["-K", "-"])
+        .args(["-K", "-"]);
+    if let Body::File(file) = &body {
+        command.arg("-F").arg(format!("file=@{}", file.display()));
+    }
+    command
         .arg(&endpoint)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -359,7 +365,7 @@ fn request(
         let quote = |value: &str| value.replace('\\', "\\\\").replace('"', "\\\"");
         writeln!(stdin, "header = \"Authorization: Bearer {}\"", quote(token))?;
         writeln!(stdin, "header = \"Accept: application/json\"")?;
-        if let Some(body) = body {
+        if let Body::Json(body) = body {
             writeln!(stdin, "header = \"Content-Type: application/json\"")?;
             writeln!(stdin, "data = \"{}\"", quote(&body.to_string()))?;
         }
@@ -413,11 +419,30 @@ impl Client {
     }
 
     fn get(&self, path: &str) -> Result<Value> {
-        request(&self.url, &self.token, "GET", path, None)
+        request(&self.url, &self.token, "GET", path, Body::None)
     }
 
     fn send(&self, method: &str, path: &str, body: Value) -> Result<Value> {
-        request(&self.url, &self.token, method, path, Some(&body))
+        request(&self.url, &self.token, method, path, Body::Json(&body))
+    }
+
+    /// Open an issue: `fields` as `POST /issues` takes them.
+    pub fn create_issue(&self, fields: Value) -> Result<Issue> {
+        Ok(serde_json::from_value(
+            self.send("POST", "/issues", fields)?["data"].clone(),
+        )?)
+    }
+
+    /// Put a file (a picture, say) on a comment.
+    pub fn attach_to_comment(&self, id: &str, comment: u64, file: &std::path::Path) -> Result<()> {
+        request(
+            &self.url,
+            &self.token,
+            "POST",
+            &format!("/issues/{id}/comments/{comment}/attachments"),
+            Body::File(file),
+        )
+        .map(|_| ())
     }
 
     /// Who the token is: checked when connecting.
@@ -500,13 +525,16 @@ impl Client {
         .map(|_| ())
     }
 
-    pub fn comment(&self, id: &str, body: &str) -> Result<()> {
-        self.send(
+    /// Post a comment; returns its id.
+    pub fn comment(&self, id: &str, body: &str) -> Result<u64> {
+        let value = self.send(
             "POST",
             &format!("/issues/{id}/comments"),
             json!({ "body": body }),
-        )
-        .map(|_| ())
+        )?;
+        value["data"]["id"]
+            .as_u64()
+            .context("Félagi didn't say which comment it made")
     }
 
     pub fn log_time(&self, id: &str, minutes: u64, note: &str) -> Result<()> {
@@ -516,6 +544,27 @@ impl Client {
             json!({ "minutes": minutes, "note": note }),
         )
         .map(|_| ())
+    }
+
+    /// Minutes you logged on `date` (YYYY-MM-DD), per issue identifier.
+    pub fn my_minutes_on(&self, date: &str) -> Result<std::collections::BTreeMap<String, u64>> {
+        let mut minutes = std::collections::BTreeMap::new();
+        let mut next = Some(format!(
+            "/time-entries?from={date}&to={date}&mine=1&per_page=100"
+        ));
+        while let Some(page) = next.take() {
+            let value = self.get(&page)?;
+            for entry in value["data"].as_array().into_iter().flatten() {
+                if let (Some(issue), Some(m)) = (entry["issue"].as_str(), entry["minutes"].as_u64())
+                {
+                    *minutes.entry(issue.to_string()).or_default() += m;
+                }
+            }
+            next = value["links"]["next"]
+                .as_str()
+                .and_then(|link| link.split_once("/api/v1").map(|(_, rest)| rest.to_string()));
+        }
+        Ok(minutes)
     }
 
     pub fn timer(&self) -> Result<Option<Timer>> {
@@ -532,7 +581,7 @@ impl Client {
     /// Throw the running timer away, recording nothing (the hours are logged
     /// with `log_time`, as the user corrected them).
     pub fn discard_timer(&self) -> Result<()> {
-        request(&self.url, &self.token, "DELETE", "/timer", None).map(|_| ())
+        request(&self.url, &self.token, "DELETE", "/timer", Body::None).map(|_| ())
     }
 }
 
@@ -541,63 +590,72 @@ mod tests {
     use super::{Issue, format_minutes, html_to_text, parse_duration};
     use serde_json::json;
 
-    /// Against a Félagi with a test issue assigned to the token's user:
-    /// `FELAGI_TEST_URL=… FELAGI_TEST_TOKEN_FILE=… FELAGI_TEST_ISSUE=ACM-9
-    /// cargo test -p elyra-app live_felagi -- --ignored`. It comments, logs a
-    /// minute and moves the issue to In review.
+    /// Against a Félagi: `FELAGI_TEST_URL=… FELAGI_TEST_TOKEN_FILE=…
+    /// FELAGI_TEST_PICTURE=a.jpg cargo test -p elyra-app live_felagi -- --ignored`.
+    /// It opens an issue (printed, to delete afterwards), assigns it to the
+    /// token's user, comments with a picture, logs a minute and moves it on.
     #[test]
     #[ignore]
     fn live_felagi() {
         let url = std::env::var("FELAGI_TEST_URL").unwrap();
         let token =
             std::fs::read_to_string(std::env::var("FELAGI_TEST_TOKEN_FILE").unwrap()).unwrap();
-        let id = std::env::var("FELAGI_TEST_ISSUE").unwrap();
+        let picture = std::env::var("FELAGI_TEST_PICTURE").unwrap();
         let client = super::Client::new(&url, token.trim());
         let me = client.me().unwrap();
         println!(
             "me: {} as {} ({}) write={}",
             me.workspace, me.user, me.actor, me.can_write
         );
+        let created = client
+            .create_issue(json!({
+                "title": "Server error: POST /checkout → 500 (Elyra integration test)",
+                "description": "<p>Made by an automated test.</p><pre>trace</pre>",
+                "type": "exception", "status": "todo", "priority": "high",
+            }))
+            .unwrap();
+        let id = created.id.clone();
+        println!("created: {id} {} {:?}", created.status, created.kind);
+        let user_id: u64 = me.actor.trim_start_matches("user:").parse().unwrap();
+        client
+            .send(
+                "PATCH",
+                &format!("/issues/{id}"),
+                json!({ "assignee_type": "user", "assignee_id": user_id }),
+            )
+            .unwrap();
         let issues = client.issues(&me.actor, None, 300).unwrap();
-        println!(
-            "{} issues assigned: {:?}",
-            issues.len(),
-            issues
-                .iter()
-                .map(|i| (&i.id, &i.status))
-                .collect::<Vec<_>>()
-        );
         assert!(issues.iter().any(|i| i.id == id));
-        let issue = client.issue(&id).unwrap();
-        println!("prompt:\n{}", issue.as_prompt());
+        println!("prompt:\n{}", client.issue(&id).unwrap().as_prompt());
         println!("projects: {:?}", client.projects().unwrap());
         client.start_timer(&id).unwrap();
-        let timer = client.timer().unwrap().expect("a timer runs");
-        println!(
-            "timer: {} since {} ({} min)",
-            timer.issue,
-            timer.started_at,
-            timer.minutes()
-        );
-        assert_eq!(timer.issue, id);
+        assert_eq!(client.timer().unwrap().expect("a timer runs").issue, id);
         client.discard_timer().unwrap();
         assert!(client.timer().unwrap().is_none());
         client
             .log_time(&id, 1, "Elyra Workspace: integration test")
             .unwrap();
-        client
+        let comment = client
             .comment(
                 &id,
-                &super::text_to_html("Integration test.\n\n- Comment\n- Time\n- Status"),
+                &super::text_to_html("Integration test.\n\n- Comment\n- Picture"),
             )
             .unwrap();
+        println!("comment id {comment}");
+        client
+            .attach_to_comment(&id, comment, std::path::Path::new(&picture))
+            .unwrap();
         client.set_status(&id, "in_review").unwrap();
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let mine = client.my_minutes_on(&today).unwrap();
+        println!("logged today: {mine:?}");
+        assert!(mine.get(&id).copied().unwrap_or(0) >= 1);
         let after = client.issue(&id).unwrap();
+        assert_eq!(after.status, "in_review");
         println!(
             "after: status {} spent {:?}",
             after.status, after.spent_minutes
         );
-        assert_eq!(after.status, "in_review");
     }
 
     #[test]

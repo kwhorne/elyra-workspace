@@ -6,6 +6,7 @@ use crate::felagi::{self, Client, Connection, Issue, Timer};
 use crate::thread_session::ThreadSession;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState, Textarea, TextareaState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{
@@ -237,6 +238,9 @@ pub struct Report {
     timer_running: bool,
     comment: Entity<TextareaState>,
     time: Entity<InputState>,
+    /// The latest pictures of the page from around a turn (before, after).
+    pictures: Vec<std::path::PathBuf>,
+    attach_pictures: bool,
     drafting: bool,
     sending: bool,
     error: Option<String>,
@@ -269,7 +273,10 @@ impl Report {
             }
             state
         });
+        let pictures = latest_pictures(&session.read(cx).items);
         Self {
+            attach_pictures: !pictures.is_empty(),
+            pictures,
             session,
             link,
             id,
@@ -305,7 +312,21 @@ impl Report {
                 .output()
                 .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
                 .unwrap_or_default();
-            let prompt = format!("{prompt}\n\nUncommitted changes:\n{stat}");
+            // The branch's pull request, for the report to link to.
+            let pr = std::process::Command::new("gh")
+                .current_dir(&cwd)
+                .args(["pr", "view", "--json", "url", "--jq", ".url"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|url| url.starts_with("https://"));
+            let mut prompt = format!("{prompt}\n\nUncommitted changes:\n{stat}");
+            if let Some(pr) = &pr {
+                prompt.push_str(&format!(
+                    "\n\nThe work is in the pull request {pr}; end the report with the line \u{201c}Pull request: {pr}\u{201d}."
+                ));
+            }
             elyra_provider::generate_text(provider, &cwd, &prompt)
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -359,6 +380,11 @@ impl Report {
             self.current_status.clone(),
         );
         let timer_running = self.timer_running;
+        let pictures = if self.attach_pictures {
+            self.pictures.clone()
+        } else {
+            Vec::new()
+        };
         let note = format!("Elyra Workspace: {}", self.session.read(cx).thread.title);
         self.sending = true;
         self.error = None;
@@ -374,9 +400,25 @@ impl Report {
                 client.log_time(&id, minutes, &note)?;
                 done.push(format!("{} logged", felagi::format_minutes(minutes)));
             }
-            if !text.is_empty() {
-                client.comment(&id, &felagi::text_to_html(&text))?;
+            if !text.is_empty() || !pictures.is_empty() {
+                let body = if text.is_empty() {
+                    "<p>Pictures of the page before and after the change.</p>".to_string()
+                } else {
+                    felagi::text_to_html(&text)
+                };
+                let comment = client.comment(&id, &body)?;
                 done.push("comment posted".into());
+                let mut attached = 0;
+                for picture in pictures.iter().filter(|p| p.exists()) {
+                    client.attach_to_comment(&id, comment, picture)?;
+                    attached += 1;
+                }
+                if attached > 0 {
+                    done.push(format!(
+                        "{attached} picture{} attached",
+                        if attached == 1 { "" } else { "s" }
+                    ));
+                }
             }
             if status != current {
                 client.set_status(&id, &status)?;
@@ -475,6 +517,21 @@ impl Render for Report {
                             .child(Input::new(&self.time).small().w(px(160.))),
                     ),
             )
+            .when(!self.pictures.is_empty(), |this| {
+                this.child(
+                    Checkbox::new("felagi-report-pictures")
+                        .label(if self.pictures.len() > 1 {
+                            "Attach the pictures of the page from before and after the last change"
+                        } else {
+                            "Attach the picture of the page after the last change"
+                        })
+                        .checked(self.attach_pictures)
+                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                            this.attach_pictures = *checked;
+                            cx.notify();
+                        })),
+                )
+            })
             .child(
                 div()
                     .text_xs()
@@ -497,4 +554,23 @@ impl Render for Report {
                 )
             })
     }
+}
+
+/// The newest before/after pictures of the page in a thread (see
+/// `ItemContent::PageSnapshot`), before first.
+fn latest_pictures(items: &[elyra_core::TranscriptItem]) -> Vec<std::path::PathBuf> {
+    items
+        .iter()
+        .rev()
+        .find_map(|item| match &item.content {
+            elyra_core::ItemContent::PageSnapshot { before, after, .. } => Some(
+                before
+                    .iter()
+                    .chain(std::iter::once(after))
+                    .map(std::path::PathBuf::from)
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
 }

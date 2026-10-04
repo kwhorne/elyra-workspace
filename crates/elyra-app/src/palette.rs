@@ -133,6 +133,12 @@ fn commands() -> Vec<Command> {
         ),
         command!("Show browser", "⇧⌘B", IconName::Globe, actions::ShowBrowser),
         command!(
+            "Today's work (threads, Félagi hours, commits)",
+            "",
+            IconName::CalendarDays,
+            actions::TodaysWork
+        ),
+        command!(
             "Best of N… (one task, several agents)",
             "",
             IconName::Trophy,

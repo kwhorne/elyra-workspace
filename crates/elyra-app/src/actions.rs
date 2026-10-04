@@ -62,6 +62,7 @@ gpui_kit::actions!(
         OpenDocumentation,
         ShowBrowser,
         BestOfN,
+        TodaysWork,
     ]
 );
 
@@ -235,6 +236,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
     ),
     shortcut!("stats", "Panels", "Usage statistics", "", WS, ShowStats),
     shortcut!("best_of_n", "Threads", "Best of N", "", WS, BestOfN),
+    shortcut!("todays_work", "Panels", "Today's work", "", WS, TodaysWork),
     shortcut!(
         "focus_composer",
         "Threads",

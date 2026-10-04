@@ -9,6 +9,7 @@ mod changes_view;
 mod composer;
 mod context_view;
 mod conventional;
+mod day_summary;
 mod dialogs;
 mod editors;
 mod export;

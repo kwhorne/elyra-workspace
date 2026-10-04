@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+Grove, Workspace and Félagi, closer together:
+
+- **Pictures in Félagi reports.** The latest before and after pictures of the
+  page are attached to the report's comment.
+- **Pull requests name their issue.** A thread on a Félagi issue makes pull
+  request titles like `fix(acm-231): …` and ends the description with
+  `Félagi: ACM-231`; the report links to the pull request.
+- **File a server error in Félagi.** From the error chip, the newest server error
+  Grove recorded becomes a Félagi issue (exception, with Grove's explanation),
+  and the thread is linked to it.
+- **Today's work** (command palette): the issues you worked on with the agents'
+  time against the hours logged and a click to log the rest, other threads, and
+  today's commits; copyable for a standup.
+
 ## 0.7.0
 
 - **Félagi tasks and time.** Connect [Elyra Félagi](https://github.com/kwhorne/Felagi)

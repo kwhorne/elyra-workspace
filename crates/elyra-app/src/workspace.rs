@@ -1425,6 +1425,17 @@ impl Workspace {
         .detach();
     }
 
+    fn on_todays_work(&mut self, _: &TodaysWork, window: &mut Window, cx: &mut Context<Self>) {
+        let app = self.app.clone();
+        let summary = cx.new(|cx| crate::day_summary::DaySummary::new(app, cx));
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .title("Today's work")
+                .w(px(640.))
+                .child(summary.clone())
+        });
+    }
+
     // ---- best of N --------------------------------------------------------
 
     fn on_best_of_n(&mut self, _: &BestOfN, window: &mut Window, cx: &mut Context<Self>) {
@@ -2170,6 +2181,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_stats))
             .on_action(cx.listener(Self::on_show_browser))
             .on_action(cx.listener(Self::on_best_of_n))
+            .on_action(cx.listener(Self::on_todays_work))
             .on_action(cx.listener(Self::on_export_thread))
             .on_action(cx.listener(Self::on_fork_thread))
             .on_action(cx.listener(Self::on_toggle_split))

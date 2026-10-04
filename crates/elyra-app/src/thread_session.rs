@@ -1051,6 +1051,13 @@ impl ThreadSession {
         }
     }
 
+    /// Work on a Félagi issue from this thread.
+    pub fn link_felagi(&mut self, issue: String, cx: &mut Context<Self>) {
+        self.thread.felagi_issue = Some(issue);
+        self.save_thread(cx);
+        cx.notify();
+    }
+
     pub fn rename(&mut self, title: String, cx: &mut Context<Self>) {
         let title = title.trim();
         if title.is_empty() {

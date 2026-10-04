@@ -57,7 +57,9 @@ When [Elyra Grove](context-and-goals.md#grove) runs the project as an app, the
 chip also counts **server errors**: requests Grove recorded with a 5xx status
 since the thread was opened, from any browser. **Add to message** attaches
 Grove's explanation of each (up to three): the request and its body, the SQL it
-ran and the mail it sent, and the error log with its stack trace. The page in the
+ran and the mail it sent, and the error log with its stack trace. With
+[Félagi](automations-and-tasks.md#filing-a-server-error) connected, **File in
+Félagi** opens an issue for the newest instead. The page in the
 Browser tab doesn't have to be open for these.
 
 When the turn after such a message ends, Elyra sends those requests again

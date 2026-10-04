@@ -114,7 +114,38 @@ its status in Félagi and, while it runs, the timer.
 - **Status**: suggested as *In review*; any status can be chosen.
 - **Time to log**: filled in from Félagi's timer, in Félagi's notation
   (`1h 30m`, `45m`, `1.5h`). Leave it empty to log nothing.
+- **Pictures**: when the thread has [pictures of the page](browser.md#pictures-before-and-after-a-turn),
+  the latest before and after are attached to the comment, so whoever reads the
+  issue sees what changed. Untick it to leave them out.
+
+When the branch has a pull request, the draft ends with a link to it. Pull
+requests made from a thread on an issue use the issue as their
+[scope](git-and-review.md#conventional-commits), such as
+`fix(acm-231): login loop on safari`, and end their description with
+`Félagi: ACM-231`.
 
 **Send to Félagi** logs the hours (replacing the running timer, so nothing is
 counted twice), posts the comment and sets the status, and the thread notes what
 was sent. A read-only token can show issues but not report.
+
+### Filing a server error
+
+When [Elyra Grove](context-and-goals.md#grove) reports a server error in the
+error chip, **File in Félagi** opens an issue for the newest one: type
+*exception*, high priority, in the Félagi project linked to this one, with Grove's
+explanation (the request, its SQL and mail, the stack trace) as its description.
+A thread that isn't working on an issue yet is linked to the new one, so you can
+fix it there and report back.
+
+### Today's work
+
+**Today's work** in the command palette (⌘K) shows the day at a glance:
+
+- the Félagi issues you worked on, with the agents' time in their threads against
+  the hours you have logged today, and **Log** for what is left (the agents'
+  time rounded up to five minutes, less what is logged)
+- other threads you worked in
+- today's commits in those projects, by you
+
+**Copy summary** puts it on the clipboard as text, ready for a standup or a
+chat.

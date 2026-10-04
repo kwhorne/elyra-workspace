@@ -207,6 +207,12 @@ impl PrView {
         let cwd = self.cwd.clone();
         let provider = self.provider(cx);
         let conventional = Self::conventional(cx);
+        // A thread on a Félagi issue names it: the issue is the scope.
+        let issue = self
+            .session
+            .as_ref()
+            .and_then(|s| s.upgrade())
+            .and_then(|s| s.read(cx).thread.felagi_issue.clone());
         self.busy = Some("Writing description…");
         cx.notify();
         let job = cx.background_executor().spawn(async move {
@@ -238,11 +244,22 @@ impl PrView {
             .chars()
             .take(16_000)
             .collect();
-            let rules = if conventional {
+            let mut rules = if conventional {
                 format!("{}\n\n", crate::conventional::RULES)
             } else {
                 String::new()
             };
+            if let Some(issue) = &issue {
+                if conventional {
+                    rules.push_str(&format!(
+                        "This work is for the issue {issue}, so use it as the scope: `type({}): summary`.\n\n",
+                        issue.to_lowercase()
+                    ));
+                }
+                rules.push_str(&format!(
+                    "End the description with the line `Félagi: {issue}`.\n\n"
+                ));
+            }
             let prompt = format!(
                 "Write a GitHub pull request title and description for these changes. \
                  {rules}Format exactly:\nTITLE: <title, at most 72 characters>\n\n<description in Markdown: summary, then a short list of notable changes and how it was tested if known>\n\n{context}"

@@ -35,6 +35,13 @@ struct FindState {
     current: usize,
 }
 
+/// Whether Félagi is connected with a token that may write.
+fn felagi_can_write(cx: &App) -> bool {
+    crate::preferences::app_state(cx)
+        .and_then(|app| crate::felagi::connection(&app.read(cx).store))
+        .is_some_and(|c| c.can_write)
+}
+
 /// How often to ask Grove for new server errors in the project's app.
 const SERVER_ERROR_CHECK: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -1336,6 +1343,80 @@ impl ThreadView {
         cx.notify();
     }
 
+    /// Open a Félagi issue (type exception) for the newest server error, with
+    /// Grove's explanation; link the thread to it when it has no issue yet.
+    fn file_server_error(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(error) = self.server_errors.pop() else {
+            return;
+        };
+        let Some(app) = crate::preferences::app_state(cx) else {
+            return;
+        };
+        let store = &app.read(cx).store;
+        let Some(connection) = crate::felagi::connection(store) else {
+            return;
+        };
+        let Some(client) = crate::felagi::Client::for_connection(&connection) else {
+            window.push_notification("The Félagi token isn't in the Keychain.", cx);
+            return;
+        };
+        let session = self.session.read(cx);
+        let project = crate::felagi::linked_project(store, session.project.id);
+        let link = session.thread.felagi_issue.is_none();
+        cx.notify();
+        let job = cx.background_executor().spawn(async move {
+            let explanation = crate::grove::explain(error.id)
+                .unwrap_or_else(|err| format!("{}\n({err:#})", error.line()));
+            let escaped = explanation
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            let mut fields = serde_json::json!({
+                "title": format!("Server error: {}", error.line()),
+                "description": format!(
+                    "<p>Recorded by Elyra Grove (request {}) and filed from Elyra Workspace.</p><pre>{escaped}</pre>",
+                    error.id
+                ),
+                "type": "exception",
+                "status": "todo",
+                "priority": "high",
+            });
+            if let Some(project) = project {
+                fields["project_id"] = project.into();
+            }
+            client.create_issue(fields)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = job.await;
+            let _ = this.update_in(cx, |this, window, cx| match result {
+                Ok(issue) => {
+                    let id = issue.id.clone();
+                    this.session.update(cx, |session, cx| {
+                        session.notice(
+                            format!("Filed {id} in Félagi: {}.", issue.title),
+                            false,
+                            cx,
+                        );
+                        if link {
+                            session.link_felagi(id.clone(), cx);
+                        }
+                    });
+                    if link {
+                        let session = this.session.clone();
+                        this.felagi = Some(
+                            cx.new(|cx| crate::felagi_report::FelagiLink::new(session, id, cx)),
+                        );
+                    }
+                    cx.notify();
+                }
+                Err(err) => {
+                    window.push_notification(format!("Could not file it in Félagi: {err:#}"), cx)
+                }
+            });
+        })
+        .detach();
+    }
+
     /// New server errors among Grove's latest requests for the app.
     fn saw_requests(&mut self, requests: Vec<crate::grove::Request>, cx: &mut Context<Self>) {
         let (seen, fresh) = crate::grove::new_server_errors(self.server_seen, requests);
@@ -1433,6 +1514,16 @@ impl ThreadView {
                         .text_color(cx.theme().danger),
                 )
                 .child(div().flex_1().child(parts.join(" · ")))
+                .when(!self.server_errors.is_empty() && felagi_can_write(cx), |this| {
+                    this.child(
+                        Button::new("file-server-error")
+                            .xsmall()
+                            .ghost()
+                            .label("File in Félagi")
+                            .tooltip("Open a Félagi issue for the newest server error, with Grove's explanation")
+                            .on_click(cx.listener(|this, _, window, cx| this.file_server_error(window, cx))),
+                    )
+                })
                 .child(
                     Button::new("add-browser-errors")
                         .xsmall()
