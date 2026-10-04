@@ -66,7 +66,18 @@ rm -rf "$STAGE" "$DMG"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-hdiutil create -volname "$NAME $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
+# hdiutil sometimes answers "Resource busy" on CI runners; try a few times.
+for attempt in 1 2 3 4 5; do
+  if hdiutil create -volname "$NAME $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null; then
+    break
+  fi
+  if [ "$attempt" = 5 ]; then
+    echo "hdiutil failed five times" >&2
+    exit 1
+  fi
+  echo "hdiutil failed (attempt $attempt); trying again in 10 seconds" >&2
+  sleep 10
+done
 rm -rf "$STAGE"
 codesign --force --timestamp --sign "$CODESIGN_IDENTITY" "$DMG"
 notarize "$DMG"
