@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
 
 - **Félagi tasks and time.** Connect [Elyra Félagi](https://github.com/kwhorne/Felagi)
   in Settings → Félagi (the token is kept in the macOS Keychain), and the task
