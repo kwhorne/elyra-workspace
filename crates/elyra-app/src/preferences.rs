@@ -64,6 +64,10 @@ pub struct Preferences {
     pub grove_worktrees: bool,
     /// Snapshot the database of apps Grove runs with every checkpoint.
     pub grove_db_checkpoints: bool,
+    /// Run the agents Félagi assigns work to here, as one of its runtimes.
+    pub felagi_runtime: bool,
+    /// The name this Mac registers under in Félagi (blank: the computer's name).
+    pub felagi_runtime_name: String,
 }
 
 /// How to launch one provider.
@@ -180,6 +184,8 @@ impl Default for Preferences {
             grove_mcp: true,
             grove_worktrees: true,
             grove_db_checkpoints: true,
+            felagi_runtime: false,
+            felagi_runtime_name: String::new(),
         }
     }
 }

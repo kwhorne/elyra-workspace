@@ -337,7 +337,46 @@ enum Body<'a> {
 /// A request to the API. Returns the parsed answer, or the API's own message
 /// on an error status.
 fn request(url: &str, token: &str, method: &str, path: &str, body: Body) -> Result<Value> {
-    let endpoint = format!("{}/api/v1{path}", url.trim_end_matches('/'));
+    let (status, value) = call(url, token, method, &format!("/api/v1{path}"), body, &[])?;
+    check(status, value)
+}
+
+/// Turn an error status into the API's own message (or a plain one).
+fn check(status: u16, value: Value) -> Result<Value> {
+    if (200..300).contains(&status) {
+        return Ok(value);
+    }
+    let message = value["message"].as_str().unwrap_or("").to_string();
+    bail!(match status {
+        401 =>
+            "Félagi doesn't accept the token (wrong, revoked, expired, or you left the workspace)"
+                .to_string(),
+        403 if message.is_empty() =>
+            "the token may not do that (a read-only token can't write)".to_string(),
+        404 => format!(
+            "not found in Félagi{}",
+            if message.is_empty() {
+                String::new()
+            } else {
+                format!(": {message}")
+            }
+        ),
+        _ if message.is_empty() => format!("Félagi answered {status}"),
+        _ => format!("Félagi: {message}"),
+    });
+}
+
+/// One HTTP call to `url` + `path` with extra `headers`: the status and the
+/// parsed body (`Null` when empty). Only a failure to reach Félagi is an error.
+fn call(
+    url: &str,
+    token: &str,
+    method: &str,
+    path: &str,
+    body: Body,
+    headers: &[(&str, &str)],
+) -> Result<(u16, Value)> {
+    let endpoint = format!("{}{path}", url.trim_end_matches('/'));
     let mut command = Command::new("curl");
     command
         .args([
@@ -365,6 +404,9 @@ fn request(url: &str, token: &str, method: &str, path: &str, body: Body) -> Resu
         let quote = |value: &str| value.replace('\\', "\\\\").replace('"', "\\\"");
         writeln!(stdin, "header = \"Authorization: Bearer {}\"", quote(token))?;
         writeln!(stdin, "header = \"Accept: application/json\"")?;
+        for (name, value) in headers {
+            writeln!(stdin, "header = \"{}: {}\"", quote(name), quote(value))?;
+        }
         if let Body::Json(body) = body {
             writeln!(stdin, "header = \"Content-Type: application/json\"")?;
             writeln!(stdin, "data = \"{}\"", quote(&body.to_string()))?;
@@ -385,17 +427,7 @@ fn request(url: &str, token: &str, method: &str, path: &str, body: Body) -> Resu
     } else {
         serde_json::from_str(body).unwrap_or(Value::Null)
     };
-    if !(200..300).contains(&status) {
-        let message = value["message"].as_str().unwrap_or("").to_string();
-        bail!(match status {
-            401 => "Félagi doesn't accept the token (wrong, revoked, expired, or you left the workspace)".to_string(),
-            403 if message.is_empty() => "the token may not do that (a read-only token can't write)".to_string(),
-            404 => format!("not found in Félagi{}", if message.is_empty() { String::new() } else { format!(": {message}") }),
-            _ if message.is_empty() => format!("Félagi answered {status}"),
-            _ => format!("Félagi: {message}"),
-        });
-    }
-    Ok(value)
+    Ok((status, value))
 }
 
 /// A client for one connected workspace.
@@ -585,6 +617,335 @@ impl Client {
     }
 }
 
+// ---- daemon protocol: running Félagi's agents in Elyra Workspace ------------
+
+/// The daemon protocol version Elyra Workspace speaks; Félagi refuses daemons
+/// older than its minimum (`426`).
+pub const DAEMON_PROTOCOL_VERSION: &str = "0.3.0";
+
+fn daemon_account(url: &str) -> String {
+    format!("daemon:{url}")
+}
+
+pub fn save_daemon_token(url: &str, token: &str) -> Result<()> {
+    save_token(&daemon_account(url), token)
+}
+
+pub fn daemon_token(url: &str) -> Option<String> {
+    token(&daemon_account(url))
+}
+
+pub fn forget_daemon_token(url: &str) {
+    forget_token(&daemon_account(url));
+}
+
+/// Félagi's provider names for the agents Elyra Workspace runs.
+pub fn provider_kind(felagi: &str) -> Option<elyra_core::ProviderKind> {
+    use elyra_core::ProviderKind;
+    match felagi {
+        "claude_code" => Some(ProviderKind::Claude),
+        "codex" => Some(ProviderKind::Codex),
+        "elyra" => Some(ProviderKind::Elyra),
+        _ => None,
+    }
+}
+
+pub fn provider_name(kind: elyra_core::ProviderKind) -> Option<&'static str> {
+    use elyra_core::ProviderKind;
+    match kind {
+        ProviderKind::Claude => Some("claude_code"),
+        ProviderKind::Codex => Some("codex"),
+        ProviderKind::Elyra => Some("elyra"),
+        _ => None,
+    }
+}
+
+/// `git@github.com:acme/app.git` and `https://github.com/acme/app` are the
+/// same repository.
+pub fn repository_key(url: &str) -> String {
+    let url = url.trim().trim_end_matches('/').trim_end_matches(".git");
+    let key = match url.strip_prefix("git@") {
+        // scp form: git@github.com:acme/app
+        Some(rest) => rest.replacen(':', "/", 1),
+        None => {
+            let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+            // Drop credentials or a user: token@host, git@host.
+            rest.split_once('@')
+                .map_or(rest, |(_, host)| host)
+                .to_string()
+        }
+    };
+    key.to_lowercase()
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TaskAgent {
+    pub name: String,
+    pub provider: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub instructions: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TaskWorkspace {
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub repositories: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TaskIssue {
+    pub identifier: String,
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub acceptance_criteria: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct SkillFile {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct Skill {
+    pub name: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub files: Vec<SkillFile>,
+}
+
+/// Work Félagi hands this machine: everything needed to run it.
+#[derive(Clone, Debug, Deserialize)]
+pub struct DaemonTask {
+    /// The run's ULID.
+    pub id: String,
+    pub lease_token: String,
+    pub agent: TaskAgent,
+    #[serde(default)]
+    pub workspace: TaskWorkspace,
+    pub issue: TaskIssue,
+    #[serde(default)]
+    pub skills: Vec<Skill>,
+}
+
+impl DaemonTask {
+    /// The first message to the agent: who it is, its instructions and
+    /// skills, the workspace's context, and the issue.
+    pub fn prompt(&self) -> String {
+        let mut out = format!(
+            "You are {}, an agent in the Félagi workspace {}, working on {} through Elyra Workspace.\n",
+            self.agent.name, self.workspace.slug, self.issue.identifier
+        );
+        if let Some(instructions) = self
+            .agent
+            .instructions
+            .as_deref()
+            .filter(|i| !i.trim().is_empty())
+        {
+            out.push_str(&format!("\n{}\n", instructions.trim()));
+        }
+        if let Some(context) = self
+            .workspace
+            .context
+            .as_deref()
+            .filter(|c| !c.trim().is_empty())
+        {
+            out.push_str(&format!("\nAbout the workspace:\n{}\n", context.trim()));
+        }
+        for skill in &self.skills {
+            out.push_str(&format!(
+                "\nSkill \u{201c}{}\u{201d}:\n{}\n",
+                skill.name,
+                skill.content.trim()
+            ));
+            for file in &skill.files {
+                out.push_str(&format!(
+                    "\n{} ({}):\n{}\n",
+                    skill.name,
+                    file.path,
+                    file.content.trim()
+                ));
+            }
+        }
+        out.push_str(&format!(
+            "\nThe issue, {} {}:\n",
+            self.issue.identifier, self.issue.title
+        ));
+        if let Some(description) = self.issue.description.as_deref().map(html_to_text)
+            && !description.trim().is_empty()
+        {
+            out.push_str(&format!("{}\n", description.trim()));
+        }
+        if !self.issue.acceptance_criteria.is_empty() {
+            out.push_str("\nAcceptance criteria:\n");
+            for criterion in &self.issue.acceptance_criteria {
+                out.push_str(&format!("- {criterion}\n"));
+            }
+        }
+        out.push_str("\nWhen you are done, end with a short summary of what you changed and how you checked it.\n");
+        out
+    }
+}
+
+pub enum Heartbeat {
+    Alive,
+    /// The machine isn't registered (any more): register again.
+    Gone,
+}
+
+/// What a task endpoint said.
+pub enum TaskAnswer {
+    /// Carry on; `true` when Félagi asks for the run to be stopped.
+    Ok { cancel: bool },
+    /// The task isn't this machine's any more (`409`): finished, requeued or
+    /// its lease expired.
+    Lost(String),
+}
+
+/// This machine as one of Félagi's runtimes.
+#[derive(Clone)]
+pub struct Daemon {
+    url: String,
+    token: String,
+    pub id: String,
+}
+
+impl Daemon {
+    pub fn new(url: &str, token: &str, id: &str) -> Self {
+        Self {
+            url: url.trim_end_matches('/').to_string(),
+            token: token.to_string(),
+            id: id.to_string(),
+        }
+    }
+
+    fn post(&self, path: &str, body: &Value, lease: Option<&str>) -> Result<(u16, Value)> {
+        let mut headers = vec![
+            ("X-Felagi-Client-Version", DAEMON_PROTOCOL_VERSION),
+            ("X-Felagi-Client-Capabilities", "streaming,resume,cancel"),
+        ];
+        if let Some(lease) = lease {
+            headers.push(("X-Felagi-Lease", lease));
+        }
+        let (status, value) = call(
+            &self.url,
+            &self.token,
+            "POST",
+            &format!("/api/daemon{path}"),
+            Body::Json(body),
+            &headers,
+        )?;
+        if status == 426 {
+            bail!(
+                "Félagi needs a newer daemon: {}",
+                value["message"].as_str().unwrap_or("426")
+            );
+        }
+        Ok((status, value))
+    }
+
+    fn task(&self, task: &DaemonTask, path: &str, body: Value) -> Result<TaskAnswer> {
+        let (status, value) = self.post(
+            &format!("/tasks/{}{path}", task.id),
+            &body,
+            Some(&task.lease_token),
+        )?;
+        if status == 409 {
+            return Ok(TaskAnswer::Lost(
+                value["message"]
+                    .as_str()
+                    .unwrap_or("the task is no longer this machine's")
+                    .to_string(),
+            ));
+        }
+        let value = check(status, value)?;
+        Ok(TaskAnswer::Ok {
+            cancel: value["cancel_requested"] == true || value["data"]["cancel_requested"] == true,
+        })
+    }
+
+    /// Register this machine with the agents it can run.
+    pub fn register(&self, name: &str, providers: &[&str]) -> Result<()> {
+        let (status, value) = self.post(
+            "/register",
+            &json!({
+                "daemon_id": self.id,
+                "name": name,
+                "version": DAEMON_PROTOCOL_VERSION,
+                "providers": providers,
+                "capabilities": { "os": std::env::consts::OS, "arch": std::env::consts::ARCH, "client": "elyra-workspace" },
+            }),
+            None,
+        )?;
+        check(status, value).map(|_| ())
+    }
+
+    pub fn heartbeat(&self) -> Result<Heartbeat> {
+        let (status, value) = self.post("/heartbeat", &json!({ "daemon_id": self.id }), None)?;
+        if status == 410 {
+            return Ok(Heartbeat::Gone);
+        }
+        check(status, value).map(|_| Heartbeat::Alive)
+    }
+
+    /// The next task for this machine, if any.
+    pub fn claim(&self) -> Result<Option<DaemonTask>> {
+        let (status, value) = self.post("/tasks/claim", &json!({ "daemon_id": self.id }), None)?;
+        if status == 204 {
+            return Ok(None);
+        }
+        let value = check(status, value)?;
+        Ok(Some(serde_json::from_value(value["data"].clone())?))
+    }
+
+    pub fn start(&self, task: &DaemonTask) -> Result<TaskAnswer> {
+        self.task(task, "/start", json!({}))
+    }
+
+    /// Output lines, `{seq, type, content?, tool?, payload?}` each.
+    pub fn messages(&self, task: &DaemonTask, messages: Vec<Value>) -> Result<TaskAnswer> {
+        self.task(task, "/messages", json!({ "messages": messages }))
+    }
+
+    pub fn session(
+        &self,
+        task: &DaemonTask,
+        session_id: &str,
+        work_dir: &str,
+    ) -> Result<TaskAnswer> {
+        self.task(
+            task,
+            "/session",
+            json!({ "session_id": session_id, "work_dir": work_dir }),
+        )
+    }
+
+    pub fn complete(&self, task: &DaemonTask, body: Value) -> Result<TaskAnswer> {
+        self.task(task, "/complete", body)
+    }
+
+    pub fn fail(&self, task: &DaemonTask, error: &str, retryable: bool) -> Result<TaskAnswer> {
+        self.task(
+            task,
+            "/fail",
+            json!({ "error": error, "retryable": retryable }),
+        )
+    }
+
+    pub fn cancel_ack(&self, task: &DaemonTask) -> Result<TaskAnswer> {
+        self.task(task, "/cancel-ack", json!({}))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Issue, format_minutes, html_to_text, parse_duration};
@@ -655,6 +1016,133 @@ mod tests {
         println!(
             "after: status {} spent {:?}",
             after.status, after.spent_minutes
+        );
+    }
+
+    /// The daemon protocol against a Félagi, in two steps (run with
+    /// `--ignored --nocapture`): FELAGI_TEST_STEP=register registers the
+    /// machine; after an agent is pointed at that runtime and a run queued,
+    /// FELAGI_TEST_STEP=run claims it, streams, reports the session and
+    /// completes. FELAGI_TEST_URL, FELAGI_TEST_DAEMON_TOKEN_FILE,
+    /// FELAGI_TEST_DAEMON_ID and FELAGI_TEST_ISSUE (the issue the run is for)
+    /// set the rest.
+    ///
+    /// Use an agent with nothing else queued: the daemon claims whatever the
+    /// runtime's agents have waiting. A claim for any other issue is handed
+    /// straight back (retryable) and the test stops.
+    #[test]
+    #[ignore]
+    fn live_daemon() {
+        let url = std::env::var("FELAGI_TEST_URL").unwrap();
+        let token =
+            std::fs::read_to_string(std::env::var("FELAGI_TEST_DAEMON_TOKEN_FILE").unwrap())
+                .unwrap();
+        let daemon = super::Daemon::new(
+            &url,
+            token.trim(),
+            &std::env::var("FELAGI_TEST_DAEMON_ID").unwrap(),
+        );
+        match std::env::var("FELAGI_TEST_STEP").unwrap().as_str() {
+            "register" => {
+                daemon
+                    .register("elyra-workspace-test", &["claude_code"])
+                    .unwrap();
+                assert!(matches!(
+                    daemon.heartbeat().unwrap(),
+                    super::Heartbeat::Alive
+                ));
+                println!("registered and alive");
+            }
+            "run" => {
+                let expected = std::env::var("FELAGI_TEST_ISSUE").unwrap();
+                let task = daemon.claim().unwrap().expect("a task to claim");
+                if task.issue.identifier != expected {
+                    let _ = daemon.fail(&task, "Claimed by a test by mistake; handed back.", true);
+                    panic!(
+                        "claimed {} instead of {expected}; handed it back",
+                        task.issue.identifier
+                    );
+                }
+                println!(
+                    "claimed {} for {} on {}: {:?}",
+                    task.id, task.agent.name, task.issue.identifier, task.workspace.repositories
+                );
+                println!(
+                    "prompt starts: {}",
+                    task.prompt().lines().next().unwrap_or("")
+                );
+                assert!(matches!(
+                    daemon.start(&task).unwrap(),
+                    super::TaskAnswer::Ok { cancel: false }
+                ));
+                let answer = daemon
+                    .messages(&task, vec![
+                        json!({ "seq": 1, "type": "assistant", "content": "Reading the issue." }),
+                        json!({ "seq": 2, "type": "tool_use", "tool": "Bash", "payload": { "command": "cargo test" } }),
+                    ])
+                    .unwrap();
+                assert!(matches!(answer, super::TaskAnswer::Ok { cancel: false }));
+                daemon
+                    .session(&task, "sess_elyra_test", "/tmp/elyra-test")
+                    .unwrap();
+                daemon
+                    .complete(
+                        &task,
+                        json!({
+                            "result": {
+                                "summary": "Elyra Workspace integration test: nothing was changed.",
+                                "artifacts": [{ "type": "branch", "reference": "elyra/test" }],
+                                "usage": { "cost_micros": 1234 }
+                            },
+                            "session_id": "sess_elyra_test",
+                            "work_dir": "/tmp/elyra-test",
+                        }),
+                    )
+                    .unwrap();
+                println!("completed");
+            }
+            other => panic!("unknown step {other}"),
+        }
+    }
+
+    #[test]
+    fn matches_repositories_however_they_are_written() {
+        use super::repository_key;
+        let key = repository_key("git@github.com:Acme/App.git");
+        assert_eq!(key, "github.com/acme/app");
+        assert_eq!(repository_key("https://github.com/acme/app"), key);
+        assert_eq!(
+            repository_key("https://token@github.com/acme/app.git/"),
+            key
+        );
+        assert_eq!(repository_key("ssh://git@github.com/acme/app.git"), key);
+        assert_ne!(repository_key("git@github.com:acme/api.git"), key);
+    }
+
+    #[test]
+    fn writes_a_task_as_a_prompt() {
+        let task: super::DaemonTask = serde_json::from_value(json!({
+            "id": "01kyt", "lease_token": "9f3c",
+            "agent": {"name": "Freya", "provider": "claude_code", "instructions": "Write tests first."},
+            "workspace": {"slug": "acme", "context": "Laravel 13.", "repositories": ["git@github.com:acme/app.git"]},
+            "issue": {"identifier": "ACM-42", "title": "Fix totals", "description": "<p>Totals are off.</p>",
+                      "acceptance_criteria": ["Totals add up"]},
+            "skills": [{"name": "deploy", "content": "Run the checklist.", "files": [{"path": "a.md", "content": "Step 1"}]}]
+        }))
+        .unwrap();
+        let prompt = task.prompt();
+        assert!(prompt.starts_with(
+            "You are Freya, an agent in the Félagi workspace acme, working on ACM-42"
+        ));
+        assert!(prompt.contains("Write tests first."));
+        assert!(prompt.contains("About the workspace:\nLaravel 13."));
+        assert!(prompt.contains("Skill \u{201c}deploy\u{201d}:\nRun the checklist."));
+        assert!(prompt.contains("deploy (a.md):\nStep 1"));
+        assert!(prompt.contains("The issue, ACM-42 Fix totals:\nTotals are off."));
+        assert!(prompt.contains("Acceptance criteria:\n- Totals add up"));
+        assert_eq!(
+            super::provider_kind("claude_code"),
+            Some(elyra_core::ProviderKind::Claude)
         );
     }
 

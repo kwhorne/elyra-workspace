@@ -137,6 +137,39 @@ explanation (the request, its SQL and mail, the stack trace) as its description.
 A thread that isn't working on an issue yet is linked to the new one, so you can
 fix it there and report back.
 
+### Running Félagi's agents on this Mac
+
+Félagi's agents (Freya, Bragi …) normally run through Félagi's own daemon. Elyra
+Workspace can be that runtime instead: work Félagi gives an agent then runs as a
+thread here, where you can watch it, answer its questions and step in.
+
+1. In Félagi, **Admin → Runtimes → Connect a machine** gives a daemon token
+   (`fdt_…`).
+2. In Elyra Workspace, **Settings → Félagi → Run Félagi's agents on this Mac**:
+   set the **daemon token** (kept in the Keychain), give the Mac a unique
+   **machine name** (such as `kh-macbook`; blank uses the computer's name), and
+   turn on **Run agents here**.
+3. The Mac appears among Félagi's runtimes, once per agent kind it can run
+   (Claude Code, Codex, Elyra). In Félagi, choose it as the runtime of the agents
+   that should work here.
+
+When Félagi hands such an agent a run, Elyra Workspace:
+
+- finds the project whose Git remote is one of the repositories the run names
+  (refusing the run if none is open here), and starts a thread there in its own
+  worktree (with its own [Grove](git-and-review.md#worktrees-with-their-own-running-app)
+  site when Grove runs the app), named after the agent and the issue
+- gives the agent its instructions, skills, the workspace's context and the issue
+- sends what the agent does to Félagi as it happens (its replies, tool calls and
+  your own messages), which also keeps the run's lease
+- reports the result when the agent's turn ends: its last reply as the summary,
+  the branch and any pull request as deliveries, and the cost; or a failure
+
+A cancel from Félagi stops the turn. Quitting Elyra Workspace hands running work
+back so Félagi can give it to another runtime. One run at a time per Mac.
+**Settings → Félagi → Status** shows what the runtime is doing, and warns when
+Félagi's own daemon runs on the same Mac (they would compete for the same work).
+
 ### Today's work
 
 **Today's work** in the command palette (⌘K) shows the day at a glance:

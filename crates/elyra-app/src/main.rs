@@ -16,6 +16,7 @@ mod export;
 mod felagi;
 mod felagi_board;
 mod felagi_report;
+mod felagi_runtime;
 mod files_view;
 mod gateway;
 mod grove;
@@ -93,6 +94,7 @@ fn main() {
             let app = cx.new(|_| state);
             preferences::init(&app, cx);
             gateway::init(app.clone(), cx);
+            felagi_runtime::init(app.clone(), cx);
             // Learn Grove's sites early, so agents can be given its tools.
             cx.background_executor()
                 .spawn(async { grove::sites() })
@@ -119,6 +121,7 @@ fn main() {
             cx.on_action(|_: &actions::OpenDocumentation, cx| cx.open_url(DOCS_URL));
             let shutdown_app = app.clone();
             cx.on_app_quit(move |cx| {
+                felagi_runtime::hand_back(cx);
                 shutdown_app.update(cx, |app, cx| app.prepare_quit(cx));
                 updater::on_quit(cx);
                 async {}

@@ -74,6 +74,15 @@ workspace the task board's Félagi tab and thread reports talk to, and as whom.
 **Connect…** asks for the address and a personal token (kept in the macOS
 Keychain); **Disconnect** removes it.
 
+**Run Félagi's agents on this Mac** ([how it works](automations-and-tasks.md#running-félagis-agents-on-this-mac)):
+
+| Setting | Meaning |
+| --- | --- |
+| Run agents here | Claim and run the work Félagi gives agents whose runtime is this Mac. Off by default. |
+| Machine name | How this Mac is listed among Félagi's runtimes; make it unique. Blank uses the computer's name. |
+| Daemon token | The `fdt_…` token from Félagi → Admin → Runtimes, kept in the Keychain. |
+| Status | What the runtime is doing, and the last problem. |
+
 ## Settings that follow your use
 
 Some defaults aren't on a settings page; Elyra takes them from what you do:

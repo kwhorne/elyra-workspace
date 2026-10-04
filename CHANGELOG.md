@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Elyra Workspace as a Félagi runtime.** Turn on Settings → Félagi → Run
+  Félagi's agents on this Mac (with a daemon token and a unique machine name),
+  choose the Mac as an agent's runtime in Félagi, and the work Félagi gives that
+  agent runs here as a thread in the matching project and its own worktree. You
+  can watch and step in; what the agent does is streamed to Félagi, and the
+  result (summary, branch, pull request, cost) is reported when its turn ends.
+
 ## 0.8.0
 
 Grove, Workspace and Félagi, closer together:

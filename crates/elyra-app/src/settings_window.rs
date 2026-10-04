@@ -531,6 +531,146 @@ fn felagi_page() -> SettingPage {
                 SettingField::render(|_, _, cx| render_felagi_connection(cx)),
             )),
     )
+    .group(
+        SettingGroup::new()
+            .title("Run Félagi's agents on this Mac")
+            .description(
+                "Elyra Workspace becomes one of Félagi's runtimes: work Félagi gives an agent is claimed here and runs as a thread in the project whose repository it names, where you can watch it and step in. What the agent does is sent to Félagi as it happens, and the result when its turn ends. Needs a daemon token (Félagi → Admin → Runtimes → Connect a machine).",
+            )
+            .item(SettingItem::new(
+                "Run agents here",
+                switch(|p| p.felagi_runtime, |p, v| p.felagi_runtime = v).default_value(false),
+            ))
+            .item(
+                SettingItem::new(
+                    "Machine name",
+                    SettingField::input(
+                        |cx| Preferences::global(cx).felagi_runtime_name.clone().into(),
+                        |value, cx| {
+                            preferences::update(cx, |prefs| {
+                                prefs.felagi_runtime_name = value.trim().to_string()
+                            })
+                        },
+                    )
+                    .default_value(SharedString::default()),
+                )
+                .description("How this Mac is listed among Félagi's runtimes. Make it unique, such as kh-macbook. Blank uses the computer's name."),
+            )
+            .item(SettingItem::new(
+                "Daemon token",
+                SettingField::render(|_, _, cx| render_felagi_daemon_token(cx)),
+            ))
+            .item(SettingItem::new(
+                "Status",
+                SettingField::render(|_, _, cx| {
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(crate::felagi_runtime::status(cx))
+                        .into_any_element()
+                }),
+            )),
+    )
+}
+
+fn render_felagi_daemon_token(cx: &mut App) -> AnyElement {
+    let Some(app) = preferences::app_state(cx) else {
+        return div().into_any_element();
+    };
+    let Some(connection) = crate::felagi::connection(&app.read(cx).store) else {
+        return div()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child("Connect Félagi above first.")
+            .into_any_element();
+    };
+    let has_token = crate::felagi::daemon_token(&connection.url).is_some();
+    let url = connection.url.clone();
+    h_flex()
+        .gap_2()
+        .text_sm()
+        .child(
+            div()
+                .flex_1()
+                .text_color(cx.theme().muted_foreground)
+                .child(if has_token {
+                    "Kept in the Keychain"
+                } else {
+                    "Not set"
+                }),
+        )
+        .child(
+            Button::new("felagi-daemon-token")
+                .xsmall()
+                .outline()
+                .label(if has_token { "Replace…" } else { "Set…" })
+                .on_click(move |_, window, cx| felagi_daemon_token_dialog(url.clone(), window, cx)),
+        )
+        .when(has_token, |this| {
+            let url = connection.url.clone();
+            this.child(
+                Button::new("felagi-daemon-forget")
+                    .xsmall()
+                    .ghost()
+                    .label("Remove")
+                    .on_click(move |_, window, _| {
+                        crate::felagi::forget_daemon_token(&url);
+                        window.refresh();
+                    }),
+            )
+        })
+        .into_any_element()
+}
+
+fn felagi_daemon_token_dialog(url: String, window: &mut Window, cx: &mut App) {
+    use gpui_kit::component::WindowExt as _;
+    use gpui_kit::component::input::{Input, InputState};
+    let token = cx.new(|cx| InputState::new(window, cx).placeholder("fdt_…"));
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let (token, url) = (token.clone(), url.clone());
+        dialog
+            .title("Félagi daemon token")
+            .w(px(520.))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Input::new(&token).mask_toggle())
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("In Félagi: Admin → Runtimes → Connect a machine. It starts with fdt_ and is kept in the macOS Keychain."),
+                    ),
+            )
+            .footer(
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("felagi-daemon-cancel")
+                            .small()
+                            .label("Cancel")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("felagi-daemon-save")
+                            .small()
+                            .primary()
+                            .label("Save")
+                            .on_click(move |_, window, cx| {
+                                let secret = token.read(cx).value().trim().to_string();
+                                if secret.is_empty() {
+                                    return;
+                                }
+                                if let Err(err) = crate::felagi::save_daemon_token(&url, &secret) {
+                                    log::warn!("{err:#}");
+                                }
+                                window.close_dialog(cx);
+                                window.refresh();
+                            }),
+                    ),
+            )
+    });
 }
 
 fn render_felagi_connection(cx: &mut App) -> AnyElement {
