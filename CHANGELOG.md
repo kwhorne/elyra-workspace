@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
 - **Conventional Commits.** Generated commit messages and pull request titles
   follow `type(scope): summary`, such as
