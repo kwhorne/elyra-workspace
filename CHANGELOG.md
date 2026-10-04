@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 Working with [Elyra Grove](https://github.com/kwhorne/grove), the local
 development environment:
