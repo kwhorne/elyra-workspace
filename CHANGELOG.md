@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - **Point at an element.** The target button in the Browser tab lets you click
   something on the page; your message gets a picture of it and its selector,
