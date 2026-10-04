@@ -41,7 +41,8 @@ pub struct SessionConfig {
 }
 
 /// An MCP server reachable over HTTP, with a stdio bridge command for
-/// agents that only launch local servers.
+/// agents that only launch local servers; or, with `stdio` set, a local
+/// server the agent starts itself (such as `grove mcp`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct McpServer {
     pub name: String,
@@ -49,6 +50,21 @@ pub struct McpServer {
     pub token: String,
     /// Command that relays stdio to `url` (e.g. `elyra mcp-bridge …`).
     pub bridge: Option<(PathBuf, Vec<String>)>,
+    /// A server spoken to over the command's stdio; `url` and `token` unused.
+    pub stdio: Option<(PathBuf, Vec<String>)>,
+}
+
+impl McpServer {
+    /// A server the agent starts as `command args…` and talks to over stdio.
+    pub fn stdio(name: &str, command: PathBuf, args: Vec<String>) -> Self {
+        Self {
+            name: name.into(),
+            url: String::new(),
+            token: String::new(),
+            bridge: None,
+            stdio: Some((command, args)),
+        }
+    }
 }
 
 /// What a provider supports, so the UI only offers what works.

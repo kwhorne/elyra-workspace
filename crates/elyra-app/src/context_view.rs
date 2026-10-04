@@ -8,7 +8,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::path::{Path, PathBuf};
@@ -119,6 +119,8 @@ pub struct ContextView {
     budget: Entity<InputState>,
     servers: Vec<Server>,
     scanning: bool,
+    /// The project's app in Grove, with its dev processes and caught mail.
+    grove: Option<GroveInfo>,
     _save_notes: Option<Task<()>>,
     _save_instructions: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -193,6 +195,7 @@ impl ContextView {
             budget,
             servers: Vec::new(),
             scanning: false,
+            grove: None,
             _save_notes: None,
             _save_instructions: None,
             _subscriptions: subscriptions,
@@ -225,13 +228,20 @@ impl ContextView {
         }
         self.scanning = true;
         let root = self.session.read(cx).working_dir();
-        let job = cx
-            .background_executor()
-            .spawn(async move { local_servers(&root) });
+        let project = self.session.read(cx).project.path.clone();
+        let job = cx.background_executor().spawn(async move {
+            let grove = crate::grove::app_for(&project).map(|site| GroveInfo {
+                dev: crate::grove::dev_running(&site.name),
+                mail: crate::grove::mail_count(),
+                site,
+            });
+            (local_servers(&root), grove)
+        });
         cx.spawn(async move |this, cx| {
-            let servers = job.await;
+            let (servers, grove) = job.await;
             let _ = this.update(cx, |this, cx| {
                 this.servers = servers;
+                this.grove = grove;
                 this.scanning = false;
                 cx.notify();
             });
@@ -327,6 +337,100 @@ impl ContextView {
                     }),
             )
             .into_any_element()
+    }
+
+    fn toggle_grove_dev(&mut self, cx: &mut Context<Self>) {
+        let Some(info) = self.grove.clone() else {
+            return;
+        };
+        self.scanning = true;
+        cx.notify();
+        let job = cx
+            .background_executor()
+            .spawn(async move { crate::grove::set_dev(&info.site.name, !info.dev) });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Err(err) = result {
+                    log::warn!("grove dev: {err:#}");
+                }
+                this.scanning = false;
+                this.scan_servers(cx);
+            });
+        })
+        .detach();
+    }
+
+    fn render_grove(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let info = self.grove.as_ref()?;
+        let url = info.site.url();
+        let open = url.clone();
+        Some(
+            v_flex()
+                .gap_1()
+                .p_2()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().border)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .text_sm()
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Grove"))
+                        .child(
+                            div()
+                                .id("grove-url")
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_color(cx.theme().link)
+                                .cursor_pointer()
+                                .child(url.trim_end_matches('/').to_string())
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(ContextEvent::OpenUrl(open.clone()))
+                                })),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(info.site.driver.clone()),
+                        ),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(div().flex_1().child(if info.dev {
+                            "Dev processes running (Vite, queue…)"
+                        } else {
+                            "Dev processes stopped"
+                        }))
+                        .child(
+                            Button::new("grove-dev")
+                                .xsmall()
+                                .outline()
+                                .label(if info.dev { "Stop" } else { "Start" })
+                                .disabled(self.scanning)
+                                .on_click(cx.listener(|this, _, _, cx| this.toggle_grove_dev(cx))),
+                        ),
+                )
+                .when(info.mail > 0, |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "{} mail{} caught by Grove (grove mail)",
+                                info.mail,
+                                if info.mail == 1 { "" } else { "s" }
+                            )),
+                    )
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_goal(&self, cx: &Context<Self>) -> AnyElement {
@@ -615,7 +719,8 @@ impl Render for ContextView {
                                         .on_click(cx.listener(|this, _, _, cx| this.scan_servers(cx))),
                                 ),
                             )
-                            .when(self.servers.is_empty() && !self.scanning, |this| {
+                            .children(self.render_grove(cx))
+                            .when(self.servers.is_empty() && self.grove.is_none() && !self.scanning, |this| {
                                 this.child(
                                     div()
                                         .text_sm()
@@ -627,6 +732,14 @@ impl Render for ContextView {
                     ),
             )
     }
+}
+
+/// The project's app in Grove.
+#[derive(Clone)]
+struct GroveInfo {
+    site: crate::grove::Site,
+    dev: bool,
+    mail: usize,
 }
 
 #[cfg(test)]

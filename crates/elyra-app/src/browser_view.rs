@@ -143,6 +143,8 @@ pub struct BrowserView {
     state: PageState,
     cwd: PathBuf,
     servers: Vec<Server>,
+    /// The app Grove serves for this folder.
+    grove: Option<crate::grove::Site>,
     /// The tab is on screen (set by the workspace on every render).
     shown: bool,
     /// The workspace draws something over the page (palette, About).
@@ -285,6 +287,7 @@ impl BrowserView {
             state: PageState::default(),
             cwd,
             servers: Vec::new(),
+            grove: None,
             shown: false,
             covered: false,
             errors: Vec::new(),
@@ -309,11 +312,12 @@ impl BrowserView {
         let root = self.cwd.clone();
         let job = cx
             .background_executor()
-            .spawn(async move { local_servers(&root) });
+            .spawn(async move { (local_servers(&root), crate::grove::app_for(&root)) });
         cx.spawn(async move |this, cx| {
-            let servers = job.await;
+            let (servers, grove) = job.await;
             let _ = this.update(cx, |this, cx| {
                 this.servers = servers;
+                this.grove = grove;
                 cx.notify();
             });
         })
@@ -681,8 +685,18 @@ impl BrowserView {
                     .text_center()
                     .child("Open the app you're working on: type an address above, or pick a server running in this folder."),
             )
+            .children(self.grove.as_ref().map(|site| {
+                let url = site.url();
+                let open = url.clone();
+                Button::new("browser-grove")
+                    .small()
+                    .primary()
+                    .icon(IconName::Globe)
+                    .label(format!("{}  ·  Grove", url.trim_end_matches('/')))
+                    .on_click(cx.listener(move |this, _, window, cx| this.open(&open, window, cx)))
+            }))
             .children(servers)
-            .when(self.servers.is_empty(), |this| {
+            .when(self.servers.is_empty() && self.grove.is_none(), |this| {
                 this.child(
                     div()
                         .text_xs()

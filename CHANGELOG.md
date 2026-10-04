@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+Working with [Elyra Grove](https://github.com/kwhorne/grove), the local
+development environment:
+
+- **Server errors in the error chip.** Requests Grove records with a 5xx status
+  for the project's app show up next to browser errors; *Add to message*
+  attaches Grove's explanation: the request, its SQL and mail, and the stack
+  trace from the error log.
+- **Grove's tools for agents.** In projects Grove runs as an app, agents get
+  Grove's MCP server (read-only) next to the agent gateway, so they can look up
+  recent requests, logs and the database schema themselves. Turn it off in
+  Settings → Agents & MCP.
+- **Grove in the Context tab.** The app's `.test` address, its `grove dev`
+  processes with Start and Stop, and caught mail; the Browser tab's start page
+  offers the address too.
+- MCP servers given to agents can now be local commands as well as HTTP servers.
+
+Also new:
+
+- **Material theme**, after [Material Theme for VS Code](https://marketplace.visualstudio.com/items?itemName=vihuvac.material-theme-for-vscode):
+  blue-grey surfaces, the Material colours and a teal accent. Settings →
+  Appearance.
+
 ## 0.4.0
 
 - **Point at an element.** The target button in the Browser tab lets you click

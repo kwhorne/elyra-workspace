@@ -58,6 +58,8 @@ pub struct Preferences {
     /// Commit messages and pull request titles in Conventional Commits form,
     /// `type(scope): summary`.
     pub conventional_titles: bool,
+    /// Give agents in Grove sites Grove's MCP tools (read-only).
+    pub grove_mcp: bool,
 }
 
 /// How to launch one provider.
@@ -171,6 +173,7 @@ impl Default for Preferences {
             agent_gateway: false,
             goal_max_turns: 10,
             conventional_titles: true,
+            grove_mcp: true,
         }
     }
 }

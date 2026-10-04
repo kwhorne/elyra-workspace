@@ -546,6 +546,15 @@ fn external_page() -> SettingPage {
                 ))
                 .item(
                     SettingItem::new(
+                        "Grove tools for agents",
+                        switch(|p| p.grove_mcp, |p, v| p.grove_mcp = v).default_value(true),
+                    )
+                    .description(
+                        "In projects Elyra Grove runs as an app, agents also get Grove's MCP server, read-only: its sites, recent requests, request chains and explain bundles, logs and database schema. Applies to agents started afterwards.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
                         "Agents changing other threads",
                         SettingField::render(|_, _, cx| render_thread_pairs(cx)),
                     )

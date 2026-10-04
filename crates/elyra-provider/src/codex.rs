@@ -176,8 +176,24 @@ impl CodexSession {
         let mut env = config.env.clone();
         // MCP servers (the agent gateway) go in as config overrides; the
         // token travels in the environment, not on the command line.
-        if let Some(server) = config.mcp_servers.first() {
+        for server in &config.mcp_servers {
             let name = &server.name;
+            if let Some((command, command_args)) = &server.stdio {
+                args.extend([
+                    "-c".into(),
+                    format!(
+                        "mcp_servers.{name}.command={:?}",
+                        command.display().to_string()
+                    ),
+                    "-c".into(),
+                    format!(
+                        "mcp_servers.{name}.args={}",
+                        serde_json::to_string(command_args).unwrap_or_else(|_| "[]".into())
+                    ),
+                ]);
+                continue;
+            }
+            // Only the gateway is an HTTP server, so one token variable will do.
             args.extend([
                 "-c".into(),
                 format!("mcp_servers.{name}.url={:?}", server.url),
@@ -1040,6 +1056,7 @@ mod tests {
             fork: false,
             append_system_prompt: Some("Be brief.".into()),
             mcp_servers: vec![crate::McpServer {
+                stdio: None,
                 name: "elyra".into(),
                 url: "http://127.0.0.1:1/mcp".into(),
                 token: "secret".into(),

@@ -116,14 +116,19 @@ impl ClaudeSession {
                 .mcp_servers
                 .iter()
                 .map(|server| {
-                    (
-                        server.name.clone(),
-                        json!({
+                    let entry = match &server.stdio {
+                        Some((command, args)) => json!({
+                            "type": "stdio",
+                            "command": command.display().to_string(),
+                            "args": args,
+                        }),
+                        None => json!({
                             "type": "http",
                             "url": server.url,
                             "headers": { "Authorization": format!("Bearer {}", server.token) }
                         }),
-                    )
+                    };
+                    (server.name.clone(), entry)
                 })
                 .collect();
             args.extend([

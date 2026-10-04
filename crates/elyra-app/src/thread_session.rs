@@ -8,7 +8,7 @@ use elyra_provider::{
     AgentSession, ModelOption, PermissionResponse, Prompt, ProviderEvent, SessionConfig,
     SlashCommand, Usage,
 };
-use gpui_kit::{Context, EventEmitter, Task, WeakEntity};
+use gpui_kit::{App, Context, EventEmitter, Task, WeakEntity};
 use std::collections::HashMap;
 
 pub enum SessionEvent {
@@ -446,6 +446,7 @@ impl ThreadSession {
             append_system_prompt: self.system_prompt(),
             mcp_servers: crate::gateway::server_for_thread(self.thread.id, cx)
                 .into_iter()
+                .chain(self.grove_mcp(cx))
                 .collect(),
         };
         let (session, events) = elyra_provider::start_session(self.thread.provider, config)?;
@@ -461,6 +462,21 @@ impl ThreadSession {
             }
         }));
         Ok(())
+    }
+
+    /// Grove's own MCP server (read-only) for projects Grove runs as an app.
+    fn grove_mcp(&self, cx: &App) -> Option<elyra_provider::McpServer> {
+        if !crate::preferences::Preferences::global(cx).grove_mcp {
+            return None;
+        }
+        crate::grove::site_for(&crate::grove::cached_sites(), &self.project.path)
+            .filter(crate::grove::Site::is_app)?;
+        let grove = crate::grove::executable()?;
+        Some(elyra_provider::McpServer::stdio(
+            "grove",
+            grove,
+            vec!["mcp".into()],
+        ))
     }
 
     /// Start the provider early so commands and models are known before the

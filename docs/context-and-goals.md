@@ -68,3 +68,18 @@ Development servers running from the thread's folder, for example `npm run dev`
 in the terminal or a server the agent started. Each one is listed with its port
 and process. Click the address to open it in the thread's [browser](browser.md),
 or press the refresh button to look again.
+
+### Grove
+
+When [Elyra Grove](https://github.com/kwhorne/grove) runs the project as an app
+(Laravel, PHP or a proxied dev server, not a folder it only parks), a **Grove**
+box shows:
+
+- its address, such as `https://shop.test`, which opens in the thread's browser
+  (the browser's start page offers it too)
+- whether `grove dev` runs the app's dev processes (Vite, queue worker…), with
+  **Start** / **Stop**
+- how many mails Grove has caught, when there are any
+
+Elyra asks the `grove` command line, from your `PATH` or `~/.grove/bin`. Without
+Grove nothing changes.

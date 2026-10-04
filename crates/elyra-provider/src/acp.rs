@@ -111,6 +111,14 @@ impl State {
             self.mcp_servers
                 .iter()
                 .filter_map(|server| {
+                    if let Some((command, args)) = &server.stdio {
+                        return Some(json!({
+                            "name": server.name,
+                            "command": command.display().to_string(),
+                            "args": args,
+                            "env": []
+                        }));
+                    }
                     if self.mcp_http {
                         return Some(json!({
                             "type": "http",

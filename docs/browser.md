@@ -53,6 +53,13 @@ error status. When new ones appear, a chip above the message box says so:
   so you don't have to copy them from the console.
 - **×** dismisses them. Either way they aren't offered again.
 
+When [Elyra Grove](context-and-goals.md#grove) runs the project as an app, the
+chip also counts **server errors**: requests Grove recorded with a 5xx status
+since the thread was opened, from any browser. **Add to message** attaches
+Grove's explanation of each (up to three): the request and its body, the SQL it
+ran and the mail it sent, and the error log with its stack trace. The page in the
+Browser tab doesn't have to be open for these.
+
 ## Pictures before and after a turn
 
 When the Browser tab shows a local page while you send a message, Elyra keeps a

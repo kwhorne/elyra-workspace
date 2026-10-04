@@ -35,6 +35,12 @@ struct FindState {
     current: usize,
 }
 
+/// How often to ask Grove for new server errors in the project's app.
+const SERVER_ERROR_CHECK: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// At most this many server errors are explained in one message.
+const MAX_SERVER_ERRORS: usize = 3;
+
 /// The conversation surface for one thread: transcript plus composer.
 pub struct ThreadView {
     pub session: Entity<ThreadSession>,
@@ -55,6 +61,12 @@ pub struct ThreadView {
     warmed_up: bool,
     /// The thread's browser, for the chip that offers its new errors.
     browser: Option<Entity<crate::browser_view::BrowserView>>,
+    /// Server errors (5xx) Grove recorded for the project's app since the
+    /// thread was opened, not yet added to a message or dismissed.
+    server_errors: Vec<crate::grove::Request>,
+    /// The newest Grove request id already looked at.
+    server_seen: Option<u64>,
+    _grove_watch: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -104,6 +116,28 @@ impl ThreadView {
             }),
         ];
         let is_git_repo = elyra_git::is_repo(&session.read(cx).project.path);
+        let project = session.read(cx).project.path.clone();
+        let grove_watch = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(SERVER_ERROR_CHECK).await;
+                let project = project.clone();
+                let requests = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let site = crate::grove::app_for(&project)?;
+                        crate::grove::requests(&site.name, 30).ok()
+                    })
+                    .await;
+                let alive = this.update(cx, |this, cx| {
+                    if let Some(requests) = requests {
+                        this.saw_requests(requests, cx);
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        });
         let scroll = ScrollHandle::new();
         scroll.scroll_to_bottom();
         Self {
@@ -121,6 +155,9 @@ impl ThreadView {
             follow: true,
             is_git_repo,
             browser: None,
+            server_errors: Vec::new(),
+            server_seen: None,
+            _grove_watch: grove_watch,
             warmed_up: false,
             _subscriptions: subscriptions,
         }
@@ -1271,20 +1308,78 @@ impl ThreadView {
         cx.notify();
     }
 
+    /// New server errors among Grove's latest requests for the app.
+    fn saw_requests(&mut self, requests: Vec<crate::grove::Request>, cx: &mut Context<Self>) {
+        let (seen, fresh) = crate::grove::new_server_errors(self.server_seen, requests);
+        self.server_seen = Some(seen);
+        if !fresh.is_empty() {
+            self.server_errors.extend(fresh);
+            cx.notify();
+        }
+    }
+
     fn add_browser_errors(&mut self, cx: &mut Context<Self>) {
-        let Some(browser) = self.browser.clone() else {
-            return;
-        };
-        if let Some((title, content)) = browser.update(cx, |browser, cx| browser.take_errors(cx)) {
+        if let Some(browser) = self.browser.clone()
+            && let Some((title, content)) =
+                browser.update(cx, |browser, cx| browser.take_errors(cx))
+        {
             self.attachments
                 .push(Attachment::Context { title, content });
+        }
+        // Server errors come with Grove's explanation: the request, its SQL
+        // and mail, and the error log.
+        let errors: Vec<_> = std::mem::take(&mut self.server_errors)
+            .into_iter()
+            .rev()
+            .take(MAX_SERVER_ERRORS)
+            .collect();
+        if !errors.is_empty() {
+            let job = cx.background_executor().spawn(async move {
+                errors
+                    .into_iter()
+                    .map(|error| {
+                        let content = crate::grove::explain(error.id)
+                            .unwrap_or_else(|err| format!("{}\n({err:#})", error.line()));
+                        (
+                            format!("Server error {} (Grove request {})", error.line(), error.id),
+                            content,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            });
+            cx.spawn(async move |this, cx| {
+                let explained = job.await;
+                let _ = this.update(cx, |this, cx| {
+                    for (title, content) in explained {
+                        this.attachments
+                            .push(Attachment::Context { title, content });
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
         }
         cx.notify();
     }
 
     fn render_page_errors(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let count = self.browser.as_ref()?.read(cx).new_errors().len();
-        if count == 0 {
+        let count = self
+            .browser
+            .as_ref()
+            .map_or(0, |browser| browser.read(cx).new_errors().len());
+        let mut parts = Vec::new();
+        if count > 0 {
+            parts.push(format!(
+                "{count} new error{} in the browser",
+                if count == 1 { "" } else { "s" }
+            ));
+        }
+        match self.server_errors.as_slice() {
+            [] => {}
+            [one] => parts.push(format!("server error: {}", one.line())),
+            many => parts.push(format!("{} server errors", many.len())),
+        }
+        if parts.is_empty() {
             return None;
         }
         Some(
@@ -1302,10 +1397,7 @@ impl ThreadView {
                         .xsmall()
                         .text_color(cx.theme().danger),
                 )
-                .child(div().flex_1().child(format!(
-                    "{count} new error{} in the browser",
-                    if count == 1 { "" } else { "s" }
-                )))
+                .child(div().flex_1().child(parts.join(" · ")))
                 .child(
                     Button::new("add-browser-errors")
                         .xsmall()
@@ -1323,6 +1415,8 @@ impl ThreadView {
                             if let Some(browser) = &this.browser {
                                 browser.update(cx, |browser, cx| browser.dismiss_errors(cx));
                             }
+                            this.server_errors.clear();
+                            cx.notify();
                         })),
                 )
                 .into_any_element(),

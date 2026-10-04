@@ -14,6 +14,7 @@ mod editors;
 mod export;
 mod files_view;
 mod gateway;
+mod grove;
 mod lifecycle;
 mod onboarding;
 mod palette;
@@ -88,6 +89,10 @@ fn main() {
             let app = cx.new(|_| state);
             preferences::init(&app, cx);
             gateway::init(app.clone(), cx);
+            // Learn Grove's sites early, so agents can be given its tools.
+            cx.background_executor()
+                .spawn(async { grove::sites() })
+                .detach();
             automations::init(app.clone(), cx);
             cx.set_menus(menus());
 

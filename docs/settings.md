@@ -17,7 +17,7 @@ that restores its defaults.
 
 | Setting | Meaning |
 | --- | --- |
-| Color theme | Default Dark, Default Light, Tokyo Night, Palenight, Dracula, Nord, plus your custom themes. The terminal colors follow the theme. |
+| Color theme | Default Dark, Default Light, Tokyo Night, Palenight, Material, Dracula, Nord, plus your custom themes. The terminal colors follow the theme. |
 | Follow system appearance | Switch between the light and dark theme below when macOS switches. |
 | Light theme / Dark theme | The themes used for light and dark. ⇧⌘T switches between them by hand, which turns *Follow system appearance* off. |
 | Custom themes | **Open folder** opens `~/.elyra/themes`. Theme files there (gpui-component theme JSON) are loaded at startup. |
@@ -60,6 +60,7 @@ arguments (ACP agents), environment and accounts. See [Providers](providers.md).
 | --- | --- |
 | Let agents manage threads | Gives Claude Code, Codex, Elyra and ACP agents tools to list, read, create and steer threads and to look at local pages in the browser ([Agent gateway](agent-gateway.md)). Off by default. |
 | Server | The address of Elyra's local MCP server |
+| Grove tools for agents | In projects [Elyra Grove](context-and-goals.md#grove) runs as an app, agents also get Grove's MCP server, read-only: sites, recent requests, request chains and explanations, logs and database schema. On by default. |
 | Automatic turns per goal | How many turns a [goal](context-and-goals.md#goal) may take on its own before it pauses (default 10) |
 | External clients | Pair, configure and revoke Claude Desktop, Codex and other MCP clients |
 | Activity | The audit log of gateway calls |
