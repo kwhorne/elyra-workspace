@@ -95,6 +95,37 @@ const THEMES: &[ThemeDef] = &[
             ],
         ),
     },
+    // Material Theme for VS Code (vihuvac, MIT): the editor, sidebar, tab and
+    // selection colours are the theme's own; borders, muted text and the
+    // teal accent follow the Material palette.
+    ThemeDef {
+        name: "Material",
+        dark: true,
+        background: "#263238",
+        chrome: "#1e272c",
+        surface: "#2e3c43",
+        surface_hover: "#314549",
+        border: "#2a373e",
+        foreground: "#eeffff",
+        muted_foreground: "#8b9ea8",
+        accent: "#80cbc4",
+        accent_foreground: "#1e272c",
+        selection: "#3d5059",
+        red: "#ff5370",
+        green: "#c3e88d",
+        yellow: "#ffcb6b",
+        blue: "#82aaff",
+        magenta: "#c792ea",
+        cyan: "#89ddff",
+        terminal: Palette::new(
+            0xeeffff,
+            0x263238,
+            [
+                0x1e272c, 0xff5370, 0xc3e88d, 0xffcb6b, 0x82aaff, 0xc792ea, 0x89ddff, 0xeeffff,
+                0x546e7a, 0xff5370, 0xc3e88d, 0xffcb6b, 0x82aaff, 0xc792ea, 0x89ddff, 0xffffff,
+            ],
+        ),
+    },
     ThemeDef {
         name: "Dracula",
         dark: true,
