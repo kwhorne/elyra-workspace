@@ -16,7 +16,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, WindowExt as _, 
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-fn parse_color(hex: &str) -> Option<Hsla> {
+pub(crate) fn parse_color(hex: &str) -> Option<Hsla> {
     let value = u32::from_str_radix(hex.strip_prefix('#')?, 16).ok()?;
     Some(rgb(value).into())
 }

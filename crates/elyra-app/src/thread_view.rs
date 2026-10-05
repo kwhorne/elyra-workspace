@@ -66,6 +66,8 @@ pub struct ThreadView {
     follow: bool,
     is_git_repo: bool,
     warmed_up: bool,
+    /// The branch the thread's folder is on (asked in the background).
+    branch: Option<String>,
     /// The Félagi issue the thread works on, with its banner.
     felagi: Option<Entity<crate::felagi_report::FelagiLink>>,
     /// The thread's browser, for the chip that offers its new errors.
@@ -115,10 +117,11 @@ impl ThreadView {
                 }
                 cx.notify();
             }),
-            cx.subscribe(&session, |_, _, event: &SessionEvent, cx| {
-                if let SessionEvent::NeedsAttention = event {
-                    cx.notify();
-                }
+            cx.subscribe(&session, |this, _, event: &SessionEvent, cx| match event {
+                SessionEvent::NeedsAttention => cx.notify(),
+                // The agent may have switched branches.
+                SessionEvent::TurnCompleted => this.refresh_branch(cx),
+                _ => {}
             }),
             cx.intercept_keystrokes(move |event, window, cx| {
                 let _ = weak.update(cx, |this, cx| this.intercept(event, window, cx));
@@ -157,7 +160,7 @@ impl ThreadView {
         });
         let scroll = ScrollHandle::new();
         scroll.scroll_to_bottom();
-        Self {
+        let mut this = Self {
             session,
             composer,
             scroll,
@@ -172,13 +175,114 @@ impl ThreadView {
             follow: true,
             is_git_repo,
             felagi,
+            branch: None,
             browser: None,
             server_errors: Vec::new(),
             server_seen: None,
             _grove_watch: grove_watch,
             warmed_up: false,
             _subscriptions: subscriptions,
+        };
+        this.refresh_branch(cx);
+        this
+    }
+
+    fn refresh_branch(&mut self, cx: &mut Context<Self>) {
+        let session = self.session.read(cx);
+        if let Environment::Worktree { branch, .. } = &session.thread.environment {
+            self.branch = Some(branch.clone());
+            return;
         }
+        let dir = session.working_dir();
+        let job = cx
+            .background_executor()
+            .spawn(async move { elyra_git::current_branch(&dir) });
+        cx.spawn(async move |this, cx| {
+            let branch = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.branch != branch {
+                    this.branch = branch;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Which project, folder and branch the thread works in: tabs from
+    /// several projects look alike otherwise.
+    fn render_location(&self, cx: &Context<Self>) -> AnyElement {
+        let session = self.session.read(cx);
+        let project = &session.project;
+        let color = project
+            .color
+            .as_deref()
+            .and_then(crate::sidebar::parse_color)
+            .unwrap_or(cx.theme().muted_foreground);
+        let dir = session.working_dir();
+        let shown = match dirs::home_dir()
+            .and_then(|home| dir.strip_prefix(home).ok().map(|rest| rest.to_path_buf()))
+        {
+            Some(rest) => format!("~/{}", rest.display()),
+            None => dir.display().to_string(),
+        };
+        let worktree = matches!(session.thread.environment, Environment::Worktree { .. });
+        let reveal = dir.clone();
+        h_flex()
+            .flex_none()
+            .w_full()
+            .px_4()
+            .py_1()
+            .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(match project.icon.as_deref().filter(|i| !i.is_empty()) {
+                Some(icon) => div().child(icon.to_string()).into_any_element(),
+                None => div()
+                    .size(px(8.))
+                    .rounded_full()
+                    .bg(color)
+                    .into_any_element(),
+            })
+            .child(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(cx.theme().foreground)
+                    .child(project.name.clone()),
+            )
+            .child(
+                div()
+                    .id("thread-location")
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .cursor_pointer()
+                    .hover(|this| this.text_color(cx.theme().foreground))
+                    .child(shown)
+                    .on_click(move |_, _, cx| cx.reveal_path(&reveal)),
+            )
+            .children(self.branch.clone().map(|branch| {
+                h_flex()
+                    .flex_none()
+                    .gap_1()
+                    .child(Icon::new(IconName::GitBranch).xsmall())
+                    .child(branch)
+            }))
+            .when(worktree, |this| {
+                this.child(
+                    div()
+                        .flex_none()
+                        .px_1()
+                        .rounded_sm()
+                        .bg(cx.theme().muted)
+                        .child("worktree"),
+                )
+            })
+            .into_any_element()
     }
 
     pub fn focus_composer(&self, window: &mut Window, cx: &mut App) {
@@ -1868,6 +1972,7 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::interrupt))
             .on_action(cx.listener(Self::open_find))
             .size_full()
+            .child(self.render_location(cx))
             .children(find)
             .child(
                 div()

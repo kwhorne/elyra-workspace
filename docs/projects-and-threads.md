@@ -80,6 +80,16 @@ when you switch threads.
 Open threads are tabs above the conversation. Elyra restores them at the next
 launch.
 
+When you work on several projects at once, it shows where each thread
+belongs:
+
+- The title bar (and the window title in Mission Control and ⌘\`) reads
+  **project — thread**.
+- Each tab starts with the project's icon or colour and its name.
+- A line above the conversation shows the project, the folder the agent works
+  in (click it to show it in Finder), the branch, and a **worktree** badge when
+  the thread has its own worktree. The branch is checked again after each turn.
+
 | Shortcut | Action |
 | --- | --- |
 | ⌘1 … ⌘8 | Go to that tab |

@@ -1690,12 +1690,16 @@ impl Workspace {
 
     // ---- rendering ------------------------------------------------------
 
+    /// The project and title of the thread in front, for the window title.
+    fn front_thread(&self, cx: &App) -> Option<(String, String)> {
+        let state = self.app.read(cx);
+        let thread = state.thread(self.active?)?;
+        let project = state.project(thread.project_id).map(|p| p.name.clone())?;
+        Some((project, thread.title.clone()))
+    }
+
     fn render_title_bar(&self, cx: &Context<Self>) -> AnyElement {
-        let title: SharedString = self
-            .active
-            .and_then(|id| self.app.read(cx).thread(id))
-            .map(|thread| thread.title.clone().into())
-            .unwrap_or_else(|| "Elyra Workspace".into());
+        let front = self.front_thread(cx);
         TitleBar::new()
             .child(
                 h_flex()
@@ -1713,15 +1717,35 @@ impl Workspace {
                             })),
                     )
                     .child(
-                        div()
+                        h_flex()
                             .flex_1()
+                            .min_w_0()
+                            .justify_center()
+                            .gap_2()
                             .text_sm()
-                            .text_center()
-                            .text_color(cx.theme().muted_foreground)
                             .overflow_hidden()
                             .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(title),
+                            .map(|this| match front {
+                                Some((project, title)) => this
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(project),
+                                    )
+                                    .child(div().text_color(cx.theme().muted_foreground).child("—"))
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(title),
+                                    ),
+                                None => this
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Elyra Workspace"),
+                            }),
                     )
                     .when(
                         self.active.is_some() || self.current_project.is_some(),
@@ -1799,19 +1823,53 @@ impl Workspace {
         let tabs: Vec<Tab> = self
             .open_tabs
             .iter()
-            .filter_map(|id| state.thread(*id).map(|t| (*id, t.title.clone())))
-            .map(|(id, title)| {
+            .filter_map(|id| {
+                let thread = state.thread(*id)?;
+                Some((
+                    *id,
+                    thread.title.clone(),
+                    state.project(thread.project_id).cloned(),
+                ))
+            })
+            .map(|(id, title, project)| {
                 let short: String = title.chars().take(28).collect();
-                Tab::new().label(short).suffix(
-                    Button::new(SharedString::from(format!("close-{id}")))
-                        .ghost()
-                        .xsmall()
-                        .icon(IconName::X)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            cx.stop_propagation();
-                            this.close_tab(id, window, cx)
-                        })),
-                )
+                // Which project the thread is in, with its colour: tabs from
+                // several projects otherwise look alike.
+                let prefix = project.map(|project| {
+                    let color = project
+                        .color
+                        .as_deref()
+                        .and_then(crate::sidebar::parse_color)
+                        .unwrap_or(cx.theme().muted_foreground);
+                    let name: String = project.name.chars().take(18).collect();
+                    h_flex()
+                        .gap_1()
+                        .mr_1()
+                        .child(match project.icon.as_deref().filter(|i| !i.is_empty()) {
+                            Some(icon) => {
+                                div().text_xs().child(icon.to_string()).into_any_element()
+                            }
+                            None => div()
+                                .size(px(7.))
+                                .rounded_full()
+                                .bg(color)
+                                .into_any_element(),
+                        })
+                        .child(div().text_xs().text_color(color).child(name))
+                });
+                Tab::new()
+                    .label(short)
+                    .when_some(prefix, |tab, prefix| tab.prefix(prefix))
+                    .suffix(
+                        Button::new(SharedString::from(format!("close-{id}")))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::X)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.close_tab(id, window, cx)
+                            })),
+                    )
             })
             .collect();
         let ids = self.open_tabs.clone();
@@ -2106,6 +2164,12 @@ pub(crate) fn format_age(age: chrono::Duration) -> String {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The window's own title, for Mission Control and ⌘`.
+        let window_title = match self.front_thread(cx) {
+            Some((project, title)) => format!("{project} — {title}"),
+            None => "Elyra Workspace".to_string(),
+        };
+        window.set_window_title(&window_title);
         let full_terminal = self
             .terminal_full
             .then(|| self.active.and_then(|id| self.terminal_views.get(&id)))

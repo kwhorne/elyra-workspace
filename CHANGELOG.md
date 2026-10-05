@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **See which project you're in.** The title bar reads *project — thread*, tabs
+  start with the project's icon or colour and name, and a line above the
+  conversation shows the project, the folder (click to show it in Finder), the
+  branch and whether the thread has its own worktree.
+
 ## 0.8.1
 
 - **Elyra Workspace as a Félagi runtime.** Turn on Settings → Félagi → Run
