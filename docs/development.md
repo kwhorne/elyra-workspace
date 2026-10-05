@@ -31,6 +31,9 @@ cargo test --workspace
 
 For UI changes, also run the app with an isolated data directory and look at it.
 
+GitHub Actions runs the same checks ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml))
+on every push to `main` and every pull request; clippy runs with `-D warnings`.
+
 ## Environment variables
 
 | Variable | Effect |
@@ -105,7 +108,9 @@ Main modules of `elyra-app`:
 | `lifecycle`, `onboarding`, `about`, `app_icon` | Crash log, single instance, first run, About, Dock |
 
 Schema changes are new entries at the end of `MIGRATIONS` in
-`elyra-core/src/store.rs`. Never edit a released migration.
+`elyra-core/src/store.rs`. Never edit a released migration: a test compares each one
+with its fingerprint in `RELEASED`, and a new migration adds its own (the test
+prints it). Another test upgrades a database from every earlier version.
 
 ## Releasing
 

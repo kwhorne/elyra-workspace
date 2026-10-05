@@ -803,6 +803,171 @@ fn thread_from_row(row: &Row) -> rusqlite::Result<Thread> {
 mod tests {
     use super::*;
 
+    /// FNV-1a: a hash that stays the same across Rust versions.
+    fn fingerprint(sql: &str) -> u64 {
+        sql.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        })
+    }
+
+    /// Fingerprints of the released migrations. A user's database has run
+    /// them already, so editing one would leave their schema behind; add a
+    /// new migration instead, and its fingerprint here.
+    const RELEASED: &[u64] = &[
+        0xdef6_a70e_381d_b908,
+        0xb4b1_4f36_c158_9d7d,
+        0x8d5d_cf46_bb66_b83c,
+        0x249a_30b7_7de5_7741,
+        0x6977_b9a8_aee3_3666,
+        0x1a65_6b3c_775e_c71e,
+        0x534f_4e32_21e0_c19d,
+        0xf69a_d7c2_003d_7105,
+    ];
+
+    #[test]
+    fn released_migrations_are_unchanged() {
+        let actual: Vec<u64> = MIGRATIONS.iter().map(|sql| fingerprint(sql)).collect();
+        assert!(
+            actual.len() >= RELEASED.len(),
+            "a released migration was removed"
+        );
+        for (index, (actual, released)) in actual.iter().zip(RELEASED).enumerate() {
+            assert_eq!(
+                actual,
+                released,
+                "migration {} was edited after release; add a new one instead",
+                index + 1
+            );
+        }
+        assert_eq!(
+            actual.len(),
+            RELEASED.len(),
+            "add the new migration's fingerprint to RELEASED: {:#x}",
+            actual.last().unwrap()
+        );
+    }
+
+    #[test]
+    fn upgrades_databases_from_every_version() {
+        for version in 1..=MIGRATIONS.len() {
+            // A database left by an older release, with rows written in the
+            // first version's columns.
+            let conn = Connection::open_in_memory().unwrap();
+            for sql in &MIGRATIONS[..version] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", version as i64)
+                .unwrap();
+            let project = new_id();
+            let thread = new_id();
+            let now = Utc::now().to_rfc3339();
+            let environment = serde_json::to_string(&Environment::Worktree {
+                path: "/tmp/elyra-wt".into(),
+                branch: "elyra/fix".into(),
+            })
+            .unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, name, path, created_at) VALUES (?1, 'shop', '/tmp/shop', ?2)",
+                params![project.to_string(), now],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO threads (id, project_id, title, provider, model, permission_mode,
+                    provider_session_id, environment, status, archived, created_at, updated_at)
+                 VALUES (?1, ?2, 'Fix cart', 'claude', 'opus', 'accept_edits', 'sess', ?3,
+                    'idle', 0, ?4, ?4)",
+                params![thread.to_string(), project.to_string(), environment, now],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO transcript_items (id, thread_id, seq, content, created_at)
+                 VALUES (?1, ?2, 1, '{\"kind\":\"user\",\"text\":\"hi\"}', ?3)",
+                params![new_id().to_string(), thread.to_string(), now],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('theme', 'dark')",
+                [],
+            )
+            .unwrap();
+
+            let store = Store::from_connection(conn)
+                .unwrap_or_else(|err| panic!("upgrading from version {version}: {err:#}"));
+            let current: i64 = store
+                .conn
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            assert_eq!(current as usize, MIGRATIONS.len(), "from version {version}");
+
+            let projects = store.projects().unwrap();
+            assert_eq!(
+                (projects.len(), projects[0].id, projects[0].name.as_str()),
+                (1, project, "shop"),
+                "from version {version}"
+            );
+            let threads = store.threads(false).unwrap();
+            assert_eq!(threads.len(), 1, "from version {version}");
+            let loaded = &threads[0];
+            assert_eq!(
+                (
+                    loaded.title.as_str(),
+                    loaded.provider,
+                    loaded.model.as_deref(),
+                    loaded.permission_mode,
+                    loaded.provider_session_id.as_deref(),
+                ),
+                (
+                    "Fix cart",
+                    ProviderKind::Claude,
+                    Some("opus"),
+                    PermissionMode::AcceptEdits,
+                    Some("sess"),
+                ),
+                "from version {version}"
+            );
+            assert!(
+                matches!(&loaded.environment, Environment::Worktree { branch, .. } if branch == "elyra/fix"),
+                "from version {version}"
+            );
+            assert!(
+                !loaded.pinned
+                    && !loaded.done
+                    && loaded.goal_runs == 0
+                    && loaded.felagi_issue.is_none(),
+                "new columns take their defaults (from version {version})"
+            );
+            assert_eq!(
+                store.transcript(thread).unwrap()[0].content,
+                ItemContent::User {
+                    text: "hi".into(),
+                    checkpoint: None
+                },
+                "from version {version}"
+            );
+            assert_eq!(store.setting("theme").unwrap().as_deref(), Some("dark"));
+            // The upgraded database takes new rows in every column.
+            let mut updated = loaded.clone();
+            updated.felagi_issue = Some("ACM-1".into());
+            updated.budget_usd = Some(1.0);
+            store.update_thread(&updated).unwrap();
+            assert_eq!(store.threads(false).unwrap()[0], updated);
+        }
+    }
+
+    #[test]
+    fn reopening_a_database_keeps_it() {
+        let dir = std::env::temp_dir().join(format!("elyra-reopen-{}", std::process::id()));
+        let path = dir.join("state.db");
+        {
+            let store = Store::open(&path).unwrap();
+            store.set_setting("theme", "dark").unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.setting("theme").unwrap().as_deref(), Some("dark"));
+        drop(store);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn project_thread_and_transcript_roundtrip() {
         let store = Store::open_in_memory().unwrap();

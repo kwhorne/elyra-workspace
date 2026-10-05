@@ -476,4 +476,150 @@ mod tests {
         .unwrap();
         assert_eq!(unknown["error"]["code"], -32602);
     }
+
+    /// Send raw HTTP and return the status code and body.
+    fn raw(server: &Server, request: &str) -> (u16, String) {
+        let mut stream = TcpStream::connect(("127.0.0.1", server.port())).unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut reply = String::new();
+        let _ = stream.read_to_string(&mut reply);
+        let code = reply
+            .split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .unwrap_or(0);
+        let body = reply
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body.to_string())
+            .unwrap_or_default();
+        (code, body)
+    }
+
+    fn post_raw(server: &Server, path: &str, auth: Option<&str>, body: &str) -> (u16, String) {
+        let auth = auth
+            .map(|value| format!("Authorization: {value}\r\n"))
+            .unwrap_or_default();
+        raw(
+            server,
+            &format!(
+                "POST {path} HTTP/1.1\r\nHost: x\r\n{auth}Content-Length: {}\r\n\r\n{body}",
+                body.len()
+            ),
+        )
+    }
+
+    #[test]
+    fn refuses_requests_it_should_not_serve() {
+        let server = Server::start(0, Arc::new(Echo)).unwrap();
+        let ping = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
+        assert_eq!(post_raw(&server, "/mcp", None, ping).0, 401, "no token");
+        assert_eq!(
+            post_raw(&server, "/mcp", Some("Bearer "), ping).0,
+            401,
+            "empty token"
+        );
+        assert_eq!(
+            post_raw(&server, "/mcp", Some("Basic secret"), ping).0,
+            401,
+            "not a bearer token"
+        );
+        assert_eq!(
+            post_raw(&server, "/mcp", Some("Bearer secret"), ping).0,
+            200
+        );
+        assert_eq!(
+            post_raw(&server, "/other", Some("Bearer secret"), ping).0,
+            404
+        );
+        assert_eq!(
+            raw(
+                &server,
+                "GET /mcp HTTP/1.1\r\nAuthorization: Bearer secret\r\n\r\n"
+            )
+            .0,
+            405
+        );
+        let (code, body) = post_raw(&server, "/mcp", Some("Bearer secret"), "{not json");
+        assert_eq!(code, 400);
+        assert_eq!(
+            serde_json::from_str::<Value>(&body).unwrap()["error"]["code"],
+            -32700
+        );
+        // Refused before the body is read: no reply at all.
+        let huge = format!(
+            "POST /mcp HTTP/1.1\r\nAuthorization: Bearer secret\r\nContent-Length: {}\r\n\r\n",
+            MAX_BODY + 1
+        );
+        assert_eq!(raw(&server, &huge).0, 0);
+    }
+
+    #[test]
+    fn answers_batches() {
+        let server = Server::start(0, Arc::new(Echo)).unwrap();
+        let batch = json!([
+            {"jsonrpc":"2.0","id":1,"method":"ping"},
+            {"jsonrpc":"2.0","method":"notifications/initialized"},
+            {"jsonrpc":"2.0","id":2,"method":"nope"}
+        ]);
+        let (code, body) = post_raw(&server, "/mcp", Some("Bearer secret"), &batch.to_string());
+        assert_eq!(code, 200);
+        let replies: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            replies.as_array().unwrap().len(),
+            2,
+            "no reply to the notification"
+        );
+        assert_eq!(replies[1]["error"]["code"], -32601);
+    }
+
+    /// Tools depend on who calls: "reader" may only read.
+    struct Scoped {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Handler for Scoped {
+        fn authorize(&self, token: &str) -> Option<Principal> {
+            matches!(token, "reader" | "writer").then(|| token.to_string())
+        }
+
+        fn tools(&self, principal: &Principal) -> Vec<Tool> {
+            let tool = |name: &str| Tool {
+                name: name.into(),
+                description: String::new(),
+                input_schema: json!({ "type": "object" }),
+            };
+            let mut tools = vec![tool("read")];
+            if principal == "writer" {
+                tools.push(tool("write"));
+            }
+            tools
+        }
+
+        fn call(&self, _: &Principal, name: &str, _: Value) -> Result<Output, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(name.into())
+        }
+    }
+
+    #[test]
+    fn hidden_tools_cannot_be_called() {
+        let handler = Scoped {
+            calls: Default::default(),
+        };
+        let write = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"write"}});
+        let refused = handle(&handler, &"reader".to_string(), &write).unwrap();
+        assert_eq!(refused["error"]["code"], -32602);
+        assert_eq!(
+            handler.calls.load(Ordering::SeqCst),
+            0,
+            "never reached the handler"
+        );
+        let list = json!({"jsonrpc":"2.0","id":2,"method":"tools/list"});
+        let listed = handle(&handler, &"reader".to_string(), &list).unwrap();
+        assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 1);
+
+        let allowed = handle(&handler, &"writer".to_string(), &write).unwrap();
+        assert_eq!(allowed["result"]["content"][0]["text"], "write");
+        assert_eq!(handler.calls.load(Ordering::SeqCst), 1);
+    }
 }

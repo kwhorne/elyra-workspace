@@ -6,7 +6,8 @@ See docs/development.md for the crate map, checks and the release process.
 ## Boundaries
 
 - `elyra-core`: model and persistence only. Schema changes are new entries appended to
-  `MIGRATIONS` in `store.rs`; never edit a released migration.
+  `MIGRATIONS` in `store.rs` plus its fingerprint in `RELEASED` (the failing
+  test prints it); never edit a released migration.
 - `elyra-provider`: each adapter owns its wire protocol and emits provider-neutral
   `ProviderEvent`s. Do not leak Claude-specific JSON into the app crate.
 - `elyra-git` shells out to `git` so the user's config, hooks and credentials apply.

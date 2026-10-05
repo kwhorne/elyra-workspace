@@ -701,8 +701,12 @@ async fn wait_for_thread(
 
 #[cfg(test)]
 mod tests {
-    use super::Caller;
+    use super::{Caller, GatewayHandler, is_read_tool, tools};
     use elyra_core::ClientScope;
+    use elyra_mcp::Handler as _;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::{Arc, RwLock};
 
     #[test]
     fn callers_round_trip_through_principals() {
@@ -714,5 +718,87 @@ mod tests {
         };
         assert_eq!(Caller::parse(&client.principal()), Some(client.clone()));
         assert!(thread.can_write() && !client.can_write());
+    }
+
+    fn handler(
+        tokens: &[(&str, &Caller)],
+    ) -> (GatewayHandler, async_channel::Receiver<super::Call>) {
+        let (calls, received) = async_channel::unbounded();
+        let tokens = tokens
+            .iter()
+            .map(|(token, caller)| (token.to_string(), caller.principal()))
+            .collect::<HashMap<_, _>>();
+        let handler = GatewayHandler {
+            tokens: Arc::new(RwLock::new(tokens)),
+            calls,
+        };
+        (handler, received)
+    }
+
+    #[test]
+    fn unknown_and_empty_tokens_are_refused() {
+        let thread = Caller::Thread(elyra_core::new_id());
+        let (handler, _) = handler(&[("", &thread), ("good", &thread)]);
+        assert_eq!(handler.authorize(""), None, "even if one was stored");
+        assert_eq!(handler.authorize("bad"), None);
+        assert_eq!(handler.authorize("good"), Some(thread.principal()));
+    }
+
+    #[test]
+    fn read_only_clients_cannot_change_anything() {
+        let reader = Caller::Client {
+            id: elyra_core::new_id(),
+            scope: ClientScope::ReadOnly,
+        };
+        let full = Caller::Client {
+            id: elyra_core::new_id(),
+            scope: ClientScope::Full,
+        };
+        let (handler, received) = handler(&[("r", &reader), ("f", &full)]);
+        let reader = handler.authorize("r").unwrap();
+        let full = handler.authorize("f").unwrap();
+
+        let visible: Vec<String> = handler.tools(&reader).into_iter().map(|t| t.name).collect();
+        assert!(visible.iter().all(|name| is_read_tool(name)), "{visible:?}");
+        assert!(handler.tools(&full).len() > visible.len());
+
+        for tool in handler.tools(&full) {
+            if is_read_tool(&tool.name) {
+                continue;
+            }
+            let call = json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+                "params":{"name": tool.name, "arguments": {"thread_id": "x", "project": "x"}}});
+            let reply = elyra_mcp::handle(&handler, &reader, &call).unwrap();
+            assert_eq!(reply["error"]["code"], -32602, "{} was allowed", tool.name);
+        }
+        assert!(received.try_recv().is_err(), "no call reached the app");
+    }
+
+    #[test]
+    fn tools_that_change_a_thread_ask_first() {
+        // An agent changing another thread is asked about (thread_access);
+        // a new tool that takes a thread id must be a read or on that list.
+        for tool in tools().into_iter().chain(crate::browser_tools::tools()) {
+            if tool.input_schema["properties"].get("thread_id").is_some() {
+                assert!(
+                    is_read_tool(&tool.name)
+                        || crate::thread_access::WRITES.contains(&tool.name.as_str()),
+                    "{} takes a thread id but is neither a read nor in thread_access::WRITES",
+                    tool.name
+                );
+            }
+        }
+        for name in super::READ_TOOLS
+            .iter()
+            .chain(crate::browser_tools::READ_TOOLS)
+        {
+            assert!(
+                tools()
+                    .into_iter()
+                    .chain(crate::browser_tools::tools())
+                    .any(|tool| tool.name == *name),
+                "read tool {name} does not exist"
+            );
+        }
     }
 }
