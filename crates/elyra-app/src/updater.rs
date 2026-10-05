@@ -343,6 +343,11 @@ pub fn on_quit(cx: &mut App) {
     }
 }
 
+/// Waiting for the agents to finish before restarting.
+pub fn waiting(cx: &App) -> bool {
+    cx.try_global::<Updater>().is_some_and(|u| u.waiting)
+}
+
 /// A quit that was cancelled (e.g. at the "agents are working" prompt)
 /// shouldn't relaunch later.
 pub fn cancel_relaunch(cx: &mut App) {

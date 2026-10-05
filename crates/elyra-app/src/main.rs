@@ -25,6 +25,7 @@ mod onboarding;
 mod palette;
 mod pr_view;
 mod preferences;
+mod quitting;
 mod race;
 mod review_inbox;
 mod search;
@@ -45,7 +46,7 @@ mod webview;
 mod workspace;
 
 use app_state::AppState;
-use gpui_kit::component::{TitleBar, WindowExt as _};
+use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
 fn main() {
@@ -82,56 +83,50 @@ fn main() {
         }
     };
 
-    gpui_kit::application()
-        .with_assets(gpui_kit::assets::AllAssets)
-        .run(move |cx| {
-            gpui_kit::init(cx);
-            actions::bind_keys(cx);
-            terminal_view::bind_keys(cx);
-            themes::register(cx);
-            app_icon::install_dock_icon();
+    let application = gpui_kit::application().with_assets(gpui_kit::assets::AllAssets);
+    // The Dock icon brings the window back after it was closed or hidden.
+    application.on_reopen(quitting::reopen);
+    application.run(move |cx| {
+        gpui_kit::init(cx);
+        actions::bind_keys(cx);
+        terminal_view::bind_keys(cx);
+        themes::register(cx);
+        app_icon::install_dock_icon();
 
-            let app = cx.new(|_| state);
-            preferences::init(&app, cx);
-            gateway::init(app.clone(), cx);
-            felagi_runtime::init(app.clone(), cx);
-            // Learn Grove's sites early, so agents can be given its tools.
-            cx.background_executor()
-                .spawn(async { grove::sites() })
-                .detach();
-            automations::init(app.clone(), cx);
-            cx.set_menus(menus());
-
-            let mut options = TitleBar::window_options();
-            options.window_bounds = Some(saved_bounds(&app, cx));
-            options.window_min_size = Some(size(px(820.), px(520.)));
-            // Development: open in the background without taking focus.
-            let background = std::env::var_os("ELYRA_NO_ACTIVATE").is_some();
-            options.focus = !background;
-            let workspace_app = app.clone();
-            gpui_kit::open_window(options, cx, |window, cx| {
-                cx.new(|cx| workspace::Workspace::new(workspace_app, window, cx))
-            })
-            .expect("failed to open the Elyra Workspace window");
-
-            let quit_app = app.clone();
-            cx.on_action(move |_: &actions::Quit, cx| request_quit(&quit_app, cx));
-            cx.on_action(|_: &actions::OpenSettings, cx| settings_window::open(cx));
-            cx.on_action(|_: &actions::CheckForUpdates, cx| updater::check(true, cx));
-            cx.on_action(|_: &actions::OpenDocumentation, cx| cx.open_url(DOCS_URL));
-            let shutdown_app = app.clone();
-            cx.on_app_quit(move |cx| {
-                felagi_runtime::hand_back(cx);
-                shutdown_app.update(cx, |app, cx| app.prepare_quit(cx));
-                updater::on_quit(cx);
-                async {}
-            })
+        let app = cx.new(|_| state);
+        preferences::init(&app, cx);
+        gateway::init(app.clone(), cx);
+        felagi_runtime::init(app.clone(), cx);
+        // Learn Grove's sites early, so agents can be given its tools.
+        cx.background_executor()
+            .spawn(async { grove::sites() })
             .detach();
-            if !background {
-                cx.activate(true);
-            }
-            updater::init(app.clone(), cx);
-        });
+        automations::init(app.clone(), cx);
+        cx.set_menus(menus());
+
+        // Development: open in the background without taking focus.
+        let background = std::env::var_os("ELYRA_NO_ACTIVATE").is_some();
+        open_main_window(app.clone(), !background, cx);
+
+        quitting::init(app.clone(), cx);
+        quitting::offer_resume(cx);
+        cx.on_action(|_: &actions::Quit, cx| quitting::request(cx));
+        cx.on_action(|_: &actions::OpenSettings, cx| settings_window::open(cx));
+        cx.on_action(|_: &actions::CheckForUpdates, cx| updater::check(true, cx));
+        cx.on_action(|_: &actions::OpenDocumentation, cx| cx.open_url(DOCS_URL));
+        let shutdown_app = app.clone();
+        cx.on_app_quit(move |cx| {
+            felagi_runtime::hand_back(cx);
+            shutdown_app.update(cx, |app, cx| app.prepare_quit(cx));
+            updater::on_quit(cx);
+            async {}
+        })
+        .detach();
+        if !background {
+            cx.activate(true);
+        }
+        updater::init(app.clone(), cx);
+    });
 }
 
 /// The user guide.
@@ -232,48 +227,15 @@ fn saved_bounds(app: &Entity<AppState>, cx: &App) -> WindowBounds {
     }
 }
 
-/// Quit, asking first when agents are still working.
-pub(crate) fn request_quit(app: &Entity<AppState>, cx: &mut App) {
-    let running = app.read(cx).running_threads(cx);
-    if running.is_empty() {
-        cx.quit();
-        return;
+/// Open the workspace window, where it was last time.
+pub(crate) fn open_main_window(app: Entity<AppState>, focus: bool, cx: &mut App) {
+    let mut options = TitleBar::window_options();
+    options.window_bounds = Some(saved_bounds(&app, cx));
+    options.window_min_size = Some(size(px(820.), px(520.)));
+    options.focus = focus;
+    if let Err(err) = gpui_kit::open_window(options, cx, |window, cx| {
+        cx.new(|cx| workspace::Workspace::new(app, window, cx))
+    }) {
+        log::error!("opening the Elyra Workspace window: {err:#}");
     }
-    let Some(window) = cx.active_window().or_else(|| cx.windows().first().copied()) else {
-        cx.quit();
-        return;
-    };
-    let names = running
-        .iter()
-        .take(5)
-        .map(|t| format!("• {}", t.title))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let count = running.len();
-    let app = app.clone();
-    let _ = window.update(cx, move |_, window, cx| {
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let app = app.clone();
-            alert
-                .title(if count == 1 {
-                    "An agent is still working".to_string()
-                } else {
-                    format!("{count} agents are still working")
-                })
-                .description(format!(
-                    "{names}\n\nQuitting stops them. You can resume each thread after the next launch."
-                ))
-                .confirm()
-                .ok_text("Quit")
-                .on_ok(move |_, _, cx| {
-                    app.update(cx, |app, cx| app.prepare_quit(cx));
-                    cx.quit();
-                    true
-                })
-                .on_cancel(|_, _, cx| {
-                    updater::cancel_relaunch(cx);
-                    true
-                })
-        });
-    });
 }

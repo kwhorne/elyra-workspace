@@ -76,7 +76,9 @@ Only one copy runs per data folder. Switch to the open window, or use a differen
 
 **A thread says the last turn was interrupted.**
 The app quit while the agent was working. Press **Resume** to continue, or
-**Dismiss**.
+**Dismiss**; the notification at launch continues all of them. Next time,
+choose **Quit when they finish** at ⌘Q (see
+[Quitting while agents work](chat.md#quitting-while-agents-work)).
 
 **The Changes tab says the folder is not a Git repository.**
 Diffs, checkpoints, worktrees and pull requests need Git. Run `git init` in the

@@ -10,7 +10,7 @@ Press **⌘/** in the app to see all shortcuts, including any you changed.
 | ⌘, | Settings |
 | ⌘/ | Keyboard shortcuts |
 | ⇧⌘T | Toggle light/dark theme |
-| ⌘Q | Quit (asks first if agents are running) |
+| ⌘Q | Quit (if agents are working: now, or when they finish) |
 
 ## Threads
 

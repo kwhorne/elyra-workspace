@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Quit when the agents finish.** ⌘Q while agents are working offers to hide
+  the window and quit once they are done, instead of stopping them. Coming back
+  calls it off; no new Félagi tasks or automation runs start while it waits.
+- **The Dock brings the window back.** Closing the window keeps agents working;
+  click Elyra Workspace in the Dock to open it again.
+- **Continue all interrupted turns.** After a quit or crash that cut turns off, a
+  notification at launch continues them all at once.
 - **Agents ask before using another thread's browser.** Opening or reloading a
   page in another thread's browser now asks you first, like messaging,
   stopping, renaming or archiving another thread.

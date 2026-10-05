@@ -15,8 +15,24 @@ anywhere.
   running turn (Claude Code, Codex, Elyra and Pi).
 - **Stop** (or **⌃C** in the message box) interrupts the agent.
 
-If Elyra quit while a turn was running, the thread shows *The last turn was
-interrupted when the app quit* with **Resume** and **Dismiss**.
+## Quitting while agents work
+
+Agents run inside Elyra Workspace, so they stop when it quits. ⌘Q asks first
+when an agent is working:
+
+- **Quit when they finish**: the window is hidden and Elyra Workspace quits by
+  itself once no agent is working. If one needs your input meanwhile, you get a
+  notification; coming back to the window calls the quit off. No new Félagi
+  tasks or automation runs start while it waits (missed runs are caught up at
+  the next launch).
+- **Quit now** stops them.
+
+Closing the window keeps the agents working; click Elyra Workspace in the Dock
+to bring it back. ⌘Q quits.
+
+If Elyra quit while a turn was running (or crashed), the thread shows *The last
+turn was interrupted when the app quit* with **Resume** and **Dismiss**, and at
+launch a notification offers to continue every interrupted turn at once.
 
 ## Attachments
 

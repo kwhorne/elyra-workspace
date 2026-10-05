@@ -166,7 +166,8 @@ When Félagi hands such an agent a run, Elyra Workspace:
   the branch and any pull request as deliveries, and the cost; or a failure
 
 A cancel from Félagi stops the turn. Quitting Elyra Workspace hands running work
-back so Félagi can give it to another runtime. One run at a time per Mac.
+back so Félagi can give it to another runtime; with **Quit when they finish** the
+run completes first and no new task is taken meanwhile. One run at a time per Mac.
 **Settings → Félagi → Status** shows what the runtime is doing, and warns when
 Félagi's own daemon runs on the same Mac (they would compete for the same work).
 

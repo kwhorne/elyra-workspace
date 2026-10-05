@@ -54,6 +54,10 @@ pub fn init(app: Entity<AppState>, cx: &mut App) {
 }
 
 fn tick(app: &Entity<AppState>, cx: &mut App) {
+    // Waiting to quit or restart; a missed run is caught up after the launch.
+    if crate::quitting::draining(cx) {
+        return;
+    }
     let now = Utc::now();
     let due: Vec<Automation> = app
         .read(cx)

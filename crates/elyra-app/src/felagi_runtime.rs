@@ -310,7 +310,8 @@ impl Runtime {
         let heartbeat = self
             .last_heartbeat
             .is_none_or(|at| at.elapsed() >= HEARTBEAT);
-        let claim = self.runs.len() < MAX_RUNS;
+        // No new work while waiting to quit or restart.
+        let claim = self.runs.len() < MAX_RUNS && !crate::quitting::draining(cx);
         self.busy = true;
         let job = cx.background_executor().spawn(async move {
             let other_daemon = (register || heartbeat).then(|| {

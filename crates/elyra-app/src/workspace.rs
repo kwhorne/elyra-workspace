@@ -123,6 +123,9 @@ impl Workspace {
             }),
             cx.observe_window_activation(window, |this, window, cx| {
                 this.mark_active_read(window, cx);
+                if window.is_window_active() {
+                    crate::quitting::came_back(window, cx);
+                }
             }),
             cx.observe_window_appearance(window, |_, _, cx| {
                 crate::preferences::sync_with_system(cx)
