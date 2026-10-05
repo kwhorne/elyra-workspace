@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Agents ask before using another thread's browser.** Opening or reloading a
+  page in another thread's browser now asks you first, like messaging,
+  stopping, renaming or archiving another thread.
+
 ## 0.8.2
 
 - **See which project you're in.** The title bar reads *project — thread*, tabs

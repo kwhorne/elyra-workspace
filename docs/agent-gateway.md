@@ -52,7 +52,8 @@ appear as `mcp__elyra__…`.
 - Tool calls follow the thread's permission mode like any other tool. In *Ask for
   approval* mode you approve each one.
 - An agent may read any thread, but the first time it messages, stops, renames
-  or archives *another* thread, Elyra asks you: **Don't allow**, **Allow once** or
+  or archives *another* thread, or opens or reloads a page in its browser, Elyra
+  asks you: **Don't allow**, **Allow once** or
   **Always allow**. *Always* remembers that pair of threads; **Settings → Agents &
   MCP → Agents changing other threads** shows how many are remembered and forgets
   them. Threads an agent started with `create_thread` are its own, so it isn't

@@ -1,8 +1,8 @@
 //! Asking before one agent changes another thread through the gateway.
 //!
 //! Reading other threads is open. The first time an agent's thread sends a
-//! message to, interrupts, renames or archives another thread, the user is
-//! asked; "Always" remembers that pair (in the settings table) so it isn't
+//! message to, interrupts, renames or archives another thread, or opens or
+//! reloads a page in its browser, the user is asked; "Always" remembers that pair (in the settings table) so it isn't
 //! asked again. Threads an agent starts with `create_thread` are remembered
 //! for it right away. Paired external clients are not asked: pairing them was
 //! the permission.
@@ -21,6 +21,8 @@ pub const WRITES: &[&str] = &[
     "interrupt_thread",
     "set_thread_title",
     "archive_thread",
+    "browser_open",
+    "browser_reload",
 ];
 
 const KEY: &str = "gateway_thread_pairs";
@@ -88,6 +90,11 @@ fn describe(tool: &str, args: &serde_json::Value) -> String {
             args["title"].as_str().unwrap_or("")
         ),
         "archive_thread" => "archive it".into(),
+        "browser_open" => format!(
+            "open {} in its browser",
+            args["url"].as_str().unwrap_or("a page")
+        ),
+        "browser_reload" => "reload the page in its browser".into(),
         other => format!("use {other} on it"),
     }
 }
@@ -200,6 +207,10 @@ mod tests {
         assert_eq!(
             describe("set_thread_title", &json!({ "title": "Done" })),
             "rename it to \u{201c}Done\u{201d}"
+        );
+        assert_eq!(
+            describe("browser_open", &json!({ "url": "http://shop.test" })),
+            "open http://shop.test in its browser"
         );
     }
 }
