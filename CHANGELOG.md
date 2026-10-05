@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
 
 - **Quit when the agents finish.** ⌘Q while agents are working offers to hide
   the window and quit once they are done, instead of stopping them. Coming back
