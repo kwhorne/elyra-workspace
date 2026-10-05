@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.2
 
 - **See which project you're in.** The title bar reads *project — thread*, tabs
   start with the project's icon or colour and name, and a line above the
