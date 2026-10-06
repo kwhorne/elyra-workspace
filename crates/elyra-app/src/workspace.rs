@@ -93,6 +93,10 @@ pub struct Workspace {
     terminal_full: bool,
     /// The thread whose Files view is open in the large editor sheet.
     files_sheet: Option<ThreadId>,
+    /// Scrolls the thread tabs when they don't fit.
+    tab_scroll: ScrollHandle,
+    /// The tab last scrolled into view.
+    tab_revealed: std::cell::Cell<Option<ThreadId>>,
     /// Project space shown in the sidebar; None shows all.
     pub(crate) active_space: Option<String>,
     review: Option<Entity<crate::review_inbox::ReviewInbox>>,
@@ -206,6 +210,8 @@ impl Workspace {
             forward: Vec::new(),
             terminal_full: false,
             files_sheet: None,
+            tab_scroll: ScrollHandle::new(),
+            tab_revealed: std::cell::Cell::new(None),
             active_space,
             review: None,
             panel: None,
@@ -1938,17 +1944,33 @@ impl Workspace {
                     )
             })
             .collect();
+        // Keep the active tab in view when there are more than fit.
+        if self.tab_revealed.get() != self.active {
+            self.tab_revealed.set(self.active);
+            self.tab_scroll.scroll_to_item(selected);
+        }
         let ids = self.open_tabs.clone();
-        TabBar::new("thread-tabs")
-            .underline()
-            .small()
-            .selected_index(selected)
-            .children(tabs)
-            .on_click(cx.listener(move |this, index: &usize, window, cx| {
-                if let Some(id) = ids.get(*index).copied() {
-                    this.activate(id, window, cx);
-                }
-            }))
+        div()
+            .w_full()
+            .min_w_0()
+            .overflow_hidden()
+            .child(
+                TabBar::new("thread-tabs")
+                    .underline()
+                    .small()
+                    .w_full()
+                    .min_w_0()
+                    .track_scroll(&self.tab_scroll)
+                    // A list of every tab, for when they don't fit.
+                    .menu(ids.len() > 1)
+                    .selected_index(selected)
+                    .children(tabs)
+                    .on_click(cx.listener(move |this, index: &usize, window, cx| {
+                        if let Some(id) = ids.get(*index).copied() {
+                            this.activate(id, window, cx);
+                        }
+                    })),
+            )
             .into_any_element()
     }
 
@@ -1999,6 +2021,8 @@ impl Workspace {
         };
         let main = v_flex()
             .size_full()
+            .min_w_0()
+            .overflow_hidden()
             .child(self.render_tabs(cx))
             .child(div().flex_1().min_h_0().child(view));
         let split = self

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Tabs stay in their place.** With many open threads the tab bar no longer
+  runs into the tools panel: it scrolls, keeps the active tab in view, and a
+  **▾** menu at its end lists every tab.
+
 ## 0.10.0
 
 - **Done means green.** Give a project a check command in the Context tab (Elyra

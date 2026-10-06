@@ -78,7 +78,9 @@ when you switch threads.
 ## Tabs and navigation
 
 Open threads are tabs above the conversation. Elyra restores them at the next
-launch.
+launch. When they don't fit, scroll the tab bar sideways (the active tab is
+always scrolled into view), or pick one from the **▾** menu at its end, which
+lists every open tab.
 
 When you work on several projects at once, it shows where each thread
 belongs:
