@@ -42,6 +42,12 @@ pub fn markdown(title: &str, items: &[elyra_core::TranscriptItem]) -> String {
                 cost_usd.map(|c| format!(" · ${c:.3}")).unwrap_or_default()
             )),
             ItemContent::Notice { text, .. } => out.push_str(&format!("\n> {text}\n")),
+            ItemContent::Check {
+                command, passed, ..
+            } => out.push_str(&format!(
+                "\n> Checks {}: `{command}`\n",
+                if *passed { "passed" } else { "failed" }
+            )),
             _ => {}
         }
     }

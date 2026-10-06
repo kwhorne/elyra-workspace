@@ -55,6 +55,9 @@ pub struct Preferences {
     pub agent_gateway: bool,
     /// Automatic turns a thread goal may take before pausing.
     pub goal_max_turns: u32,
+    /// Times a failed project check goes back to the agent before it is
+    /// handed to the user (0: only report it).
+    pub check_fix_attempts: u32,
     /// Commit messages and pull request titles in Conventional Commits form,
     /// `type(scope): summary`.
     pub conventional_titles: bool,
@@ -180,6 +183,7 @@ impl Default for Preferences {
             starred_models: Vec::new(),
             agent_gateway: false,
             goal_max_turns: 10,
+            check_fix_attempts: 2,
             conventional_titles: true,
             grove_mcp: true,
             grove_worktrees: true,

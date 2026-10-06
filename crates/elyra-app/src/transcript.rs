@@ -336,6 +336,30 @@ fn render_item(
 ) -> Option<AnyElement> {
     let id = item.id;
     Some(match &item.content {
+        ItemContent::User { text, .. }
+            if let Some(label) = crate::checks::fix_prompt_label(text) =>
+        {
+            // Sent by Elyra, not the user: fold it into one line.
+            let open = expanded.contains(&id);
+            v_flex()
+                .w_full()
+                .gap_1()
+                .child(
+                    h_flex()
+                        .id(SharedString::from(format!("fix-{id}")))
+                        .gap_2()
+                        .cursor_pointer()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(Icon::new(IconName::CornerDownLeft).xsmall())
+                        .child(format!("Sent the failures to the agent · {label}"))
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_expanded(id, cx))),
+                )
+                .when(open, |this| {
+                    this.child(mono_block(truncate(text, MAX_RESULT_CHARS), cx))
+                })
+                .into_any_element()
+        }
         ItemContent::User { text, checkpoint } => {
             let long = text.lines().count() > COLLAPSE_USER_LINES || text.len() > 2400;
             let open = expanded.contains(&id);
@@ -510,6 +534,22 @@ fn render_item(
                 .child(div().h(px(1.)).flex_1().bg(cx.theme().border))
                 .into_any_element()
         }
+        ItemContent::Check {
+            command,
+            passed,
+            exit_code,
+            duration_ms,
+            output,
+        } => check_row(
+            id,
+            command,
+            *passed,
+            *exit_code,
+            *duration_ms,
+            output,
+            expanded.contains(&id),
+            cx,
+        ),
         ItemContent::PageSnapshot { url, before, after } => {
             let picture = |label: &'static str, path: &str| {
                 let path = std::path::PathBuf::from(path);
@@ -593,6 +633,92 @@ fn status_icon(result: Option<(&str, bool)>, running: bool, cx: &App) -> AnyElem
             .text_color(cx.theme().success)
             .into_any_element(),
     }
+}
+
+/// The project's checks after a turn: passed or failed, with the output
+/// (the last line shows while folded, when they failed).
+#[allow(clippy::too_many_arguments)]
+fn check_row(
+    id: ItemId,
+    command: &str,
+    passed: bool,
+    exit_code: Option<i32>,
+    duration_ms: u64,
+    output: &str,
+    open: bool,
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    let mut summary = vec![
+        command.to_string(),
+        format!("{:.1}s", duration_ms as f64 / 1000.0),
+    ];
+    if !passed && let Some(code) = exit_code {
+        summary.push(format!("exit {code}"));
+    }
+    let last_line = (!passed && !open)
+        .then(|| output.lines().rev().find(|l| !l.trim().is_empty()))
+        .flatten()
+        .map(|line| line.chars().take(160).collect::<String>());
+    let (icon, color, label) = if passed {
+        (IconName::CircleCheck, cx.theme().success, "Checks passed")
+    } else {
+        (IconName::CircleX, cx.theme().danger, "Checks failed")
+    };
+    v_flex()
+        .w_full()
+        .rounded_md()
+        .border_1()
+        .border_color(if passed { cx.theme().border } else { color })
+        .child(
+            h_flex()
+                .id(SharedString::from(format!("check-{id}")))
+                .w_full()
+                .px_2()
+                .py_1()
+                .gap_2()
+                .cursor_pointer()
+                .hover(|this| this.bg(cx.theme().muted))
+                .text_sm()
+                .child(Icon::new(icon).small().text_color(color))
+                .child(div().font_weight(FontWeight::MEDIUM).child(label))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(summary.join(" · ")),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_expanded(id, cx))),
+        )
+        .when_some(last_line, |this, line| {
+            this.child(
+                div()
+                    .px_2()
+                    .pb_1()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .child(line),
+            )
+        })
+        .when(open && !output.is_empty(), |this| {
+            this.child(
+                div()
+                    .p_2()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .child(mono_block(truncate(output, MAX_RESULT_CHARS), cx)),
+            )
+        })
+        .into_any_element()
 }
 
 #[allow(clippy::too_many_arguments)]

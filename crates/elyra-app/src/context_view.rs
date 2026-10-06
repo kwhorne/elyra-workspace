@@ -115,6 +115,10 @@ pub struct ContextView {
     session: Entity<ThreadSession>,
     notes: Entity<TextareaState>,
     instructions: Entity<TextareaState>,
+    /// The project's check command.
+    check: Entity<InputState>,
+    /// A check command guessed from the project's files.
+    check_suggestion: Option<String>,
     goal: Entity<TextareaState>,
     budget: Entity<InputState>,
     servers: Vec<Server>,
@@ -123,6 +127,7 @@ pub struct ContextView {
     grove: Option<GroveInfo>,
     _save_notes: Option<Task<()>>,
     _save_instructions: Option<Task<()>>,
+    _save_check: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -133,13 +138,23 @@ impl ContextView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (notes_text, instructions_text) = {
+        let (notes_text, instructions_text, check_text, check_suggestion) = {
             let session = session.read(cx);
             (
                 session.thread.notes.clone().unwrap_or_default(),
                 session.project.instructions.clone().unwrap_or_default(),
+                session.project.check_command.clone().unwrap_or_default(),
+                crate::checks::suggest(&session.working_dir()),
             )
         };
+        let check = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(match &check_suggestion {
+                    Some(suggestion) => format!("e.g. {suggestion}"),
+                    None => "e.g. cargo test, php artisan test, npm test".to_string(),
+                })
+                .default_value(check_text)
+        });
         let notes = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(4, 16)
@@ -176,6 +191,16 @@ impl ContextView {
                     }));
                 }
             }),
+            cx.subscribe(&check, |this, _, event: &InputEvent, cx| match event {
+                InputEvent::Change => {
+                    this._save_check = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(SAVE_DELAY).await;
+                        let _ = this.update(cx, |this, cx| this.save_check(cx));
+                    }));
+                }
+                InputEvent::PressEnter { .. } | InputEvent::Blur => this.save_check(cx),
+                _ => {}
+            }),
             cx.subscribe(&instructions, |this, _, event: &InputEvent, cx| {
                 if let InputEvent::Change = event {
                     this._save_instructions = Some(cx.spawn(async move |this, cx| {
@@ -191,6 +216,8 @@ impl ContextView {
             session,
             notes,
             instructions,
+            check,
+            check_suggestion,
             goal,
             budget,
             servers: Vec::new(),
@@ -198,6 +225,7 @@ impl ContextView {
             grove: None,
             _save_notes: None,
             _save_instructions: None,
+            _save_check: None,
             _subscriptions: subscriptions,
         };
         this.scan_servers(cx);
@@ -220,6 +248,74 @@ impl ContextView {
         project.instructions = instructions;
         self.app
             .update(cx, |app, cx| app.update_project(project, cx));
+    }
+
+    fn save_check(&mut self, cx: &mut Context<Self>) {
+        self._save_check = None;
+        let text = self.check.read(cx).value().trim().to_string();
+        let command = Some(text).filter(|t| !t.is_empty());
+        let mut project = self.session.read(cx).project.clone();
+        if project.check_command == command {
+            return;
+        }
+        project.check_command = command;
+        self.app
+            .update(cx, |app, cx| app.update_project(project, cx));
+    }
+
+    fn render_checks(&self, project_name: &str, cx: &Context<Self>) -> AnyElement {
+        let session = self.session.read(cx);
+        let empty = self.check.read(cx).value().trim().is_empty();
+        let running = session.running || session.activity.is_some();
+        let suggestion = self.check_suggestion.clone().filter(|_| empty);
+        v_flex()
+            .gap_2()
+            .child(
+                Self::section("Checks after each turn", cx).when(!empty, |this| {
+                    this.child(
+                        Button::new("run-checks")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Play)
+                            .label("Run now")
+                            .disabled(running)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.save_check(cx);
+                                this.session
+                                    .update(cx, |session, cx| session.run_checks_now(cx));
+                            })),
+                    )
+                }),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "Runs in {project_name} after every turn that changed files. If it fails, the output goes back to the agent; the thread is done when it passes. Empty: off."
+                    )),
+            )
+            .child(
+                Input::new(&self.check)
+                    .small()
+                    .font_family(cx.theme().mono_font_family.clone()),
+            )
+            .when_some(suggestion, |this, suggestion| {
+                this.child(
+                    Button::new("use-check-suggestion")
+                        .ghost()
+                        .xsmall()
+                        .label(format!("Use {suggestion}"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let suggestion = suggestion.clone();
+                            this.check.update(cx, |input, cx| {
+                                input.set_value(suggestion, window, cx)
+                            });
+                            this.save_check(cx);
+                        })),
+                )
+            })
+            .into_any_element()
     }
 
     pub fn scan_servers(&mut self, cx: &mut Context<Self>) {
@@ -705,6 +801,7 @@ impl Render for ContextView {
                                 )
                             }),
                     )
+                    .child(self.render_checks(&project_name, cx))
                     .child(
                         v_flex()
                             .gap_2()

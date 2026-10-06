@@ -6,6 +6,7 @@ mod automations;
 mod browser_tools;
 mod browser_view;
 mod changes_view;
+mod checks;
 mod composer;
 mod context_view;
 mod conventional;

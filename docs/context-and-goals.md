@@ -62,6 +62,29 @@ system prompt, such as conventions, commands to run, or things to avoid. They
 apply from the next message, in every thread of the project. Claude Code, Codex,
 Elyra and Pi support this. ACP agents don't take extra instructions.
 
+## Checks after each turn
+
+*Done means green.* Give the project a check command (tests, lint, or both,
+such as `cargo test` or `vendor/bin/pint --test && php artisan test`). Elyra
+suggests one from the project's files; **Use …** fills it in, and **Run now**
+tries it.
+
+- After every turn that changed files (Elyra compares the Git working tree
+  before and after), the command runs in the thread's folder, with your login
+  shell and `CI=1`. A turn that changed nothing isn't checked.
+- The thread stays busy while the checks run. **Checks passed** or **Checks
+  failed** appears in the conversation; click it for the output.
+- When they fail, the end of the output goes back to the agent to fix
+  (*Sent the failures to the agent*), and the checks run again. After **Settings
+  → Agents & MCP → Automatic fixes when checks fail** (2 by default) the thread
+  stops, marked failed, and you are told. 0 only reports the failure. No
+  automatic fix is sent when you have queued a message or the budget is used up.
+- **Stop** stops the checks too. A check is stopped after 20 minutes.
+- Notifications, Félagi reports and `wait_for_thread` wait for the checks, so
+  *finished* means the checks passed.
+
+The command applies to every thread in the project. Empty turns it off.
+
 ## Local servers
 
 Development servers running from the thread's folder, for example `npm run dev`

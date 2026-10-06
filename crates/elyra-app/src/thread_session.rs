@@ -10,6 +10,8 @@ use elyra_provider::{
 };
 use gpui_kit::{App, Context, EventEmitter, Task, WeakEntity};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub enum SessionEvent {
     /// A message went to the agent and a turn began.
@@ -62,6 +64,16 @@ pub struct ThreadSession {
     /// The next launch forks `provider_session_id` (side chats).
     pub fork_pending: bool,
     pub recapping: bool,
+    /// The working tree's fingerprint when the turn began (see `checks`),
+    /// with the turn it belongs to.
+    check_before: Option<u64>,
+    check_turn: u64,
+    /// Stops the project's checks while they run.
+    check_cancel: Option<Arc<AtomicBool>>,
+    /// Automatic fixes sent for failed checks since the last message.
+    check_attempts: u32,
+    /// The user stopped this turn: don't check it.
+    stopped: bool,
     _events: Option<Task<()>>,
 }
 
@@ -115,6 +127,11 @@ impl ThreadSession {
             needs_restart: false,
             fork_pending: false,
             recapping: false,
+            check_before: None,
+            check_turn: 0,
+            check_cancel: None,
+            check_attempts: 0,
+            stopped: false,
             _events: None,
         }
     }
@@ -226,6 +243,7 @@ impl ThreadSession {
         if prompt.text.trim().is_empty() && prompt.images.is_empty() {
             return;
         }
+        self.check_attempts = 0;
         if self.running || self.preparing.is_some() {
             self.queued.push(prompt);
             cx.notify();
@@ -248,8 +266,10 @@ impl ThreadSession {
         );
         let item_id = self.items.last().map(|item| item.id);
         self.running = true;
+        self.stopped = false;
         self.set_status(ThreadStatus::Running, cx);
         cx.emit(SessionEvent::TurnStarted);
+        self.note_tree_before_turn(cx);
 
         let needs_worktree = self.use_worktree
             && matches!(self.thread.environment, Environment::Local)
@@ -633,6 +653,10 @@ impl ThreadSession {
     }
 
     pub fn interrupt(&mut self, cx: &mut Context<Self>) {
+        self.stopped = true;
+        if let Some(cancel) = &self.check_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
         if let Some(provider) = &self.provider
             && let Err(err) = provider.interrupt()
         {
@@ -904,6 +928,9 @@ impl ThreadSession {
     /// cut off (the caller persists the interrupted status).
     pub fn stop_for_quit(&mut self) -> bool {
         let was_running = self.running;
+        if let Some(cancel) = &self.check_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
         self.stop_provider();
         if was_running {
             self.running = false;
@@ -1297,7 +1324,6 @@ impl ThreadSession {
         cx: &mut Context<Self>,
     ) {
         let spent_before = self.spent_usd();
-        self.running = false;
         self.activity = None;
         self.streaming_text.clear();
         self.streaming_thinking.clear();
@@ -1316,6 +1342,21 @@ impl ThreadSession {
             cx,
         );
         self.thread.last_activity_at = Some(Utc::now());
+        // Done means green: the turn ends when the project's checks pass.
+        if !is_error
+            && !self.stopped
+            && let Some(command) = self.check_command()
+        {
+            self.run_checks(command, spent_before, cx);
+            return;
+        }
+        self.finish_turn(is_error, spent_before, cx);
+    }
+
+    /// The end of a turn (after its checks): idle, notify, next message.
+    fn finish_turn(&mut self, is_error: bool, spent_before: f64, cx: &mut Context<Self>) {
+        self.running = false;
+        self.activity = None;
         self.set_status(
             if is_error {
                 ThreadStatus::Failed
@@ -1341,6 +1382,178 @@ impl ThreadSession {
             return;
         }
         self.continue_goal(is_error, cx);
+    }
+
+    // ---- checks -----------------------------------------------------------
+
+    /// The project's check command, if it has one.
+    pub fn check_command(&self) -> Option<String> {
+        self.project
+            .check_command
+            .as_deref()
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .map(str::to_string)
+    }
+
+    /// Remember the working tree as the turn begins, to tell afterwards
+    /// whether the turn changed files.
+    fn note_tree_before_turn(&mut self, cx: &mut Context<Self>) {
+        self.check_turn += 1;
+        self.check_before = None;
+        if self.check_command().is_none() {
+            return;
+        }
+        let turn = self.check_turn;
+        let dir = self.working_dir();
+        let job = cx
+            .background_executor()
+            .spawn(async move { crate::checks::fingerprint(&dir) });
+        cx.spawn(async move |this, cx| {
+            let fingerprint = job.await;
+            let _ = this.update(cx, |this, _| {
+                if this.check_turn == turn {
+                    this.check_before = fingerprint;
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Run the checks if the turn changed files; the turn stays running
+    /// until they are done.
+    fn run_checks(&mut self, command: String, spent_before: f64, cx: &mut Context<Self>) {
+        let dir = self.working_dir();
+        let before = self.check_before.take();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.check_cancel = Some(cancel.clone());
+        self.activity = Some(format!("Running checks: {command}"));
+        cx.notify();
+        let run_command = command.clone();
+        let job = cx.background_executor().spawn(async move {
+            let after = crate::checks::fingerprint(&dir);
+            if before.is_some() && before == after {
+                return None;
+            }
+            Some(crate::checks::run(&dir, &run_command, &cancel))
+        });
+        cx.spawn(async move |this, cx| {
+            let outcome = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.checks_done(command, outcome, spent_before, cx)
+            });
+        })
+        .detach();
+    }
+
+    fn checks_done(
+        &mut self,
+        command: String,
+        outcome: Option<crate::checks::Outcome>,
+        spent_before: f64,
+        cx: &mut Context<Self>,
+    ) {
+        self.check_cancel = None;
+        // The turn changed no files.
+        let Some(outcome) = outcome else {
+            self.finish_turn(false, spent_before, cx);
+            return;
+        };
+        let passed = outcome.passed;
+        self.append(
+            ItemContent::Check {
+                command: command.clone(),
+                passed,
+                exit_code: outcome.exit_code,
+                duration_ms: outcome.duration_ms,
+                output: outcome.output.clone(),
+            },
+            cx,
+        );
+        if passed || self.stopped {
+            self.finish_turn(false, spent_before, cx);
+            return;
+        }
+        let attempts = crate::preferences::Preferences::global(cx).check_fix_attempts;
+        let can_fix = self.check_attempts < attempts
+            && self.queued.is_empty()
+            && self.budget_reached().is_none();
+        if can_fix {
+            self.check_attempts += 1;
+            let prompt =
+                crate::checks::fix_prompt(&command, &outcome, self.check_attempts, attempts);
+            self.activity = None;
+            self.send(Prompt::text(prompt), cx);
+            return;
+        }
+        if attempts > 0 && self.check_attempts >= attempts {
+            self.notice(
+                format!("The checks still fail after {attempts} automatic fixes; over to you."),
+                true,
+                cx,
+            );
+        }
+        self.finish_turn(true, spent_before, cx);
+    }
+
+    /// Run the checks now, outside a turn (to try the command): the result is
+    /// shown but not sent to the agent.
+    pub fn run_checks_now(&mut self, cx: &mut Context<Self>) {
+        if self.running || self.check_cancel.is_some() {
+            return;
+        }
+        let Some(command) = self.check_command() else {
+            return;
+        };
+        let dir = self.working_dir();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.check_cancel = Some(cancel.clone());
+        self.activity = Some(format!("Running checks: {command}"));
+        cx.notify();
+        let run_command = command.clone();
+        let mine = cancel.clone();
+        let job = cx
+            .background_executor()
+            .spawn(async move { crate::checks::run(&dir, &run_command, &cancel) });
+        cx.spawn(async move |this, cx| {
+            let outcome = job.await;
+            let _ = this.update(cx, |this, cx| {
+                // A turn may have started meanwhile, with checks of its own.
+                if this
+                    .check_cancel
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, &mine))
+                {
+                    this.check_cancel = None;
+                    this.activity = None;
+                }
+                this.append(
+                    ItemContent::Check {
+                        command,
+                        passed: outcome.passed,
+                        exit_code: outcome.exit_code,
+                        duration_ms: outcome.duration_ms,
+                        output: outcome.output,
+                    },
+                    cx,
+                );
+            });
+        })
+        .detach();
+    }
+
+    /// Whether the thread's last checks failed (and nothing came after them).
+    pub fn checks_failed(&self) -> bool {
+        self.items
+            .iter()
+            .rev()
+            .find(|item| {
+                !matches!(
+                    item.content,
+                    ItemContent::TurnSummary { .. } | ItemContent::Notice { .. }
+                )
+            })
+            .is_some_and(|item| matches!(item.content, ItemContent::Check { passed: false, .. }))
     }
 
     // ---- goals ------------------------------------------------------------
@@ -1513,7 +1726,8 @@ impl ThreadSession {
                 ItemContent::TurnSummary { cost_usd, .. } => cost_usd,
                 _ => None,
             })
-            .sum()
+            // An empty f64 sum is -0.0, shown as "$-0.00".
+            .fold(0.0, |total, cost| total + cost)
     }
 
     /// The budget, when the thread has spent all of it.

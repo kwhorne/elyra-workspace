@@ -31,6 +31,10 @@ pub struct Project {
     /// Extra instructions given to agents in this project.
     #[serde(default)]
     pub instructions: Option<String>,
+    /// Shell command run after a turn that changed files (tests, lint);
+    /// failures go back to the agent.
+    #[serde(default)]
+    pub check_command: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -321,6 +325,16 @@ pub enum ItemContent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         before: Option<String>,
         after: String,
+    },
+    /// The project's checks, run after a turn that changed files.
+    Check {
+        command: String,
+        passed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        duration_ms: u64,
+        /// The end of the output.
+        output: String,
     },
 }
 

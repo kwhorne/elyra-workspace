@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Done means green.** Give a project a check command in the Context tab (Elyra
+  suggests one: `cargo test`, `php artisan test`, `npm test`…). After every turn
+  that changed files it runs; if it fails, the output goes back to the agent
+  (twice by default, Settings → Agents & MCP), and the thread is only done when
+  the checks pass. Notifications, Félagi reports and `wait_for_thread` wait for
+  them.
+- The budget no longer shows "$-0.00 spent".
+
 ## 0.9.1
 
 - **Large file editor.** The expand button in the Files tab (or ⌥⌘E) slides the

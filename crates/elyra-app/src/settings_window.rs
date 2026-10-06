@@ -900,7 +900,7 @@ fn external_page() -> SettingPage {
                         SettingField::render(|_, _, cx| render_thread_pairs(cx)),
                     )
                     .description(
-                        "The first time an agent messages, stops, renames or archives another thread, you are asked. Always allow remembers the pair.",
+                        "The first time an agent messages, stops, renames or archives another thread, or opens a page in its browser, you are asked. Always allow remembers the pair.",
                     ),
                 ),
         )
@@ -915,6 +915,27 @@ fn external_page() -> SettingPage {
                 )
                 .description("A goal pauses after this many turns without being achieved."),
             ),
+        )
+        .group(
+            SettingGroup::new()
+                .title("Checks after each turn")
+                .description(
+                    "Set a project's check command (tests, lint) in its settings. It runs after every turn that changed files; the thread is done when it passes.",
+                )
+                .item(
+                    SettingItem::new(
+                        "Automatic fixes when checks fail",
+                        number_field(
+                            number(0., 10., 1.),
+                            |p| p.check_fix_attempts as f64,
+                            |p, v| p.check_fix_attempts = v.max(0.).round() as u32,
+                        )
+                        .default_value(2.),
+                    )
+                    .description(
+                        "The output goes back to the agent this many times before the thread is handed to you. 0 only reports the failure.",
+                    ),
+                ),
         )
         .group(
             SettingGroup::new()

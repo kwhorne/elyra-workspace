@@ -180,6 +180,19 @@ fn message_for(content: &ItemContent) -> Option<Message> {
             content: clip(text),
             ..Message::new("system")
         },
+        ItemContent::Check {
+            command,
+            passed,
+            output,
+            ..
+        } => Message {
+            content: Some(format!(
+                "Checks {}: {command}",
+                if *passed { "passed" } else { "failed" }
+            )),
+            payload: Some(json!({ "passed": passed, "output": crate::checks::tail(output, 4000) })),
+            ..Message::new("system")
+        },
         ItemContent::Approval { tool_name, .. } => Message {
             content: Some(format!(
                 "Waiting for approval in Elyra Workspace: {tool_name}"

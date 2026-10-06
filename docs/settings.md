@@ -64,6 +64,7 @@ arguments (ACP agents), environment and accounts. See [Providers](providers.md).
 | Database in checkpoints | In Grove apps, each checkpoint also snapshots the database, and restoring puts it back ([Checkpoints](chat.md#checkpoints)). On by default. |
 | Grove tools for agents | In projects [Elyra Grove](context-and-goals.md#grove) runs as an app, agents also get Grove's MCP server, read-only: sites, recent requests, request chains and explanations, logs and database schema. On by default. |
 | Automatic turns per goal | How many turns a [goal](context-and-goals.md#goal) may take on its own before it pauses (default 10) |
+| Automatic fixes when checks fail | How many times a project's failed [checks](context-and-goals.md#checks-after-each-turn) go back to the agent before the thread is handed to you (default 2; 0 only reports them) |
 | External clients | Pair, configure and revoke Claude Desktop, Codex and other MCP clients |
 | Activity | The audit log of gateway calls |
 

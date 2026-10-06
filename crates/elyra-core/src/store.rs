@@ -96,10 +96,13 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE threads ADD COLUMN felagi_issue TEXT;
 "#,
+    r#"
+    ALTER TABLE projects ADD COLUMN check_command TEXT;
+"#,
 ];
 
 const PROJECT_COLUMNS: &str =
-    "id, name, path, created_at, pinned, icon, color, space, instructions";
+    "id, name, path, created_at, pinned, icon, color, space, instructions, check_command";
 const THREAD_COLUMNS: &str = "id, project_id, title, provider, model, permission_mode,
     provider_session_id, environment, status, archived, created_at, updated_at, effort,
     pinned, done, read_at, last_activity_at, parent_id, notes, recap, pinned_items, account,
@@ -168,6 +171,7 @@ impl Store {
             color: None,
             space: None,
             instructions: None,
+            check_command: None,
         };
         self.conn.execute(
             "INSERT INTO projects (id, name, path, created_at) VALUES (?1, ?2, ?3, ?4)",
@@ -232,7 +236,7 @@ impl Store {
     pub fn update_project(&self, project: &Project) -> Result<()> {
         self.conn.execute(
             "UPDATE projects SET name = ?2, pinned = ?3, icon = ?4, color = ?5, space = ?6,
-                instructions = ?7 WHERE id = ?1",
+                instructions = ?7, check_command = ?8 WHERE id = ?1",
             params![
                 project.id.to_string(),
                 project.name,
@@ -240,7 +244,8 @@ impl Store {
                 project.icon,
                 project.color,
                 project.space,
-                project.instructions
+                project.instructions,
+                project.check_command
             ],
         )?;
         Ok(())
@@ -748,6 +753,7 @@ fn project_from_row(row: &Row) -> rusqlite::Result<Project> {
         color: row.get(6)?,
         space: row.get(7)?,
         instructions: row.get(8)?,
+        check_command: row.get(9)?,
     })
 }
 
@@ -822,6 +828,7 @@ mod tests {
         0x1a65_6b3c_775e_c71e,
         0x534f_4e32_21e0_c19d,
         0xf69a_d7c2_003d_7105,
+        0x3228_ebaa_3834_b92a,
     ];
 
     #[test]
@@ -1086,6 +1093,7 @@ mod tests {
         let mut renamed = store.projects().unwrap()[0].clone();
         renamed.name = "Renamed".into();
         renamed.icon = Some("🚀".into());
+        renamed.check_command = Some("cargo test".into());
         renamed.pinned = true;
         store.update_project(&renamed).unwrap();
         assert_eq!(store.projects().unwrap()[0], renamed);

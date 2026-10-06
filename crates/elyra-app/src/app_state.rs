@@ -652,6 +652,12 @@ pub fn transcript_text(items: &[elyra_core::TranscriptItem], budget: usize) -> S
                 "[tool] {name}: {}",
                 crate::transcript::tool_summary(name, input)
             )),
+            ItemContent::Check {
+                command, passed, ..
+            } => Some(format!(
+                "[checks] {command}: {}",
+                if *passed { "passed" } else { "failed" }
+            )),
             _ => None,
         })
         .collect();

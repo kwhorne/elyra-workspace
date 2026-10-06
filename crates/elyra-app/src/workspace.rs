@@ -836,7 +836,15 @@ impl Workspace {
         let Some(thread) = self.app.read(cx).thread(id).cloned() else {
             return;
         };
+        let checks_failed = self
+            .app
+            .read(cx)
+            .existing_session(id)
+            .is_some_and(|session| session.read(cx).checks_failed());
         let (message, kind) = match event {
+            SessionEvent::TurnCompleted if checks_failed => {
+                ("The checks failed", NotificationType::Error)
+            }
             SessionEvent::TurnCompleted if thread.status == ThreadStatus::Failed => {
                 ("Stopped with an error", NotificationType::Error)
             }
