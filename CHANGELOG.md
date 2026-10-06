@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.1
 
 - **Tabs stay in their place.** With many open threads the tab bar no longer
   runs into the tools panel: it scrolls, keeps the active tab in view, and a
