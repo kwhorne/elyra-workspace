@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
 - **Done means green.** Give a project a check command in the Context tab (Elyra
   suggests one: `cargo test`, `php artisan test`, `npm test`…). After every turn
