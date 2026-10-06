@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.1
 
 - **Large file editor.** The expand button in the Files tab (or ⌥⌘E) slides the
   file tree and editor in from the right over half the window, instead of the
