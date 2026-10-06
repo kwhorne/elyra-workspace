@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Large file editor.** The expand button in the Files tab (or ⌥⌘E) slides the
+  file tree and editor in from the right over half the window, instead of the
+  narrow tools panel. Drag its edge to resize it.
+
 ## 0.9.0
 
 - **Quit when the agents finish.** ⌘Q while agents are working offers to hide

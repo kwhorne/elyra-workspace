@@ -31,6 +31,7 @@ gpui_kit::actions!(
         FindFile,
         SearchInFiles,
         ShowFiles,
+        OpenFilesEditor,
         OpenInEditor,
         ToggleTerminalWorkspace,
         ToggleSplit,
@@ -327,6 +328,14 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ShowChanges
     ),
     shortcut!("files", "Panels", "Files", "cmd-shift-e", WS, ShowFiles),
+    shortcut!(
+        "files_editor",
+        "Panels",
+        "Large file editor",
+        "cmd-alt-e",
+        WS,
+        OpenFilesEditor
+    ),
     shortcut!(
         "browser",
         "Panels",

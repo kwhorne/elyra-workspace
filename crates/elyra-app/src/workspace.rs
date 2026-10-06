@@ -91,6 +91,8 @@ pub struct Workspace {
     forward: Vec<ThreadId>,
     /// The terminal takes the whole content area (⇧⌘J).
     terminal_full: bool,
+    /// The thread whose Files view is open in the large editor sheet.
+    files_sheet: Option<ThreadId>,
     /// Project space shown in the sidebar; None shows all.
     pub(crate) active_space: Option<String>,
     review: Option<Entity<crate::review_inbox::ReviewInbox>>,
@@ -203,6 +205,7 @@ impl Workspace {
             back: Vec::new(),
             forward: Vec::new(),
             terminal_full: false,
+            files_sheet: None,
             active_space,
             review: None,
             panel: None,
@@ -268,6 +271,15 @@ impl Workspace {
         };
         if let Some(panel) = panel {
             self.toggle_panel(panel, window, cx);
+        }
+        // `files` or `files:<path>`: the large file editor.
+        if let Ok(spec) = std::env::var("ELYRA_OPEN_PANEL")
+            && let Some(rest) = spec.strip_prefix("files")
+        {
+            if let Some(path) = rest.strip_prefix(':') {
+                self.open_file(path, None, window, cx);
+            }
+            self.open_files_sheet(window, cx);
         }
         // Development: open an address in the active thread's browser.
         if let (Ok(url), Some(id)) = (std::env::var("ELYRA_BROWSER_URL"), self.active) {
@@ -460,13 +472,15 @@ impl Workspace {
                     self._subscriptions.push(cx.subscribe_in(
                         &view,
                         window,
-                        move |this, _, event: &FilesEvent, window, cx| {
-                            let FilesEvent::Mention(path) = event;
-                            if let Some(thread) = this.thread_views.get(&id) {
-                                thread.update(cx, |thread, cx| {
-                                    thread.append_to_composer(&format!("@{path} "), window, cx)
-                                });
+                        move |this, _, event: &FilesEvent, window, cx| match event {
+                            FilesEvent::Mention(path) => {
+                                if let Some(thread) = this.thread_views.get(&id) {
+                                    thread.update(cx, |thread, cx| {
+                                        thread.append_to_composer(&format!("@{path} "), window, cx)
+                                    });
+                                }
                             }
+                            FilesEvent::Expand => this.open_files_sheet(window, cx),
                         },
                     ));
                     self.files_views.insert(id, view);
@@ -1171,6 +1185,47 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         crate::shortcuts::show(window, cx);
+    }
+
+    fn on_open_files_editor(
+        &mut self,
+        _: &OpenFilesEditor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.files_sheet.is_some() && window.has_active_sheet(cx) {
+            window.close_sheet(cx);
+        } else {
+            self.open_files_sheet(window, cx);
+        }
+    }
+
+    /// Show the active thread's Files view in a sheet over half the window,
+    /// where the editor has room; the side panel is too narrow for it.
+    pub(crate) fn open_files_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.active else {
+            return;
+        };
+        if !self.files_views.contains_key(&id) {
+            self.show_right_tab(RightTab::Files, window, cx);
+        }
+        let Some(view) = self.files_views.get(&id).cloned() else {
+            return;
+        };
+        view.update(cx, |view, cx| view.set_in_sheet(true, cx));
+        self.files_sheet = Some(id);
+        let title = self
+            .front_thread(cx)
+            .map(|(project, _)| project)
+            .unwrap_or_default();
+        window.open_sheet(cx, move |sheet, _, _| {
+            sheet
+                .size(relative(0.5))
+                .p_0()
+                .title(title.clone())
+                .child(div().size_full().child(view.clone()))
+        });
+        cx.notify();
     }
 
     fn on_toggle_terminal_workspace(
@@ -2019,6 +2074,21 @@ impl Workspace {
                 .get(&id)
                 .map(|v| v.clone().into_any_element())
                 .unwrap_or_else(|| div().into_any_element()),
+            (RightTab::Files, Some(id)) if self.files_sheet == Some(id) => v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child("Open in the large editor.")
+                .child(
+                    Button::new("files-sheet-back")
+                        .small()
+                        .label("Show it here")
+                        .on_click(|_, window, cx| window.close_sheet(cx)),
+                )
+                .into_any_element(),
             (RightTab::Files, Some(id)) => self
                 .files_views
                 .get(&id)
@@ -2173,6 +2243,15 @@ impl Render for Workspace {
             None => "Elyra Workspace".to_string(),
         };
         window.set_window_title(&window_title);
+        // The large editor sheet was closed: hand the Files view back.
+        if let Some(id) = self.files_sheet
+            && !window.has_active_sheet(cx)
+        {
+            self.files_sheet = None;
+            if let Some(view) = self.files_views.get(&id) {
+                view.update(cx, |view, cx| view.set_in_sheet(false, cx));
+            }
+        }
         let full_terminal = self
             .terminal_full
             .then(|| self.active.and_then(|id| self.terminal_views.get(&id)))
@@ -2240,6 +2319,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_context))
             .on_action(cx.listener(Self::on_show_shortcuts))
             .on_action(cx.listener(Self::on_toggle_terminal_workspace))
+            .on_action(cx.listener(Self::on_open_files_editor))
             .on_action(cx.listener(Self::on_open_in_editor))
             .on_action(cx.listener(Self::on_new_side_chat))
             .on_action(cx.listener(Self::on_import_thread))

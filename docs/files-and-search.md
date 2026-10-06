@@ -47,6 +47,14 @@ A file tree and an editor for the active thread's folder, in the tools panel.
 - The refresh button re-reads the tree and checks the open file. The tree also
   refreshes after every agent turn.
 
+### Large editor (⌥⌘E)
+
+The tools panel is narrow for editing. The expand button in the Files header
+(or **⌥⌘E**) slides the tree and editor in from the right over half the window;
+drag its edge to make it wider. The conversation stays visible beside it. Close
+it with **×**, **⌥⌘E** or a click outside it; the file stays open in the Files
+tab.
+
 ## Open in an external editor (⌘O)
 
 **⌘O** opens the thread's folder in your editor. If a file is open in the Files

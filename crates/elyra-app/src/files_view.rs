@@ -135,6 +135,8 @@ struct OpenFile {
 pub enum FilesEvent {
     /// Mention a file in the composer.
     Mention(String),
+    /// Open this view in the large editor sheet.
+    Expand,
 }
 
 pub struct FilesView {
@@ -143,6 +145,8 @@ pub struct FilesView {
     expanded: HashSet<String>,
     open: Option<OpenFile>,
     show_tree: bool,
+    /// Shown in the large editor sheet rather than the side panel.
+    in_sheet: bool,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -157,6 +161,7 @@ impl FilesView {
             expanded: HashSet::new(),
             open: None,
             show_tree: true,
+            in_sheet: false,
             focus: cx.focus_handle(),
             _subscriptions: Vec::new(),
         };
@@ -212,6 +217,13 @@ impl FilesView {
             self.load_dir(rel, cx);
         }
         cx.notify();
+    }
+
+    pub fn set_in_sheet(&mut self, in_sheet: bool, cx: &mut Context<Self>) {
+        if self.in_sheet != in_sheet {
+            self.in_sheet = in_sheet;
+            cx.notify();
+        }
     }
 
     pub fn open_file(
@@ -643,6 +655,16 @@ impl FilesView {
                         })),
                 )
             })
+            .when(!self.in_sheet, |this| {
+                this.child(
+                    Button::new("files-expand")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::Maximize)
+                        .tooltip("Open in the large editor (⌥⌘E)")
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(FilesEvent::Expand))),
+                )
+            })
             .child(
                 Button::new("files-refresh")
                     .ghost()
@@ -769,7 +791,7 @@ impl Render for FilesView {
                     .when(self.show_tree, |this| {
                         this.child(
                             div()
-                                .w(px(220.))
+                                .w(px(if self.in_sheet { 260. } else { 220. }))
                                 .flex_none()
                                 .h_full()
                                 .border_r_1()
