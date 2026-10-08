@@ -109,7 +109,7 @@ pub fn request(cx: &mut App) {
 }
 
 /// Stop the agents (their turns can be resumed after the next launch) and quit.
-fn quit_now(cx: &mut App) {
+pub(crate) fn quit_now(cx: &mut App) {
     let app = cx.global::<Quitting>().app.clone();
     app.update(cx, |app, cx| app.prepare_quit(cx));
     cx.quit();

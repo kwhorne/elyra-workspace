@@ -96,6 +96,20 @@ pub fn check(manual: bool, cx: &mut App) {
             cx.global_mut::<Updater>().status = Status::Idle;
             let current = env!("CARGO_PKG_VERSION");
             match result {
+                Ok(release)
+                    if updates::is_newer(&release.version, current)
+                        && crate::recovery::is_skipped(&release.version) =>
+                {
+                    if manual {
+                        notify(
+                            Notification::info(format!(
+                                "Elyra Workspace {} didn't start on this Mac, so it is skipped. The next release will be offered.",
+                                release.version
+                            )),
+                            cx,
+                        );
+                    }
+                }
                 Ok(release) if updates::is_newer(&release.version, current) => {
                     found(release, manual, cx)
                 }
@@ -341,6 +355,20 @@ pub fn on_quit(cx: &mut App) {
         }
         Err(err) => log::error!("installing the update: {err:#}"),
     }
+}
+
+/// Drop a downloaded update (going back to the previous version instead).
+pub fn discard_staged(cx: &mut App) {
+    if !cx.has_global::<Updater>() {
+        return;
+    }
+    let updater = cx.global_mut::<Updater>();
+    if let Status::Ready { staged, .. } = &updater.status {
+        let _ = std::fs::remove_dir_all(staged);
+    }
+    updater.status = Status::Idle;
+    updater.relaunch = false;
+    updater.waiting = false;
 }
 
 /// Waiting for the agents to finish before restarting.

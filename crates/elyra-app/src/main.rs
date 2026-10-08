@@ -28,6 +28,7 @@ mod pr_view;
 mod preferences;
 mod quitting;
 mod race;
+mod recovery;
 mod review_inbox;
 mod search;
 mod settings_window;
@@ -74,6 +75,10 @@ fn main() {
         );
         std::process::exit(0);
     };
+    // An update that keeps failing to start: the previous version took over.
+    if std::env::var_os("ELYRA_HEADLESS").is_none() && recovery::on_launch() {
+        std::process::exit(0);
+    }
     elyra_core::shell_env::inherit_login_shell_path();
 
     let state = match AppState::load() {
@@ -121,13 +126,19 @@ fn main() {
         quitting::init(app.clone(), cx);
         if !headless {
             quitting::offer_resume(cx);
+            recovery::announce(cx);
+            recovery::confirm_start_later(cx);
         }
         cx.on_action(|_: &actions::Quit, cx| quitting::request(cx));
         cx.on_action(|_: &actions::OpenSettings, cx| settings_window::open(cx));
         cx.on_action(|_: &actions::CheckForUpdates, cx| updater::check(true, cx));
+        cx.on_action(|_: &actions::GoBackVersion, cx| recovery::offer_go_back(cx));
         cx.on_action(|_: &actions::OpenDocumentation, cx| cx.open_url(DOCS_URL));
         let shutdown_app = app.clone();
         cx.on_app_quit(move |cx| {
+            if !headless {
+                recovery::confirm_start();
+            }
             felagi_runtime::hand_back(cx);
             shutdown_app.update(cx, |app, cx| app.prepare_quit(cx));
             updater::on_quit(cx);

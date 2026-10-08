@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Back to the previous version.** Each update keeps the version it replaced.
+  If a new version fails to start twice in a row, Elyra Workspace goes back to
+  the previous one by itself, says so, and skips the broken version until the
+  next release. Command palette → **Go back to the previous version…** does it
+  by hand.
 - **Checks see every change.** Whether a turn changed files is now judged
   against the snapshot taken before the message reached the agent, so a quick
   agent can no longer slip a change past the checks.

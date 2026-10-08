@@ -48,6 +48,21 @@ folder you can't write to. Then the notification links to the download instead.
 Move the app to Applications to get automatic updates. Versions before 0.1.2 only
 link to the download, so update those once by hand.
 
+### Going back to the previous version
+
+Each update keeps the version it replaced, hidden beside the app
+(`.Elyra Workspace.app.previous`; it isn't a second app in Spotlight or Launchpad).
+
+- **If a new version doesn't start**: when it fails to get through its first 20
+  seconds twice in a row (a crash, or it hangs and you force it to quit),
+  Elyra Workspace puts the previous version back and starts it. A notification
+  says so, and the broken version isn't offered again; the next release is.
+- **By hand**: command palette (**⌘K**) → **Go back to the previous version…**,
+  for when a new version starts but something in it doesn't work for you. The
+  app restarts as the previous version; running agents stop and can be resumed.
+
+Quitting normally within those 20 seconds counts as a good start.
+
 ## Privacy
 
 - Elyra Workspace has no account and sends no telemetry. The only network requests

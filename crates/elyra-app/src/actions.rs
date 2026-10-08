@@ -24,6 +24,7 @@ gpui_kit::actions!(
         FindInThread,
         FocusComposer,
         CheckForUpdates,
+        GoBackVersion,
         CommitAndPush,
         ShowCodeReview,
         ManageWorktrees,

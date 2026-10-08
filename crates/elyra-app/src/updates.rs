@@ -377,23 +377,57 @@ pub fn prepare(release: &Release, bundle: &Path, team: &str, work: &Path) -> Res
     Ok(staged)
 }
 
-/// Swap the staged app into place. The old version is moved aside first and
-/// restored if the swap fails.
+/// Swap the staged app into place. The old version is kept beside it as the
+/// previous version (to go back to), and restored if the swap fails.
 pub fn install(staged: &Path, bundle: &Path) -> Result<()> {
     if !staged.exists() {
         bail!("the update is no longer staged");
     }
-    let name = bundle.file_name().unwrap_or_default().to_string_lossy();
-    let backup = bundle.with_file_name(format!(".{name}.old"));
-    if backup.exists() {
-        std::fs::remove_dir_all(&backup)?;
+    let previous = previous_path(bundle);
+    if previous.exists() {
+        std::fs::remove_dir_all(&previous)?;
     }
-    std::fs::rename(bundle, &backup).context("moving the current version aside")?;
+    std::fs::rename(bundle, &previous).context("moving the current version aside")?;
     if let Err(err) = std::fs::rename(staged, bundle) {
-        let _ = std::fs::rename(&backup, bundle);
+        let _ = std::fs::rename(&previous, bundle);
         return Err(err).context("moving the new version into place");
     }
-    let _ = std::fs::remove_dir_all(&backup);
+    Ok(())
+}
+
+/// Where the version an update replaced is kept, beside the app.
+pub fn previous_path(bundle: &Path) -> PathBuf {
+    let name = bundle.file_name().unwrap_or_default().to_string_lossy();
+    bundle.with_file_name(format!(".{name}.previous"))
+}
+
+/// The version kept from before the last update, if any.
+pub fn previous_version(bundle: &Path) -> Option<String> {
+    let previous = previous_path(bundle);
+    previous
+        .exists()
+        .then(|| bundle_version(&previous))
+        .flatten()
+}
+
+/// Put the previous version back in place of the current one, which is
+/// removed.
+pub fn roll_back(bundle: &Path) -> Result<()> {
+    let previous = previous_path(bundle);
+    if !previous.exists() {
+        bail!("no previous version is kept");
+    }
+    let name = bundle.file_name().unwrap_or_default().to_string_lossy();
+    let broken = bundle.with_file_name(format!(".{name}.broken"));
+    if broken.exists() {
+        std::fs::remove_dir_all(&broken)?;
+    }
+    std::fs::rename(bundle, &broken).context("moving the current version aside")?;
+    if let Err(err) = std::fs::rename(&previous, bundle) {
+        let _ = std::fs::rename(&broken, bundle);
+        return Err(err).context("moving the previous version into place");
+    }
+    let _ = std::fs::remove_dir_all(&broken);
     Ok(())
 }
 
@@ -528,12 +562,25 @@ mod tests {
             std::fs::read_to_string(bundle.join("Contents/version")).unwrap(),
             "new"
         );
-        assert!(!staged.exists() && !dir.join(".Elyra Workspace.app.old").exists());
+        assert!(!staged.exists());
+        assert_eq!(
+            std::fs::read_to_string(previous_path(&bundle).join("Contents/version")).unwrap(),
+            "old",
+            "the replaced version is kept"
+        );
         assert!(install(&staged, &bundle).is_err(), "nothing staged");
         assert_eq!(
             std::fs::read_to_string(bundle.join("Contents/version")).unwrap(),
             "new"
         );
+        roll_back(&bundle).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(bundle.join("Contents/version")).unwrap(),
+            "old"
+        );
+        assert!(!previous_path(&bundle).exists());
+        assert!(!dir.join(".Elyra Workspace.app.broken").exists());
+        assert!(roll_back(&bundle).is_err(), "nothing to go back to");
         assert!(
             self_update_blocker(Some(&bundle)).is_none(),
             "temp dir is writable"

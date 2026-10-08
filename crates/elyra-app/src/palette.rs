@@ -254,6 +254,12 @@ fn commands() -> Vec<Command> {
             IconName::Download,
             actions::CheckForUpdates
         ),
+        command!(
+            "Go back to the previous version…",
+            "",
+            IconName::Undo2,
+            actions::GoBackVersion
+        ),
         command!("About Elyra Workspace", "", IconName::Info, actions::About),
     ]
 }
