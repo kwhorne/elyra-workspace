@@ -162,8 +162,13 @@ once. Write the task, pick at least two agents and press **Start**. Each agent g
 its own thread and its own Git worktree, so they don't get in each other's way.
 
 The comparison opens in the middle of the window. For each candidate it shows its
-status, the files and lines it changed, its cost and its reply. **Open** shows the
-thread, with its diff in the Changes tab. When one is done and you like it best:
+status, whether its [checks](context-and-goals.md#checks-after-each-turn) and
+[journeys](browser.md#journeys) passed, the files and lines it changed, its cost
+and its reply. **Open** shows the thread, with its diff in the Changes tab.
+
+Elyra **recommends** one of the finished candidates and says why: green checks and
+journeys first, then the smallest change, then the lowest cost. It's advice; you
+pick. When one is done and you like it best:
 
 1. **Use this one** commits the candidate's worktree and brings its changes into
    the project folder with `git merge --squash`. They are staged, not committed,

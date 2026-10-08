@@ -137,13 +137,101 @@ pub fn start_dialog(
 }
 
 /// What the comparison shows for one candidate.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 struct Candidate {
     cost: f64,
     reply: String,
     files: usize,
     insertions: usize,
     deletions: usize,
+    /// Finished its turn with a reply (its checks may have failed).
+    done: bool,
+    /// The last checks: passed or not (None: none ran).
+    checks: Option<bool>,
+    /// Journeys whose last replay passed / failed.
+    journeys_passed: usize,
+    journeys_failed: usize,
+}
+
+/// How a candidate's work verified: its last checks and each journey's last
+/// replay.
+fn verification(items: &[elyra_core::TranscriptItem]) -> (Option<bool>, usize, usize) {
+    let mut checks = None;
+    let mut journeys: HashMap<&str, bool> = HashMap::new();
+    for item in items {
+        match &item.content {
+            elyra_core::ItemContent::Check { passed, .. } => checks = Some(*passed),
+            elyra_core::ItemContent::Journey { name, passed, .. } => {
+                journeys.insert(name, *passed);
+            }
+            _ => {}
+        }
+    }
+    let passed = journeys.values().filter(|p| **p).count();
+    (checks, passed, journeys.len() - passed)
+}
+
+/// The candidate to recommend among the finished ones, and why: green checks
+/// and journeys first, then the smallest change, then the lowest cost.
+fn recommend(candidates: &[(ThreadId, Candidate)]) -> Option<(ThreadId, String)> {
+    let done: Vec<&(ThreadId, Candidate)> = candidates.iter().filter(|(_, c)| c.done).collect();
+    let verified = |c: &Candidate| -> (u8, u8) {
+        let checks = match c.checks {
+            Some(true) => 2,
+            None => 1,
+            Some(false) => 0,
+        };
+        let journeys = if c.journeys_failed > 0 {
+            0
+        } else if c.journeys_passed > 0 {
+            2
+        } else {
+            1
+        };
+        (checks, journeys)
+    };
+    let size = |c: &Candidate| c.insertions + c.deletions;
+    let best = done.iter().copied().max_by(|(_, a), (_, b)| {
+        verified(a)
+            .cmp(&verified(b))
+            .then(size(b).cmp(&size(a)))
+            .then(
+                b.cost
+                    .partial_cmp(&a.cost)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+    })?;
+    let (id, winner) = best;
+    let others: Vec<&Candidate> = done
+        .iter()
+        .filter(|(o, _)| o != id)
+        .map(|(_, c)| c)
+        .collect();
+    let mut reasons = Vec::new();
+    if winner.checks == Some(true) {
+        reasons.push(if others.iter().all(|o| o.checks != Some(true)) {
+            "the only one whose checks pass"
+        } else {
+            "its checks pass"
+        });
+    }
+    if winner.journeys_passed > 0 && winner.journeys_failed == 0 {
+        reasons.push("its journeys pass");
+    }
+    let tied = others.iter().any(|o| verified(o) == verified(winner));
+    if tied && others.iter().all(|o| size(o) >= size(winner)) {
+        reasons.push("the smallest change");
+    } else if tied && others.iter().all(|o| o.cost >= winner.cost) {
+        reasons.push("the lowest cost");
+    }
+    if reasons.is_empty() {
+        reasons.push(if others.is_empty() {
+            "the only one done so far"
+        } else {
+            "it did best on the checks"
+        });
+    }
+    Some((*id, reasons.join(", ")))
 }
 
 /// The comparison panel for one best-of-N run.
@@ -231,9 +319,16 @@ impl RaceView {
                 }
                 (session.spent_usd(), session.last_reply())
             };
+            let (checks, journeys_passed, journeys_failed) = verification(&session.read(cx).items);
             let entry = self.candidates.entry(thread.id).or_default();
             entry.cost = cost;
+            // Finished, also when its checks failed (that counts against it).
+            entry.done = matches!(thread.status, ThreadStatus::Idle | ThreadStatus::Failed)
+                && !reply.is_empty();
             entry.reply = reply;
+            entry.checks = checks;
+            entry.journeys_passed = journeys_passed;
+            entry.journeys_failed = journeys_failed;
             if let Environment::Worktree { path, .. } = thread.environment {
                 let id = thread.id;
                 let job = cx
@@ -371,9 +466,42 @@ impl RaceView {
         cx.notify();
     }
 
-    fn card(&self, thread: &elyra_core::Thread, cx: &Context<Self>) -> AnyElement {
+    /// The recommended candidate, among this race's.
+    fn recommended(&self, cx: &App) -> Option<(ThreadId, String)> {
+        let candidates: Vec<(ThreadId, Candidate)> = self
+            .threads(cx)
+            .iter()
+            .filter_map(|t| Some((t.id, self.candidates.get(&t.id)?.clone())))
+            .collect();
+        recommend(&candidates)
+    }
+
+    fn card(
+        &self,
+        thread: &elyra_core::Thread,
+        recommended: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let id = thread.id;
         let info = self.candidates.get(&id).cloned().unwrap_or_default();
+        let verdict = |label: &str, ok: Option<bool>| {
+            let (text, color) = match ok {
+                Some(true) => (format!("{label} ✓"), cx.theme().success),
+                Some(false) => (format!("{label} ✗"), cx.theme().danger),
+                None => (format!("{label} –"), cx.theme().muted_foreground),
+            };
+            div().text_xs().text_color(color).child(text)
+        };
+        let journeys = (info.journeys_passed + info.journeys_failed > 0).then(|| {
+            verdict(
+                &format!(
+                    "Journeys {}/{}",
+                    info.journeys_passed,
+                    info.journeys_passed + info.journeys_failed
+                ),
+                Some(info.journeys_failed == 0),
+            )
+        });
         let (status, color) = match thread.status {
             ThreadStatus::Running => ("Working", cx.theme().info),
             ThreadStatus::NeedsApproval => ("Needs you", cx.theme().warning),
@@ -395,7 +523,7 @@ impl RaceView {
             .p_3()
             .rounded_lg()
             .border_1()
-            .border_color(if picked {
+            .border_color(if picked || (recommended && self.picked.is_none()) {
                 cx.theme().success
             } else {
                 cx.theme().border
@@ -410,7 +538,24 @@ impl RaceView {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(thread.provider.label()),
                     )
+                    .when(recommended && self.picked.is_none(), |this| {
+                        this.child(
+                            div()
+                                .px_1()
+                                .rounded_sm()
+                                .text_xs()
+                                .bg(cx.theme().success.opacity(0.15))
+                                .text_color(cx.theme().success)
+                                .child("Recommended"),
+                        )
+                    })
                     .child(div().text_xs().text_color(color).child(status)),
+            )
+            .child(
+                h_flex()
+                    .gap_3()
+                    .child(verdict("Checks", info.checks))
+                    .children(journeys),
             )
             .child(
                 h_flex()
@@ -479,7 +624,24 @@ impl Render for RaceView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let threads = self.threads(cx);
         let task = self.task.clone();
-        let cards: Vec<AnyElement> = threads.iter().map(|t| self.card(t, cx)).collect();
+        let recommended = self.recommended(cx);
+        let cards: Vec<AnyElement> = threads
+            .iter()
+            .map(|t| {
+                self.card(
+                    t,
+                    recommended.as_ref().is_some_and(|(id, _)| *id == t.id),
+                    cx,
+                )
+            })
+            .collect();
+        let advice = recommended
+            .as_ref()
+            .filter(|_| self.picked.is_none())
+            .and_then(|(id, why)| {
+                let thread = threads.iter().find(|t| t.id == *id)?;
+                Some(format!("Recommended: {}, {why}.", thread.provider.label()))
+            });
         let others = threads.len().saturating_sub(1);
         v_flex()
             .size_full()
@@ -512,6 +674,14 @@ impl Render for RaceView {
                     .text_color(cx.theme().muted_foreground)
                     .child(task.chars().take(400).collect::<String>())
             }))
+            .children(advice.map(|advice| {
+                h_flex()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(cx.theme().success)
+                    .child(Icon::new(IconName::Sparkles).small())
+                    .child(advice)
+            }))
             .child(if cards.is_empty() {
                 div()
                     .text_sm()
@@ -527,5 +697,55 @@ impl Render for RaceView {
                     .children(cards)
                     .into_any_element()
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Candidate, recommend};
+    use elyra_core::new_id;
+
+    fn done(checks: Option<bool>, size: usize, cost: f64) -> Candidate {
+        Candidate {
+            done: true,
+            checks,
+            insertions: size,
+            cost,
+            ..Candidate::default()
+        }
+    }
+
+    #[test]
+    fn recommends_green_then_small_then_cheap() {
+        let (a, b, c) = (new_id(), new_id(), new_id());
+        let pick = recommend(&[
+            (a, done(Some(false), 10, 0.1)),
+            (b, done(Some(true), 400, 0.9)),
+            (c, Candidate::default()),
+        ])
+        .unwrap();
+        assert_eq!(pick, (b, "the only one whose checks pass".to_string()));
+
+        let pick = recommend(&[
+            (a, done(Some(true), 120, 0.3)),
+            (b, done(Some(true), 40, 0.5)),
+        ])
+        .unwrap();
+        assert_eq!(
+            pick,
+            (b, "its checks pass, the smallest change".to_string())
+        );
+
+        let mut journeys = done(Some(true), 400, 0.5);
+        journeys.journeys_passed = 2;
+        let mut broken = done(Some(true), 10, 0.1);
+        broken.journeys_failed = 1;
+        let pick = recommend(&[(a, broken), (b, journeys)]).unwrap();
+        assert_eq!(pick.0, b, "a broken journey loses");
+
+        assert!(
+            recommend(&[(a, Candidate::default())]).is_none(),
+            "nothing done yet"
+        );
     }
 }

@@ -16,6 +16,9 @@
   automatic fix, the next one gets the agent's escalation model (Settings →
   Providers, e.g. `opus`) and its highest effort, then the thread goes back to
   its own model. Cheap model for the easy turns, strong model when it counts.
+- **Best of N picks with you.** The comparison shows whether each candidate's
+  checks and journeys passed, and recommends one with a reason: green first, then
+  the smallest change, then the lowest cost.
 - **Browser journeys.** An agent that tried a flow in the browser (open a page,
   click, fill in, press, wait) can save it as a journey in the project's
   `.elyra/journeys`, with what must be on the page when it works. Replay journeys
