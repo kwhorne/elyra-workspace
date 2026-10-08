@@ -28,11 +28,14 @@ updates itself after that.
   thread is done when they pass.
 - **Agents that try their work**: a built-in browser for your dev servers where
   agents read the page, console and network calls, and (once you allow it) click,
-  fill in forms and press keys.
+  fill in forms and press keys. A flow they walked through becomes a journey that
+  is replayed after later changes, like a test nobody had to write.
 - **One setup for every agent**: the project's `.mcp.json` servers (once you allow
   them) and skills reach Codex, Elyra, Pi and ACP agents too, not only Claude Code.
 - **Automation**: scheduled prompts (an agent can propose one), a task board, and
   thread goals that keep an agent going until the job is done.
+- **Away from the desk**: a summary of what the agents did while you were gone,
+  and pushes to your phone (through ntfy) with buttons to approve or answer.
 - **Agent gateway (MCP)**: let agents start and steer other threads, or connect
   Claude Desktop and Codex. Every call is in an audit log.
 - **Local and private**: no account and no telemetry. Data lives in `~/.elyra`, and

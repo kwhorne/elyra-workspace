@@ -12,13 +12,13 @@ and the agents run as the command-line tools you already have installed.
 | --- | --- |
 | [Getting started](getting-started.md) | Installing, first launch, your first project and thread |
 | [Projects and threads](projects-and-threads.md) | The sidebar, tabs, spaces, archiving, forking, side chats, second opinions, best of N, import and export |
-| [Working with an agent](chat.md) | The composer, attachments, `@` and `/`, models, approvals, plans, checkpoints |
+| [Working with an agent](chat.md) | The composer, attachments, `@` and `/`, models, approvals, plans, checkpoints, while you were away, answering from your phone |
 | [Providers](providers.md) | Claude Code, Codex, Elyra, Pi, Gemini CLI, Cursor, OpenCode and other ACP agents; accounts |
 | [Changes, Git and review](git-and-review.md) | Diffs, staging, commits, branches, worktrees, pull requests, the review inbox |
 | [Files and search](files-and-search.md) | Command palette, file finder, content search, the editor, external editors |
-| [Browser](browser.md) | The built-in browser for your dev servers, page errors, before and after pictures, and letting agents look at and use pages |
+| [Browser](browser.md) | The built-in browser for your dev servers, page errors, before and after pictures, letting agents look at and use pages, and journeys replayed like tests |
 | [Terminal](terminal.md) | Terminal tabs and splits, search, full-screen programs, copy and paste |
-| [Context, notes and goals](context-and-goals.md) | Notes, pinned messages, recaps, project instructions, checks after each turn, MCP servers and skills shared with every agent, dev servers, goals, budgets |
+| [Context, notes and goals](context-and-goals.md) | Notes, pinned messages, recaps, project instructions and rules agents learn, checks after each turn, MCP servers and skills shared with every agent, dev servers, goals, budgets |
 | [Automations and tasks](automations-and-tasks.md) | Scheduled prompts (also proposed by agents), the task board, and Félagi tasks and time |
 | [Agent gateway and MCP](agent-gateway.md) | Letting agents manage threads, connecting Claude Desktop and Codex |
 | [Settings](settings.md) | Every page of the Settings window |
