@@ -24,6 +24,32 @@ fn git_path(repo: &Path, name: &str) -> Result<PathBuf> {
 
 /// Commit the current working tree to a dangling commit and return its SHA.
 pub fn snapshot(repo: &Path, message: &str) -> Result<String> {
+    with_working_tree(repo, |with_index, tree| {
+        let has_head = run(repo, &["rev-parse", "--verify", "HEAD"])?
+            .status
+            .success();
+        let mut args = vec!["commit-tree", tree, "-m", message];
+        if has_head {
+            args.extend(["-p", "HEAD"]);
+        }
+        with_index(&args)
+    })
+}
+
+/// Whether the working tree differs from a snapshot (`commit`): files
+/// changed, added or removed since.
+pub fn changed_since(repo: &Path, commit: &str) -> Result<bool> {
+    let now = with_working_tree(repo, |_, tree| Ok(tree.to_string()))?;
+    let then = run_ok(repo, &["rev-parse", &format!("{commit}^{{tree}}")])?;
+    Ok(now != then.trim())
+}
+
+/// Write the working tree (tracked and untracked, respecting .gitignore) as a
+/// tree object through a temporary index, and hand its SHA to `finish`.
+fn with_working_tree(
+    repo: &Path,
+    finish: impl FnOnce(&dyn Fn(&[&str]) -> Result<String>, &str) -> Result<String>,
+) -> Result<String> {
     let index = git_path(repo, "index")?;
     let temp = std::env::temp_dir().join(format!(
         "elyra-checkpoint-{}-{}.index",
@@ -55,14 +81,7 @@ pub fn snapshot(repo: &Path, message: &str) -> Result<String> {
     let result = (|| {
         with_index(&["add", "--all"])?;
         let tree = with_index(&["write-tree"])?;
-        let has_head = run(repo, &["rev-parse", "--verify", "HEAD"])?
-            .status
-            .success();
-        let mut args = vec!["commit-tree", tree.as_str(), "-m", message];
-        if has_head {
-            args.extend(["-p", "HEAD"]);
-        }
-        with_index(&args)
+        finish(&with_index, &tree)
     })();
     let _ = std::fs::remove_file(&temp);
     result
@@ -137,12 +156,19 @@ mod tests {
 
         let before = create(&repo, "refs/elyra/test/1", "turn 1").unwrap();
         let status_before = run_ok(&repo, &["status", "--porcelain"]).unwrap();
+        assert!(!changed_since(&repo, &before).unwrap());
+        std::fs::write(repo.join("ignored.log"), "more noise").unwrap();
+        assert!(
+            !changed_since(&repo, &before).unwrap(),
+            "ignored files don't count"
+        );
 
         // The "agent" edits, deletes and creates files.
         std::fs::write(repo.join("keep.txt"), "agent edit\n").unwrap();
         std::fs::write(repo.join("new.rs"), "fn main() {}\n").unwrap();
         std::fs::remove_file(repo.join("gone.txt")).unwrap();
 
+        assert!(changed_since(&repo, &before).unwrap());
         let after = snapshot(&repo, "now").unwrap();
         let files: Vec<_> = changed_files(&repo, &DiffSource::Range(before.clone(), after))
             .unwrap()

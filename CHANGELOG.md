@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Checks see every change.** Whether a turn changed files is now judged
+  against the snapshot taken before the message reached the agent, so a quick
+  agent can no longer slip a change past the checks.
+
 ## 0.10.1
 
 - **Tabs stay in their place.** With many open threads the tab bar no longer

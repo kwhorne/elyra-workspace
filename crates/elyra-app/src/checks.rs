@@ -5,8 +5,6 @@
 //! changed the working tree, running the command and writing the follow-up
 //! message. `ThreadSession` drives it.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash as _, Hasher as _};
 use std::io::Read as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -92,38 +90,13 @@ fn json_script(json: &str, name: &str) -> bool {
     }
 }
 
-/// A fingerprint of the working tree's changes (tracked and untracked): two
-/// equal fingerprints mean the turn between them changed no files. None
-/// outside a Git repository.
-pub fn fingerprint(dir: &Path) -> Option<u64> {
-    let git = |args: &[&str]| {
-        Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()
-            .filter(|out| out.status.success())
-            .map(|out| out.stdout)
+/// Whether the working tree changed since the turn's checkpoint (taken
+/// before the message reached the agent). Without one, assume it did.
+pub fn changed_since(dir: &Path, checkpoint: Option<&str>) -> bool {
+    let (Some(checkpoint), Ok(root)) = (checkpoint, elyra_git::repo_root(dir)) else {
+        return true;
     };
-    let status = git(&["status", "--porcelain=v1", "-z", "--untracked-files=all"])?;
-    let diff = git(&["diff", "HEAD", "--no-color", "--no-ext-diff"]).unwrap_or_default();
-    let mut hasher = DefaultHasher::new();
-    status.hash(&mut hasher);
-    diff.hash(&mut hasher);
-    // Untracked files' contents are not in the diff.
-    for path in status
-        .split(|&b| b == 0)
-        .filter_map(|entry| entry.strip_prefix(b"?? "))
-    {
-        let path = String::from_utf8_lossy(path);
-        if let Ok(meta) = std::fs::metadata(dir.join(path.as_ref())) {
-            meta.len().hash(&mut hasher);
-            meta.modified().ok().hash(&mut hasher);
-        }
-    }
-    Some(hasher.finish())
+    elyra_git::checkpoint::changed_since(&root, checkpoint).unwrap_or(true)
 }
 
 /// Run `command` in `dir` with the user's login shell, until it ends, the

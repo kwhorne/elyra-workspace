@@ -64,10 +64,6 @@ pub struct ThreadSession {
     /// The next launch forks `provider_session_id` (side chats).
     pub fork_pending: bool,
     pub recapping: bool,
-    /// The working tree's fingerprint when the turn began (see `checks`),
-    /// with the turn it belongs to.
-    check_before: Option<u64>,
-    check_turn: u64,
     /// Stops the project's checks while they run.
     check_cancel: Option<Arc<AtomicBool>>,
     /// Automatic fixes sent for failed checks since the last message.
@@ -127,8 +123,6 @@ impl ThreadSession {
             needs_restart: false,
             fork_pending: false,
             recapping: false,
-            check_before: None,
-            check_turn: 0,
             check_cancel: None,
             check_attempts: 0,
             stopped: false,
@@ -269,7 +263,6 @@ impl ThreadSession {
         self.stopped = false;
         self.set_status(ThreadStatus::Running, cx);
         cx.emit(SessionEvent::TurnStarted);
-        self.note_tree_before_turn(cx);
 
         let needs_worktree = self.use_worktree
             && matches!(self.thread.environment, Environment::Local)
@@ -1396,43 +1389,26 @@ impl ThreadSession {
             .map(str::to_string)
     }
 
-    /// Remember the working tree as the turn begins, to tell afterwards
-    /// whether the turn changed files.
-    fn note_tree_before_turn(&mut self, cx: &mut Context<Self>) {
-        self.check_turn += 1;
-        self.check_before = None;
-        if self.check_command().is_none() {
-            return;
-        }
-        let turn = self.check_turn;
-        let dir = self.working_dir();
-        let job = cx
-            .background_executor()
-            .spawn(async move { crate::checks::fingerprint(&dir) });
-        cx.spawn(async move |this, cx| {
-            let fingerprint = job.await;
-            let _ = this.update(cx, |this, _| {
-                if this.check_turn == turn {
-                    this.check_before = fingerprint;
-                }
-            });
-        })
-        .detach();
-    }
-
     /// Run the checks if the turn changed files; the turn stays running
     /// until they are done.
     fn run_checks(&mut self, command: String, spent_before: f64, cx: &mut Context<Self>) {
         let dir = self.working_dir();
-        let before = self.check_before.take();
+        // The snapshot taken before this turn's message reached the agent.
+        let checkpoint = self
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match &item.content {
+                ItemContent::User { checkpoint, .. } => Some(checkpoint.clone()),
+                _ => None,
+            });
         let cancel = Arc::new(AtomicBool::new(false));
         self.check_cancel = Some(cancel.clone());
         self.activity = Some(format!("Running checks: {command}"));
         cx.notify();
         let run_command = command.clone();
         let job = cx.background_executor().spawn(async move {
-            let after = crate::checks::fingerprint(&dir);
-            if before.is_some() && before == after {
+            if !crate::checks::changed_since(&dir, checkpoint.flatten().as_deref()) {
                 return None;
             }
             Some(crate::checks::run(&dir, &run_command, &cancel))
