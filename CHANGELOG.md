@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.0.0
+
+Elyra Workspace 1.0. Threads for every task with Claude Code, Codex, Elyra, Pi and
+ACP agents; Git, review, a browser, a terminal and your files in one window; and
+now agents whose work is checked, who can try what they built, and who share one
+setup. Every push runs the real app through end-to-end scenarios, and an update
+that doesn't start falls back to the previous version by itself.
 
 - **Narrow windows.** The conversation keeps at least 400 points: the tools
   panel gives way first. Notices wrap instead of running into the tools panel,
