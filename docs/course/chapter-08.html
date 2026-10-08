@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 8: Teaching the Project &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#context-tab">The Context tab</a>
+                <a href="#per-thread">What belongs to one thread</a>
+                <a href="#instructions">Project instructions</a>
+                <a href="#shared">One setup for every agent</a>
+                <a href="#local-servers">Local servers</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-07.html">&larr; 7. Worktrees and the Parallel Fix</a>
+                    <a href="chapter-09.html">9. Done Means Green &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 8: Teaching the Project</h1>
+                <p class="lead">
+                    
+            Every new thread starts the same way: the agent knows nothing about
+            Freddy's project except what it can read. He has typed the same
+            three sentences into six threads. This chapter is where they go
+            instead.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    An agent begins each task cold. It does not know that tests run
+                    with a particular command, that a folder is generated and must
+                    not be edited, or that your team prefers one pattern over
+                    another. You find out when it breaks the convention, correct it,
+                    and it is correct for the rest of that conversation. The next
+                    thread starts from zero.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    Paste the same paragraph at the top of every task. Or keep an
+                    instructions file that one agent happens to read, and discover
+                    that the other agents you use ignore it. The instructions drift,
+                    because they live in your clipboard.
+                </p>
+
+                <h2 id="context-tab">The Context tab</h2>
+                <p>
+                    The <strong>Context</strong> tab in the tools panel
+                    (<code>&#8679;&#8984;I</code>) collects everything around the
+                    active thread. Some of it belongs to one thread, and some to the
+                    whole project; the difference is the point of this chapter.
+                </p>
+
+                <h2 id="per-thread">What belongs to one thread</h2>
+                <ul>
+                    <li>
+                        <strong>Notes:</strong> a notepad for the thread, saved as
+                        you type. <em>The agent does not see it.</em> It is for you:
+                        the thing you must remember to check, the link you will need
+                        later.
+                    </li>
+                    <li>
+                        <strong>Recap:</strong> <strong>Generate</strong> asks the
+                        agent for a short summary of the conversation: the goal, what
+                        is done, decisions made and what is left. <strong>Refresh</strong>
+                        writes a new one. The recap is saved with the thread and
+                        used when you hand the thread off to another provider
+                        (chapter 6), so it is worth refreshing before you do.
+                    </li>
+                    <li>
+                        <strong>Pinned messages:</strong> hover a message in the
+                        conversation and press the pin. Pinned messages are listed
+                        here, so important answers are easy to find. Unpin them here
+                        or in the conversation.
+                    </li>
+                </ul>
+
+                <h2 id="instructions">Project instructions</h2>
+                <p>
+                    Instructions that every agent in the project gets, in addition
+                    to its normal system prompt: conventions, commands to run, or
+                    things to avoid. They apply from the next message, in every
+                    thread of the project. Claude Code, Codex, Elyra and Pi support
+                    this. ACP agents do not take extra instructions.
+                </p>
+                <p>
+                    Freddy writes three lines: the command that runs his tests,
+                    that <code>src/generated</code> is not edited by hand, and that
+                    he wants small commits. They are now the first thing every agent
+                    in <code>freddy-notes</code> is told, and he has stopped typing
+                    them.
+                </p>
+
+                <h3 id="rules-agents-learn">Rules agents learn</h3>
+                <p>
+                    You do not have to write all of that in advance. When you
+                    correct an agent (<em>&ldquo;no, we always validate with Form
+                    Requests&rdquo;</em>), it can propose that as a rule: a card in
+                    the thread with the rule and what taught it.
+                </p>
+                <ul>
+                    <li>
+                        <strong>Add to AGENTS.md</strong> puts it under <em>Learned
+                        rules</em> in the repository's <code>AGENTS.md</code> (or
+                        <code>CLAUDE.md</code>, when that is what the project has),
+                        so every agent and your team get it. Commit it with your
+                        changes.
+                    </li>
+                    <li>
+                        <strong>Add to project instructions</strong> keeps it in
+                        Workspace only.
+                    </li>
+                    <li><strong>Dismiss</strong> drops it.</li>
+                </ul>
+                <p>
+                    The choice between the first two is a choice about who the rule
+                    is for. A convention the whole team follows belongs in the
+                    repository. A preference of your own belongs in Workspace.
+                </p>
+
+                <h2 id="shared">One setup for every agent</h2>
+                <p>
+                    Claude Code reads a project's <code>.mcp.json</code> and its
+                    skills itself. Workspace gives them to the other agents (Codex,
+                    Elyra, Pi and ACP agents) too, so switching agents keeps the same
+                    tools.
+                </p>
+                <ul>
+                    <li>
+                        <strong>MCP servers in <code>.mcp.json</code></strong>, in
+                        Claude Code's format: <code>command</code>, <code>args</code>,
+                        <code>env</code>, or <code>url</code> and
+                        <code>headers</code>. <code>${VAR}</code> and
+                        <code>${VAR:-default}</code> are filled in from the
+                        environment.
+                    </li>
+                    <li>
+                        <strong>Skills</strong> in
+                        <code>.claude/skills/&lt;name&gt;/SKILL.md</code> and
+                        <code>.agents/skills/&hellip;</code>, in the project and in
+                        your home folder. The other agents get a list of them (name,
+                        description, path) and read a skill's <code>SKILL.md</code>
+                        when a task matches it. ACP agents do not take extra
+                        instructions, so they do not get the list.
+                    </li>
+                </ul>
+                <div class="callout">
+                    <strong>This is a trust decision, and Workspace makes you take
+                    it.</strong> The <code>.mcp.json</code> file comes with the
+                    repository, and its commands run on your Mac. So they are only
+                    passed on after you press <strong>Allow for every agent</strong>.
+                    If the file changes, allow it again. <strong>Stop sharing</strong>
+                    takes it back, and agents get the change from their next
+                    message. Read a repository's <code>.mcp.json</code> before you
+                    allow it; you are agreeing to run what it says.
+                </div>
+
+                <h2 id="local-servers">Local servers</h2>
+                <p>
+                    Development servers running from the thread's folder, for example
+                    <code>npm run dev</code> in the terminal or a server the agent
+                    started. Each one is listed with its port and process. Click the
+                    address to open it in the thread's browser (chapter 10), or press
+                    the refresh button to look again.
+                </p>
+
+                <h3 id="grove">Grove</h3>
+                <p>
+                    When Elyra Grove runs the project as an app (Laravel, PHP or a
+                    proxied dev server, not a folder it only parks), a
+                    <strong>Grove</strong> box shows its address, such as
+                    <code>https://shop.test</code>, which opens in the thread's
+                    browser; whether <code>grove dev</code> runs the app's dev
+                    processes (Vite, queue worker&hellip;), with <strong>Start</strong>
+                    and <strong>Stop</strong>; and how many mails Grove has caught,
+                    when there are any. Workspace asks the <code>grove</code> command
+                    line, from your <code>PATH</code> or <code>~/.grove/bin</code>.
+                    Without Grove, nothing changes.
+                </p>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> write three lines of project
+                    instructions, then start a new thread and ask the agent what it
+                    has been told about the project. Correct it once on something
+                    small, and when the rule card appears, choose
+                    <strong>Add to project instructions</strong>.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>What belongs to one thread (notes, recap, pinned messages) and what belongs to the project</li>
+                    <li>That the agent does not see your notes</li>
+                    <li>How project instructions work, and which agents support them</li>
+                    <li>How a correction becomes a rule, and the difference between AGENTS.md and project instructions</li>
+                    <li>How .mcp.json and skills are shared with every agent, and why you must allow it first</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-09.html">Chapter 9</a>
+                    you give an agent a goal, a budget, and a check command, so that done means green.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

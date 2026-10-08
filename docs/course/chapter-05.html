@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 5: Changes, Commits and Pull Requests &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#changes-tab">The Changes tab</a>
+                <a href="#scopes">The scope menu is the review tool</a>
+                <a href="#diffs">Reading a diff</a>
+                <a href="#committing">Committing</a>
+                <a href="#pull-requests">Pull requests</a>
+                <a href="#inbox">The review inbox</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-04.html">&larr; 4. Reading What the Agent Did</a>
+                    <a href="chapter-06.html">6. Many Threads, One Project &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 5: Changes, Commits and Pull Requests</h1>
+                <p class="lead">
+                    
+            The agent says it is done. Freddy has learned that this sentence
+            describes the agent's opinion, not the code. This chapter is the
+            review loop: see exactly what changed, say what is wrong on the line
+            where it is wrong, and when it is right, commit and open the pull
+            request.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Reviewing an agent's work has two bad habits. One is not
+                    doing it: &ldquo;the tests pass, ship it.&rdquo; The other is
+                    doing it in the wrong place, in a diff of the whole branch
+                    that mixes what you wrote this morning with what the agent
+                    wrote just now. In both cases the feedback loop is the slow
+                    part: you find a problem, switch to the chat, and describe
+                    which file and which line you meant.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    <code>git diff</code> in a terminal, a pager, and a message
+                    to the agent that starts &ldquo;in the export function, a bit
+                    below the loop&hellip;&rdquo; Then the same again for the commit
+                    message, the push, and a browser tab for the pull request.
+                    Every step works. Together they cost you the attention you
+                    wanted to spend on the code.
+                </p>
+                <p>
+                    Workspace runs your own <code>git</code> and <code>gh</code>
+                    commands, so your Git configuration, hooks and credentials
+                    apply. It does not replace Git; it puts a window on it.
+                </p>
+
+                <h2 id="changes-tab">The Changes tab</h2>
+                <p>
+                    Open it with <code>&#8679;&#8984;G</code>, or with the tools
+                    panel (<code>&#8997;&#8984;B</code>) and the
+                    <strong>Changes</strong> tab. It shows the Git state of the
+                    active thread's folder.
+                </p>
+                <ul>
+                    <li>
+                        <strong>Branch menu:</strong> the current branch. Pick
+                        another branch to switch to it. If your uncommitted changes
+                        would conflict, Workspace stashes them first and tells you.
+                        <strong>New branch&hellip;</strong> creates a branch from
+                        the current one and switches to it.
+                    </li>
+                    <li>
+                        <strong>Fetch and refresh.</strong> When the branch is
+                        behind its upstream, a <strong>Pull</strong> button appears
+                        (fast-forward only).
+                    </li>
+                    <li>
+                        <strong>Push</strong> pushes the branch. A branch without an
+                        upstream is published to the remote.
+                    </li>
+                    <li>
+                        <code>&darr;2 &uarr;1</code> shows the commits behind and
+                        ahead of the upstream.
+                    </li>
+                </ul>
+                <p>
+                    Files are listed in two groups: <strong>STAGED</strong> is what
+                    the next commit will contain, and <strong>CHANGES</strong> is
+                    everything else. Hover a file to <strong>Stage</strong> or
+                    <strong>Unstage</strong> it, or <strong>Discard changes</strong>
+                    (it asks first); <strong>Stage all</strong> and
+                    <strong>Unstage all</strong> act on a whole group. Click a file
+                    to see its diff.
+                </p>
+
+                <h2 id="scopes">The scope menu is the review tool</h2>
+                <p>The scope menu chooses what the diff compares:</p>
+                <ul>
+                    <li><strong>Working tree:</strong> all uncommitted changes (the default).</li>
+                    <li>
+                        <strong>Agent turns:</strong> what one turn changed, based on
+                        the checkpoint saved before each turn. Use this to review the
+                        agent's work one step at a time.
+                    </li>
+                    <li>
+                        <strong>Compare with branch or commit&hellip;:</strong> the
+                        working tree against any branch, tag or commit, for example
+                        <code>main</code>.
+                    </li>
+                </ul>
+                <p>
+                    <em>Agent turns</em> is the one that changes how you review. It
+                    is the chapter 4 checkpoint put to work: the diff is not
+                    &ldquo;everything on this branch&rdquo; but &ldquo;what the
+                    agent did in <em>that</em> message.&rdquo; Freddy asked for two
+                    things in one thread; he reviews them as two diffs.
+                </p>
+
+                <h2 id="diffs">Reading a diff</h2>
+                <ul>
+                    <li>
+                        <strong>Side by side</strong> shows old and new next to each
+                        other. Otherwise the diff is unified.
+                    </li>
+                    <li><strong>Wrap lines</strong> and <strong>Ignore whitespace</strong> can be switched on.</li>
+                    <li>
+                        <code>&#8997;&darr;</code> / <code>&#8997;&uarr;</code>, or
+                        the arrow buttons, jump to the next or previous change.
+                        <strong>Copy diff</strong> copies the patch.
+                    </li>
+                    <li>Very large diffs are cut off with a notice. Binary files are only listed.</li>
+                </ul>
+                <p>
+                    Click a line in a diff to see <strong>who last changed it</strong>
+                    (Git blame: commit, author, date and message). Lines that are not
+                    committed yet have no blame.
+                </p>
+                <p>
+                    And here is the part that closes the loop: you can also write a
+                    <strong>comment about the line</strong> and press
+                    <strong>Add to chat</strong>. The comment and the line's
+                    location are added to the thread's message box, so you can
+                    collect several and send them to the agent together. Freddy
+                    leaves three, on three lines, none of which needs a sentence
+                    explaining where it is, and sends them as one message.
+                </p>
+
+                <h2 id="committing">Committing</h2>
+                <ul>
+                    <li>
+                        <strong>Commit staged</strong> / <strong>Commit all</strong>
+                        commits the staged files, or everything when nothing is
+                        staged.
+                    </li>
+                    <li>
+                        The <strong>sparkle</strong> button writes a commit message
+                        from the diff with the thread's agent. You can edit it before
+                        committing.
+                    </li>
+                    <li>
+                        <strong>Commit and push</strong> (<code>&#8963;&#8984;P</code>,
+                        from anywhere) commits and pushes in one go.
+                    </li>
+                </ul>
+                <p>
+                    Commit messages (their first line) and pull request titles are
+                    written as Conventional Commits:
+                    <code>type(scope): summary</code>, for example
+                    <code>fix(nightwatch-exceptions): employee service create</code>.
+                </p>
+                <ul>
+                    <li>
+                        <strong>type</strong> is one of <code>feat</code>,
+                        <code>fix</code>, <code>refactor</code>, <code>perf</code>,
+                        <code>test</code>, <code>docs</code>, <code>build</code>,
+                        <code>ci</code>, <code>chore</code>, <code>style</code> or
+                        <code>revert</code>. <code>feat!</code> or
+                        <code>feat(api)!</code> marks a breaking change.
+                    </li>
+                    <li><strong>scope</strong> is the area that changed, in lowercase kebab-case.</li>
+                    <li>
+                        <strong>summary</strong> is a short lowercase phrase without a
+                        trailing period; the whole line is at most 72 characters.
+                    </li>
+                </ul>
+                <p>
+                    What the agent generates is written that way and tidied up
+                    (lowercase type and scope, no trailing period). <strong>Commit</strong>
+                    says what to fix if your own message does not follow it. If your
+                    team does not use the format, turn it off in
+                    <strong>Settings &rarr; Code &rarr; Commits and pull
+                    requests</strong>.
+                </p>
+
+                <h2 id="pull-requests">Pull requests</h2>
+                <p>
+                    The <strong>PR</strong> tab works with GitHub through the
+                    <code>gh</code> CLI, installed and logged in with
+                    <code>gh auth login</code>. If the branch has no pull request
+                    yet, you can create one:
+                </p>
+                <ul>
+                    <li>
+                        Write a title and description, or press <strong>Generate</strong>
+                        to have the agent write them from the branch's commits.
+                    </li>
+                    <li>Titles follow Conventional Commits; <strong>Create pull request</strong> says what to fix if one does not.</li>
+                    <li>Tick <strong>Draft</strong> to open it as a draft.</li>
+                    <li>Press <strong>Create pull request</strong>. The branch is pushed first if needed.</li>
+                </ul>
+                <p>When the branch has a pull request, the tab is labelled <strong>PR #n</strong> and shows:</p>
+                <ul>
+                    <li>status, checks and reviews;</li>
+                    <li>review comments, including those on specific lines;</li>
+                    <li><strong>Comment</strong> to reply;</li>
+                    <li><strong>Merge</strong>, choosing <em>Squash and merge</em>, <em>Create a merge commit</em> or <em>Rebase and merge</em>;</li>
+                    <li><strong>Ready for review</strong> (for drafts), <strong>Close</strong> and <strong>Reopen</strong>;</li>
+                    <li>
+                        <strong>Ask agent to address feedback</strong>, which puts the
+                        review comments in the message box as a task for the agent.
+                    </li>
+                </ul>
+                <p>
+                    That last button is the round trip: a colleague reviews
+                    Freddy's pull request, and one click turns their comments into
+                    the agent's next task.
+                </p>
+
+                <h2 id="inbox">The review inbox</h2>
+                <p>
+                    <code>&#8679;&#8984;R</code> (or the pull request button at the
+                    top of the sidebar) opens the inbox: open pull requests and
+                    issues from the GitHub repositories of all your projects.
+                </p>
+                <ul>
+                    <li>Switch between pull requests and issues, and open or closed.</li>
+                    <li>Filter by project, or search by title, number, author or label.</li>
+                    <li>Select an item to read its description, checks and comments.</li>
+                    <li>
+                        <strong>Send to agent</strong> starts a new thread in that
+                        project with the pull request or issue already described in
+                        the message box, ready to send. Pull requests get a new
+                        worktree so the review does not disturb your checkout.
+                    </li>
+                    <li><strong>Open on GitHub</strong> opens it in the browser.</li>
+                </ul>
+                <div class="callout">
+                    <strong>Someone else wrote that text.</strong> The text of pull
+                    requests and issues is written by other people. Workspace tells
+                    the agent to treat it as reference, not as instructions. That is
+                    a sensible precaution, not a guarantee: read what you send to an
+                    agent that has write access.
+                </div>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> ask the agent for two small changes in
+                    two messages. Open <strong>Changes</strong>, set the scope to
+                    <strong>Agent turns</strong>, and read them one at a time. Leave
+                    a comment on one line, press <strong>Add to chat</strong>, and
+                    send it.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>How the Changes tab shows the state of the thread's folder, and what staging means here</li>
+                    <li>Why the Agent turns scope is the review tool, and how it uses the checkpoint from chapter 4</li>
+                    <li>How to comment on a line and send several comments to the agent at once</li>
+                    <li>How commit messages and pull request titles follow Conventional Commits, and how to turn that off</li>
+                    <li>How to open, merge and follow up a pull request without leaving the window</li>
+                    <li>What the review inbox does and why pull request text is treated as reference</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-06.html">Chapter 6</a>
+                    you run several threads in one project: the sidebar, pinning, archiving, forks, handoff and side chat.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

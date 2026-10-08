@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 11: Files, Search and the Terminal &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#palette">The command palette (&#8984;K)</a>
+                <a href="#files-tab">The Files tab</a>
+                <a href="#terminal">A terminal in every thread</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-10.html">&larr; 10. The Browser, and Agents That Try What They Built</a>
+                    <a href="chapter-12.html">12. Work That Starts Itself &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 11: Files, Search and the Terminal</h1>
+                <p class="lead">
+                    
+            Freddy has stopped switching windows to read what the agent wrote,
+            and noticed how much of his old routine was only that: find the
+            file, open it, scroll to the line, go back. This chapter is the
+            small tools that make the routine disappear.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Supervising an agent means looking at the code, and looking at
+                    the code from another application means leaving the conversation.
+                    You lose your place, the agent's question goes unnoticed, and the
+                    file you opened is a copy of the folder you are <em>not</em>
+                    working in, if the thread has its own worktree.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    A full editor open on the project, a terminal next to it, and
+                    the discipline to keep both pointed at the same folder as the
+                    thread. With worktrees (chapter 7) that last part is where it
+                    goes wrong: the terminal is in your project and the agent is in
+                    its own copy.
+                </p>
+
+                <h2 id="palette">The command palette (&#8984;K)</h2>
+                <p>The palette searches everything at once:</p>
+                <ul>
+                    <li>
+                        <strong>Threads</strong> by title. With no search text, your
+                        eight most recent threads are listed. From three characters,
+                        matching <strong>message text</strong> is searched too.
+                    </li>
+                    <li><strong>Commands:</strong> every action in the app, with its shortcut.</li>
+                    <li><strong>New thread in&hellip;:</strong> start a thread in a project.</li>
+                    <li><strong>Theme: &hellip;:</strong> switch color theme.</li>
+                </ul>
+                <p>
+                    Use <code>&uarr;</code>/<code>&darr;</code> (or
+                    <code>&#8963;N</code> / <code>&#8963;P</code>) to move,
+                    <code>Enter</code> to pick, <code>Escape</code> or a click outside
+                    to close. Matching is fuzzy: <code>nwthr</code> finds <em>New
+                    thread</em>. Searching message text is the one to remember. Freddy
+                    can no longer say which thread it was, but he remembers a word the
+                    agent used.
+                </p>
+                <p>
+                    <strong>Find a file</strong> (<code>&#8984;P</code>) lists the
+                    files of the active thread's folder, or the current project's,
+                    respecting <code>.gitignore</code>. <strong>Search in files</strong>
+                    (<code>&#8679;&#8984;F</code>) searches file contents in the same
+                    folder. From two characters, results show the matching line with
+                    its file and line number, and picking one opens the file at that
+                    line. The search is case-insensitive unless your text contains a
+                    capital letter, and it skips binary files, files over 2 MB and
+                    anything ignored by <code>.gitignore</code>.
+                </p>
+
+                <h2 id="files-tab">The Files tab</h2>
+                <p>
+                    A file tree and an editor for the active thread's folder, in the
+                    tools panel (<code>&#8679;&#8984;E</code>).
+                </p>
+                <ul>
+                    <li>
+                        <strong>Tree:</strong> folders first, then files.
+                        <code>.gitignore</code>d files are hidden; other dotfiles are
+                        shown.
+                    </li>
+                    <li>
+                        <strong>Editor:</strong> syntax highlighting for common
+                        languages, with line numbers. <strong>Autosave</strong> saves
+                        shortly after you stop typing, and <code>&#8984;S</code> saves
+                        at once; the header shows <em>Unsaved</em> or <em>Saved</em>.
+                    </li>
+                    <li>
+                        <strong>Changes on disk:</strong> if the agent (or anything
+                        else) changes the file, the editor reloads it, unless you have
+                        unsaved edits. Then a bar offers <strong>Reload</strong> (take
+                        the disk version) or <strong>Overwrite</strong> (keep yours).
+                    </li>
+                    <li>
+                        <strong>Markdown:</strong> the eye button switches between
+                        editing and a rendered preview. <strong>Images</strong> (PNG,
+                        JPEG, GIF, WebP, SVG, BMP, ICO) are shown as a preview. Binary
+                        files and files over 2 MB are not opened.
+                    </li>
+                    <li>
+                        <strong>@</strong> in the header adds <code>@path</code> for the
+                        open file to the thread's message box.
+                    </li>
+                </ul>
+                <p>
+                    The <em>Changes on disk</em> bar is the important one when an
+                    agent is working in the same file you are editing. Nothing is
+                    silently overwritten in either direction; you are asked.
+                </p>
+                <p>
+                    The tools panel is narrow for editing. The expand button in the
+                    Files header (or <code>&#8997;&#8984;E</code>) slides the tree and
+                    editor in over half the window; drag its edge to make it wider.
+                    The conversation stays visible beside it. Close it with the
+                    <strong>&times;</strong>, <code>&#8997;&#8984;E</code> or a click
+                    outside it; the file stays open in the Files tab.
+                </p>
+                <p>
+                    And when you want your own editor, <code>&#8984;O</code> opens the
+                    thread's folder in it, or the open file if there is one. The
+                    <strong>Open</strong> button in the title bar shows your editor;
+                    its menu lists every supported editor found on this Mac, from VS
+                    Code, Cursor, Zed and Sublime Text to the JetBrains IDEs, Xcode,
+                    BBEdit, and terminals like iTerm, Ghostty and Warp. Choose your
+                    default in <strong>Settings &rarr; General &rarr; External
+                    editor</strong>; <em>Automatic</em> picks the first one installed.
+                </p>
+
+                <h2 id="terminal">A terminal in every thread</h2>
+                <p>
+                    Every thread has its own terminals, which start in the thread's
+                    folder (its worktree, if it has one). Open them with
+                    <code>&#8984;J</code>, or the <strong>Terminal</strong> tab in the
+                    tools panel. <code>&#8679;&#8984;J</code> gives the terminal the
+                    whole window; press it again to go back. That solves the problem
+                    from the start of the chapter: the terminal is where the thread
+                    is.
+                </p>
+                <p>
+                    It runs your login shell (or the shell set in Settings) and is
+                    complete enough for full-screen programs such as vim, htop,
+                    lazygit and Claude Code itself.
+                </p>
+                <table>
+                    <thead><tr><th>Shortcut</th><th>Action</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>&#8984;T</code></td><td>New terminal tab</td></tr>
+                        <tr><td><code>&#8679;&#8984;W</code></td><td>Close terminal</td></tr>
+                        <tr><td><code>&#8679;&#8984;]</code> / <code>&#8679;&#8984;[</code></td><td>Next / previous terminal</td></tr>
+                        <tr><td><code>&#8984;D</code></td><td>Split: the current terminal stays on the left, a new one opens on the right. Press again to unsplit.</td></tr>
+                        <tr><td><code>&#8984;F</code></td><td>Search the scrollback (<code>Enter</code> or <code>&#8984;G</code> for the next older match, <code>Shift+Enter</code> or <code>&#8679;&#8984;G</code> for the next newer, <code>Escape</code> closes)</td></tr>
+                        <tr><td><code>&#8984;K</code></td><td>Clear the screen and scrollback (in a terminal, this does that instead of opening the command palette)</td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    The tab title follows the program running in it. A terminal whose
+                    shell has exited is shown struck through. If a command is still
+                    running when you close a terminal, Workspace asks first.
+                </p>
+                <p>
+                    Select with the mouse; double-click selects a word, triple-click a
+                    line, and <code>&#8997;</code>-drag a rectangular block.
+                    <code>&#8984;C</code> copies and <code>&#8984;V</code> pastes. And
+                    the button that earns its place: <strong>Add selection to
+                    chat</strong> in the terminal's toolbar puts the selected text in
+                    the thread's message box as a code block. Use it to show the agent
+                    an error.
+                </p>
+                <div class="callout">
+                    <strong>For Nordic and other non-US keyboards.</strong>
+                    <kbd>Option</kbd> types characters by default, as macOS does,
+                    which you need for <code>[ ] { } | @ ~</code> on Norwegian and
+                    other Nordic keyboards. Turn on <strong>Use Option as Meta
+                    key</strong> in Settings &rarr; Terminal only if you use
+                    Emacs-style Meta shortcuts instead. Font, size, line height,
+                    cursor, shell and scrollback length are set in
+                    <strong>Settings &rarr; Terminal</strong>.
+                </div>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> press <code>&#8984;K</code> and search for
+                    a word from an earlier conversation. Then press <code>&#8984;P</code>,
+                    open a file the agent changed, edit one line while the agent is
+                    idle, and press <code>&#8984;J</code> to run the tests in the
+                    thread's own terminal.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>What the command palette searches, including the text of earlier messages</li>
+                    <li>How to find a file, and how to search in files</li>
+                    <li>How the Files tab handles an agent changing a file you have open</li>
+                    <li>That every thread has terminals that start in the thread's own folder</li>
+                    <li>How to send a piece of terminal output to the agent</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-12.html">Chapter 12</a>
+                    you set the agents to work on a schedule, and run a task board from the sidebar.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

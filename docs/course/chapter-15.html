@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 15: Keeping It Healthy &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#data">Where your data lives</a>
+                <a href="#settings">Settings</a>
+                <a href="#providers">Providers</a>
+                <a href="#updates">Updates</a>
+                <a href="#privacy">Privacy: what leaves the Mac</a>
+                <a href="#shortcuts">Shortcuts</a>
+                <a href="#problems">The problems that come up</a>
+                <a href="#the-rhythm">What Freddy's week looks like now</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-14.html">&larr; 14. Agents That Run Agents</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 15: Keeping It Healthy</h1>
+                <p class="lead">
+                    
+            Freddy's window works. The last chapter is the one that keeps it
+            working: where everything is kept, what to change and what to
+            leave, what an update does to a Mac with agents running, and the few
+            problems that account for most of the questions.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    A tool you leave running all day, that updates itself, that starts
+                    other programs and that holds your conversations is a tool you
+                    should be able to reason about. Where is the data? What does an
+                    update do while an agent is mid-turn? What does the app send
+                    over the network, and to whom?
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    Finding out by accident: the update that restarted the app in the
+                    middle of a turn, the crash log you did not know existed, the
+                    setting you changed to fix one thing and then forgot. Each one is
+                    small. Together they are the difference between a tool you trust
+                    and one you work around.
+                </p>
+
+                <h2 id="data">Where your data lives</h2>
+                <p>Everything is stored in <code>~/.elyra</code>:</p>
+                <table>
+                    <thead><tr><th>Path</th><th>Contents</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>state.db</code></td><td>Projects, threads, conversations, settings, automations, tasks, paired clients and the audit log (SQLite)</td></tr>
+                        <tr><td><code>worktrees/</code></td><td>Worktrees Elyra created for threads</td></tr>
+                        <tr><td><code>chats/</code></td><td>The scratch folder used by chats without a project</td></tr>
+                        <tr><td><code>themes/</code></td><td>Your custom themes</td></tr>
+                        <tr><td><code>keybindings.json</code></td><td>Your shortcut overrides, if any</td></tr>
+                        <tr><td><code>logs/crash.log</code></td><td>Details of crashes</td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    Checkpoints (chapter 4) are hidden Git references
+                    (<code>refs/elyra/&hellip;</code>) inside each project's
+                    repository, and deleting a thread removes them. To run a separate
+                    copy with its own data, for example to try something out, set
+                    <code>ELYRA_HOME</code>:
+                </p>
+                <pre><code>ELYRA_HOME=~/elyra-test "/Applications/Elyra Workspace.app/Contents/MacOS/elyra"</code></pre>
+
+                <h2 id="settings">Settings</h2>
+                <p>
+                    <code>&#8984;,</code>, the gear in the title bar, or <strong>Elyra
+                    Workspace &rarr; Settings&hellip;</strong>. Changes apply right
+                    away and are saved automatically, there is a search field, and
+                    every page except <em>Agents &amp; MCP</em> has a reset button.
+                    Seven pages:
+                </p>
+                <ul>
+                    <li>
+                        <strong>General:</strong> the external editor (<code>&#8984;O</code>),
+                        updates, and Phone (chapter 13).
+                    </li>
+                    <li>
+                        <strong>Appearance:</strong> color theme (Default Dark, Default
+                        Light, Tokyo Night, Palenight, Material, Dracula, Nord, and your
+                        own from <code>~/.elyra/themes</code>), following the system
+                        appearance, interface font, conversation width (default 860
+                        points; 0 uses the full width) and density. <code>&#8679;&#8984;T</code>
+                        switches theme by hand, which turns <em>Follow system
+                        appearance</em> off.
+                    </li>
+                    <li>
+                        <strong>Code:</strong> the font for diffs, the editor and code in
+                        the conversation, and <em>Conventional format</em> (chapter 5).
+                    </li>
+                    <li><strong>Terminal:</strong> font, cursor, shell, scrollback and the Option key (chapter 11).</li>
+                    <li><strong>Providers:</strong> next section.</li>
+                    <li>
+                        <strong>Agents &amp; MCP:</strong> the gateway (chapter 14), the
+                        Grove settings (chapter 7), automatic turns per goal and automatic
+                        fixes (chapter 9).
+                    </li>
+                    <li><strong>F&eacute;lagi:</strong> the connection and running F&eacute;lagi's agents here (chapter 12).</li>
+                </ul>
+                <p>
+                    Some defaults are not on a settings page; Workspace takes them from
+                    what you do. New threads use the agent, model, effort and permission
+                    mode you chose last, and the open tabs, window size and position,
+                    sidebar and tools panel, the open tool tab, collapsed projects and
+                    the selected space are restored at launch.
+                </p>
+
+                <h2 id="providers">Providers</h2>
+                <p>
+                    A provider is the coding agent that runs a thread. Workspace drives
+                    the command-line tools you install yourself and does not need API
+                    keys of its own. Sign-in, billing and limits are handled by each
+                    tool. They are not equal, and the table is worth a read:
+                </p>
+                <table>
+                    <thead>
+                        <tr><th>Provider</th><th>Approvals</th><th>Effort</th><th>Fork</th><th>Gateway</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Claude Code</td><td>yes</td><td>low &ndash; max</td><td>yes</td><td>yes</td></tr>
+                        <tr><td>Codex</td><td>yes</td><td>minimal &ndash; extra high</td><td>yes</td><td>yes</td></tr>
+                        <tr><td>Elyra</td><td>no (tools run directly)</td><td>off &ndash; extra high</td><td>yes</td><td>yes (0.9.46 or later)</td></tr>
+                        <tr><td>Pi</td><td>no</td><td>off &ndash; extra high</td><td>yes</td><td>no</td></tr>
+                        <tr><td>Gemini CLI, Cursor Agent, OpenCode, custom (ACP)</td><td>yes</td><td>&mdash;</td><td>via context</td><td>yes</td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    <em>Fork via context</em> means a fork sends the earlier
+                    conversation along with its first message, instead of branching
+                    the agent's own session (chapter 6). Claude Code is the most
+                    complete integration: its slash commands, skills and subagents
+                    appear under <code>/</code> and <code>@</code>, plan mode shows
+                    the plan as a card, its questions appear as forms, and cost per
+                    turn is supported. For Codex, the permission mode maps to its
+                    approval policy and sandbox, so <em>Full access</em> becomes
+                    never-ask and <code>danger-full-access</code>, and <em>Plan
+                    only</em> becomes read-only.
+                </p>
+                <p>
+                    <strong>Settings &rarr; Providers</strong> has one section per
+                    provider: its status and version, <strong>Sign in&hellip;</strong>
+                    (which opens Terminal with the login command), whether it is
+                    enabled, its executable if it is not on your <code>PATH</code>,
+                    arguments (ACP agents), extra environment variables, accounts, and
+                    the <strong>escalation model</strong> from chapter 9. Changes apply
+                    to agents started afterwards.
+                </p>
+                <p>
+                    <strong>Accounts</strong> let you use several logins for the same
+                    agent, for example work and personal Claude subscriptions. Each is a
+                    name and environment variables, separated by semicolons:
+                </p>
+                <pre><code>work: CLAUDE_CONFIG_DIR=~/.claude-work; personal: CLAUDE_CONFIG_DIR=~/.claude</code></pre>
+                <p>
+                    Pick the account before the first message; a session stays with the
+                    account that started it. To log in to a new account, run the agent's
+                    login with that account's environment, for Claude Code
+                    <code>CLAUDE_CONFIG_DIR=~/.claude-work claude</code>, then
+                    <code>/login</code>.
+                </p>
+                <p>
+                    One more thing the table hides: Workspace uses the thread's provider
+                    to write thread titles, commit messages, pull request descriptions
+                    and recaps. Claude Code uses its fast model for this. If the
+                    provider cannot do it, Workspace falls back to Claude Code, then
+                    Elyra, if installed.
+                </p>
+
+                <h2 id="updates">Updates</h2>
+                <p>Elyra Workspace updates itself:</p>
+                <ol>
+                    <li>At launch and every six hours, it checks GitHub for a newer release.</li>
+                    <li>
+                        It downloads the new version in the background and checks it:
+                        the SHA-256 checksum must match, the app must be signed by the
+                        same Developer ID team as the copy you run, Gatekeeper must
+                        accept its notarization, and it must report the expected version.
+                    </li>
+                    <li>
+                        A notification says the new version is ready. Click it to
+                        restart into the new version. If agents are still working, you
+                        choose: <strong>Restart when they finish</strong> waits and
+                        restarts by itself once no turn is running; <strong>Restart
+                        now</strong> stops them, and each thread can be resumed after the
+                        update. If you do not click, the update installs the next time
+                        you quit.
+                    </li>
+                </ol>
+                <p>
+                    <strong>Elyra Workspace &rarr; Check for Updates&hellip;</strong>
+                    checks right away. To download only when you choose, turn off
+                    <strong>Download and install updates automatically</strong> in
+                    Settings &rarr; General. The app cannot replace itself when it runs
+                    straight from the disk image or from a folder you cannot write to;
+                    then the notification links to the download instead. Move the app to
+                    Applications to get automatic updates.
+                </p>
+
+                <h3 id="going-back">Going back to the previous version</h3>
+                <p>
+                    Each update keeps the version it replaced, hidden beside the app. It
+                    is not a second app in Spotlight or Launchpad.
+                </p>
+                <ul>
+                    <li>
+                        <strong>If a new version does not start:</strong> when it fails to
+                        get through its first 20 seconds twice in a row (a crash, or it
+                        hangs and you force it to quit), Elyra Workspace puts the previous
+                        version back and starts it. A notification says so, and the broken
+                        version is not offered again; the next release is.
+                    </li>
+                    <li>
+                        <strong>By hand:</strong> command palette (<code>&#8984;K</code>)
+                        &rarr; <strong>Go back to the previous version&hellip;</strong>, for
+                        when a new version starts but something in it does not work for you.
+                        The app restarts as the previous version; running agents stop and
+                        can be resumed.
+                    </li>
+                </ul>
+                <p>
+                    Quitting normally within those 20 seconds counts as a good start.
+                    This is the safety net that makes a self-updating app acceptable on a
+                    machine that has agents working overnight.
+                </p>
+
+                <h2 id="privacy">Privacy: what leaves the Mac</h2>
+                <ul>
+                    <li>
+                        Elyra Workspace has <strong>no account and sends no
+                        telemetry</strong>.
+                    </li>
+                    <li>
+                        <strong>The requests the app makes itself</strong> are the update
+                        check and update downloads from GitHub, and two things you turn on:
+                        pushes to the ntfy server you choose, if you enable Phone (chapter
+                        13), and your Félagi workspace, if you connect it (chapter 12). The
+                        browser tab loads the pages you open in it, like any browser.
+                    </li>
+                    <li>
+                        <strong>Your messages and files go to the agents you use</strong>,
+                        under their own terms. Workspace starts them as local programs.
+                    </li>
+                    <li>
+                        The gateway listens only on <code>127.0.0.1</code> and requires a
+                        token (chapter 14).
+                    </li>
+                    <li>
+                        Pull requests, issues and other text from outside are marked for
+                        the agent as reference, not instructions (chapter 5).
+                    </li>
+                </ul>
+
+                <h2 id="shortcuts">Shortcuts</h2>
+                <p>
+                    Press <code>&#8984;/</code> to see all shortcuts, including any you
+                    changed. To change them, press <strong>Edit&hellip;</strong> in that
+                    sheet: it creates <code>~/.elyra/keybindings.json</code> with every
+                    shortcut's id and default keys and opens it. Change the keys you want,
+                    delete the lines you do not need, and restart Workspace. Keys are
+                    written like <code>cmd-shift-p</code>, <code>ctrl-tab</code> or
+                    <code>alt-down</code>, and <code>null</code> removes a shortcut.
+                </p>
+
+                <h2 id="problems">The problems that come up</h2>
+                <table>
+                    <thead><tr><th>Symptom</th><th>What to do</th></tr></thead>
+                    <tbody>
+                        <tr><td>An agent is listed as &ldquo;not installed&rdquo;</td><td>Workspace looks on your login shell's <code>PATH</code> and in the common install folders. Check <strong>Settings &rarr; Providers &rarr; Status</strong>; if it says <em>Not found</em>, set the full path under <em>Executable</em>.</td></tr>
+                        <tr><td>The agent says it is not logged in, or fails at once</td><td>Press <strong>Sign in&hellip;</strong> in Settings &rarr; Providers, or run the agent once in a terminal. With accounts, sign in with that account's environment.</td></tr>
+                        <tr><td>&ldquo;Elyra Workspace is already running&rdquo;</td><td>Only one copy runs per data folder. Switch to the open window, or use a different <code>ELYRA_HOME</code>.</td></tr>
+                        <tr><td>A thread says the last turn was interrupted</td><td>The app quit while the agent was working. <strong>Resume</strong> or <strong>Dismiss</strong>. Next time, choose <strong>Quit when they finish</strong> (chapter 13).</td></tr>
+                        <tr><td>The Changes tab says the folder is not a Git repository</td><td>Diffs, checkpoints, worktrees and pull requests need Git. Run <code>git init</code> in the project, or use it without those features.</td></tr>
+                        <tr><td>The PR tab or review inbox shows nothing</td><td>They need the GitHub CLI: install it and run <code>gh auth login</code>. The project's remote must be on GitHub.</td></tr>
+                        <tr><td>An automation did not run</td><td>Automations only run while the app is open. Check that it is switched on and look at its run history; a run is <em>Skipped</em> if the previous one is still going, and a run that waits for an approval is in its thread.</td></tr>
+                        <tr><td>Option+key in the terminal does not type <code>[</code> or <code>@</code></td><td>Turn off <strong>Use Option as Meta key</strong> in Settings &rarr; Terminal.</td></tr>
+                        <tr><td>After a crash</td><td>At the next launch Workspace shows a notice. Click it to open <code>~/.elyra/logs/crash.log</code>, and include it when you report a problem.</td></tr>
+                    </tbody>
+                </table>
+
+                <h2 id="the-rhythm">What Freddy's week looks like now</h2>
+                <p>
+                    He does not work harder than he did with four terminal tabs; he
+                    works with more of it visible. Monday morning, <strong>While you
+                    were away</strong> shows what the weekend's automations did, and
+                    the dependency run is a thread with a diff he reads at
+                    <em>Agent turns</em> scope. He starts the day's three tasks as three
+                    threads, two with their own worktree, and sets a check command so
+                    that finished means green. One of them is a goal with a budget.
+                    He asks for a flow to be tried in the browser and saved as a journey.
+                    He leaves a thread to <em>Quit when they finish</em> at five, and
+                    gets a push on the way home that says it passed.
+                </p>
+                <p>
+                    None of that needs the agent to be cleverer than it was. It needs
+                    the work to be somewhere you can see it, to be able to be undone,
+                    and to be checked by something other than the agent's word. Those
+                    are the three things the first chapter promised, and the fourteen
+                    since have been the same three, looked at from different sides.
+                </p>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> open Settings with <code>&#8984;,</code>
+                    and read each page once. Then press <code>&#8984;/</code>, and
+                    find two shortcuts you did not know.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>Where Workspace keeps its data, and how to run a separate copy</li>
+                    <li>What each Settings page is for</li>
+                    <li>How the providers differ, and what accounts are for</li>
+                    <li>How an update verifies itself, and how it goes back to the previous version</li>
+                    <li>What leaves the Mac, and which of those you turn on yourself</li>
+                    <li>The problems that come up most, and what to do about each</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>That is the course.</strong> The reference for everything here is the <a href="../overview.html">Elyra Workspace documentation</a>: the <a href="../chat.html">chat</a> and <a href="../projects-and-threads.html">threads</a> guides, the <a href="../agent-gateway.html">agent gateway</a> and <a href="../troubleshooting.html">data, privacy and troubleshooting</a>. If you have not taken it, <em>Freddy the Notetaker</em> is the course where the app itself gets built, and <em>Freddy the Optimizer</em> is the one about making it found.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

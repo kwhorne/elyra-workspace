@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 10: The Browser, and Agents That Try What They Built &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#the-browser">A browser in every thread</a>
+                <a href="#pointing">Pointing at an element</a>
+                <a href="#errors">Errors on the page</a>
+                <a href="#before-and-after">Pictures before and after a turn</a>
+                <a href="#agents-use-it">Letting the agent look at and use the page</a>
+                <a href="#journeys">Journeys: a flow that is replayed like a test</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-09.html">&larr; 9. Done Means Green</a>
+                    <a href="chapter-11.html">11. Files, Search and the Terminal &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 10: The Browser, and Agents That Try What They Built</h1>
+                <p class="lead">
+                    
+            Freddy's search box works. He knows because the agent said so, and
+            because the tests pass. He has not seen it work, and neither has the
+            agent. This chapter closes that gap: a browser next to the
+            conversation, for him and for the agent.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Passing tests tell you the code does what the tests expect. They
+                    say nothing about a button that sits too low, a heading in the
+                    wrong color, or a flow that needs a click the tests never make.
+                    Agents have the same blind spot, with one addition: they cannot
+                    see the page at all unless you describe it.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    A browser in another window, a screenshot saved and attached, the
+                    console errors copied by hand, and a description of the problem
+                    that starts &ldquo;the second button, the blue one&hellip;&rdquo;
+                    Each piece is fine. Doing all of them for every change is how
+                    visual checking quietly stops happening.
+                </p>
+
+                <h2 id="the-browser">A browser in every thread</h2>
+                <p>
+                    Each thread has its own web browser in the <strong>Browser</strong>
+                    tab of the tools panel (<code>&#8679;&#8984;B</code>). Use it to
+                    look at the app you and the agent are building, next to the
+                    conversation, without switching windows.
+                </p>
+                <ul>
+                    <li>
+                        Type an address and press <code>Enter</code>.
+                        <code>localhost:3000</code>, <code>myapp.test</code> and other
+                        local addresses open over <code>http</code>; other addresses
+                        with a dot open over <code>https</code>; anything else searches
+                        DuckDuckGo.
+                    </li>
+                    <li>
+                        Before a page is open, the tab lists the development servers
+                        running from the thread's folder. Click one to open it.
+                        Clicking a server address under <strong>Local servers</strong>
+                        in the Context tab opens it here too.
+                    </li>
+                    <li>
+                        The toolbar has back, forward, reload and <strong>Open in
+                        your browser</strong>, which hands the page to your default
+                        browser.
+                    </li>
+                </ul>
+                <p>
+                    It uses Safari's engine (WebKit). Pages share cookies and storage
+                    across threads, as in one Safari window with several tabs, and
+                    closing a thread's tab closes its browser.
+                </p>
+
+                <h2 id="pointing">Pointing at an element</h2>
+                <p>
+                    Press the <strong>target</strong> button in the toolbar and click
+                    the thing on the page. While picking, the element under the
+                    pointer is outlined and the page does not react to clicks;
+                    <code>Esc</code> or the button again stops. The element is
+                    attached to your message as a picture of it with a little of its
+                    surroundings, and its details: a selector that matches only it,
+                    its position and size, its text, its computed styles (layout,
+                    spacing, colors, fonts) and its HTML. Write what is wrong,
+                    <em>this button sits too low</em>, and send. It works on any page,
+                    since it only adds to the message you send, and password field
+                    values are left out.
+                </p>
+                <p>
+                    This is the end of &ldquo;the second button, the blue one.&rdquo;
+                    The agent does not need to guess which element you mean; it has
+                    the selector.
+                </p>
+
+                <h2 id="errors">Errors on the page</h2>
+                <p>
+                    While a local page is open, Workspace watches it for errors:
+                    anything written with <code>console.error</code>, exceptions
+                    nothing caught, and requests that fail or return an error status.
+                    When new ones appear, a chip above the message box says so:
+                    <strong>3 new errors in the browser</strong>. <strong>Add to
+                    message</strong> attaches them to your next message, with the page
+                    address, so you do not have to copy them from the console; the
+                    <strong>&times;</strong> dismisses them. Either way they are not
+                    offered again.
+                </p>
+                <p>
+                    If Elyra Grove runs the project as an app, the chip also counts
+                    <strong>server errors</strong>: requests Grove recorded with a 5xx
+                    status since the thread was opened, from any browser. Adding them
+                    attaches Grove's explanation of each (up to three): the request and
+                    its body, the SQL it ran and the mail it sent, and the error log
+                    with its stack trace. The page in the Browser tab does not have to
+                    be open for these.
+                </p>
+                <p>
+                    And then the part that answers &ldquo;did the fix work?&rdquo; When
+                    the turn after such a message ends, Workspace sends those requests
+                    again (<code>grove replay --same-data</code>, so a request that
+                    writes starts from the same data each time) and says in the
+                    conversation whether the fix worked: <em>Replayed POST /checkout:
+                    was 500, now 200 &#10003;</em>, or <em>still 500</em>. A turn that
+                    fails keeps them for the next one.
+                </p>
+
+                <h2 id="before-and-after">Pictures before and after a turn</h2>
+                <p>
+                    When the Browser tab shows a local page while you send a message,
+                    Workspace keeps a picture of the page from before the turn. When
+                    the turn ends it reloads the page, waits a moment for the dev
+                    server, and takes another. Both appear under the turn in the
+                    conversation, so you see what the change did to the page. Click a
+                    picture to open it full size.
+                </p>
+                <p>
+                    This only happens while the Browser tab is on screen, since the
+                    page can only be pictured then. The pictures are kept in
+                    <code>~/.elyra/snapshots</code> and deleted with the thread.
+                </p>
+
+                <h2 id="agents-use-it">Letting the agent look at and use the page</h2>
+                <p>
+                    So far you have used the browser. With the agent gateway on
+                    (chapter 14), agents get tools to open a page in their thread's
+                    browser and look at it: its structure, elements and their styles,
+                    the console, network calls and a screenshot. They can also use it
+                    like you would: click (by selector or visible text), fill in
+                    fields (by selector, label or placeholder; selects and checkboxes
+                    too), press keys, and wait for something to appear. You can ask
+                    things like:
+                </p>
+                <p>
+                    <em>&ldquo;Open localhost:5173, check why the cart total is wrong,
+                    fix it, then add two items, apply the code SUMMER and check the
+                    total.&rdquo;</em>
+                </p>
+                <p>
+                    That is the difference between &ldquo;I changed the code&rdquo; and
+                    &ldquo;I tried it.&rdquo; The guard rails are the interesting part:
+                </p>
+                <ul>
+                    <li>
+                        <strong>The first time</strong> an agent wants to click or type
+                        in its thread's browser, Workspace asks: <strong>Don't
+                        allow</strong>, <strong>Allow once</strong> or <strong>Allow for
+                        this thread</strong>. While it is allowed, a bar above the page
+                        says so; <strong>Take over</strong> there withdraws it. Threads
+                        in <em>Full access</em> are not asked.
+                    </li>
+                    <li>
+                        <strong>Local pages only.</strong> Agents can only open, read
+                        and use pages served from this Mac: <code>localhost</code>,
+                        <code>127.0.0.1</code>, <code>[::1]</code>, and names ending in
+                        <code>.localhost</code>, <code>.test</code> or
+                        <code>.local</code>. If the thread's browser shows any other
+                        site, the tools refuse it.
+                    </li>
+                    <li>
+                        <strong>No passwords, no scripts.</strong> Agents never read
+                        password fields, and cannot run their own scripts in the page.
+                    </li>
+                </ul>
+                <p>
+                    The console and network calls are recorded from when a local page
+                    loads, and a screenshot needs the Browser tab to be on screen.
+                </p>
+
+                <h2 id="journeys">Journeys: a flow that is replayed like a test</h2>
+                <p>
+                    A journey is a flow through your app that an agent walked through
+                    in the browser and saved: open a page, click, fill in, press keys,
+                    wait, and what must be on the page when it works. Ask for one, for
+                    example <em>&ldquo;try the checkout with the code SUMMER and save
+                    it as a journey.&rdquo;</em> The agent saves the steps it just took
+                    in <code>.elyra/journeys/&lt;name&gt;.json</code> in the project, a
+                    small JSON file you can read, edit and commit with the code.
+                </p>
+                <ul>
+                    <li>
+                        <strong>Replay.</strong> The Context tab lists the project's
+                        journeys; <strong>&#9654;</strong> replays one in the thread's
+                        browser and <strong>Run all</strong> every one. Agents replay
+                        them too, to confirm a change did not break a flow.
+                        <strong>Journey passed</strong> or <strong>Journey failed</strong>
+                        (with the step and why) appears in the conversation.
+                    </li>
+                    <li>
+                        <strong>Replay after each turn.</strong> Switch it on in the
+                        Context tab, and after every turn that changed files (and after
+                        the checks from chapter 9 passed) the journeys run. A broken
+                        flow goes back to the agent like a failing check, with the same
+                        number of automatic fixes. It needs the dev server running and
+                        the window open.
+                    </li>
+                    <li>
+                        Addresses are replayed on the site the thread's browser shows,
+                        so a journey saved on <code>shop.test</code> also runs on a
+                        worktree's own site (chapter 7).
+                    </li>
+                </ul>
+                <p>
+                    Replaying clicks and types on the page, like the agent's own
+                    actions, so an agent asks first unless the thread is in Full
+                    access. Notice what has been built across these chapters: checks
+                    for the code, journeys for the flow, and both go back to the agent
+                    when they fail. Freddy saves the search flow once and stops
+                    re-testing it by hand.
+                </p>
+                <div class="callout">
+                    <strong>Be honest about what a journey proves.</strong> It replays
+                    the clicks and checks what you said must be on the page. It does not
+                    judge whether the page looks right; that is still your eyes, which
+                    is why the before-and-after pictures exist.
+                </div>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> open your dev server in the Browser tab,
+                    use the target button on an element, and send a one-line complaint
+                    about it. Then, with the gateway on, ask an agent to walk through
+                    one flow and save it as a journey, and press <strong>&#9654;</strong>
+                    to replay it.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>How the browser in each thread works, and how to point at an element</li>
+                    <li>How page errors, and Grove's server errors, reach the agent without copy and paste</li>
+                    <li>How the before and after pictures work, and when they do not</li>
+                    <li>What agents can do in the browser, and the guard rails: asked first, local pages only, no passwords or scripts</li>
+                    <li>How a flow becomes a journey, and how it is replayed after each turn</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-11.html">Chapter 11</a>
+                    you use the rest of the tools panel: files, search, the editor and the terminal.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

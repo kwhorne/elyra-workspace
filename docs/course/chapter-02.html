@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 2: The First Launch &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#requirements">What you need</a>
+                <a href="#install">Install</a>
+                <a href="#first-launch">First launch</a>
+                <a href="#looking-at-it">What you are looking at</a>
+                <a href="#first-thread">Your first thread</a>
+                <a href="#next-steps">Three keys worth learning today</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-01.html">&larr; 1. Four Terminal Tabs and a Lot of Hope</a>
+                    <a href="chapter-03.html">3. Talking to an Agent &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 2: The First Launch</h1>
+                <p class="lead">
+                    
+            Freddy downloads the app, opens it, and a dialog tells him which
+            agents it found and what version each one is. This chapter is the
+            ten minutes between that dialog and the first thing an agent does in
+            his project.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    The first run of a tool decides whether you keep it. If an
+                    app starts empty, asks you to configure three things before
+                    it does anything, and never says whether it can see the tools
+                    it depends on, you close it. Workspace's whole first run is
+                    designed around one question: <em>can it find an agent?</em>
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    The usual way to find out is to start something and read the
+                    error. &ldquo;Command not found&rdquo; tells you the agent is
+                    missing, or installed somewhere your shell knows about and
+                    the app does not. That second case is common: the global
+                    install folder is on the <code>PATH</code> of your terminal
+                    and not of a desktop application.
+                </p>
+
+                <h2 id="requirements">What you need</h2>
+                <ul>
+                    <li>A Mac with Apple Silicon (M1 or later), macOS 12 or later.</li>
+                    <li><code>git</code>.</li>
+                    <li>At least one coding agent installed and signed in.</li>
+                </ul>
+                <p>
+                    These are the agents Workspace knows how to start, and where
+                    each one comes from:
+                </p>
+                <table>
+                    <thead>
+                        <tr><th>Agent</th><th>Install</th><th>Sign in</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>Claude Code</td><td><code>npm install -g @anthropic-ai/claude-code</code></td><td>run <code>claude</code> and use <code>/login</code></td></tr>
+                        <tr><td>Codex</td><td><code>npm install -g @openai/codex</code></td><td><code>codex login</code></td></tr>
+                        <tr><td>Elyra</td><td><code>npm install -g @elyracode/coding-agent</code></td><td>run <code>elyra</code></td></tr>
+                        <tr><td>Pi</td><td><code>npm install -g @mariozechner/pi-coding-agent</code></td><td>run <code>pi</code></td></tr>
+                        <tr><td>Gemini CLI</td><td><code>npm install -g @google/gemini-cli</code></td><td>run <code>gemini</code></td></tr>
+                        <tr><td>OpenCode</td><td><code>npm install -g opencode-ai</code></td><td><code>opencode auth login</code></td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    Cursor Agent is supported too (<code>cursor-agent login</code>).
+                    Workspace finds these on your <code>PATH</code>, including the
+                    usual per-user install folders (<code>~/.npm-global/bin</code>,
+                    <code>~/.local/bin</code>, <code>~/.bun/bin</code>, Homebrew).
+                    If one lives somewhere else, set its path in
+                    <strong>Settings &rarr; Providers</strong>; you can also sign
+                    in from there.
+                </p>
+
+                <h2 id="install">Install</h2>
+                <p>
+                    Download the signed, notarized app from the
+                    <a href="/workspace">Elyra Workspace page</a> and drag it
+                    to <code>/Applications</code>. Once it is installed it keeps
+                    itself up to date; chapter 15 says how, and how to go back a
+                    version if an update ever misbehaves. If you would rather build
+                    it yourself, the <a href="../development.html">development
+                    guide</a> covers that: <code>scripts/bundle-macos.sh</code>
+                    produces <code>Elyra Workspace.app</code>, and
+                    <code>cargo run --release</code> runs it without a bundle.
+                </p>
+                <p>
+                    Only one copy of Workspace runs at a time per data folder. If
+                    you start a second copy, it exits.
+                </p>
+
+                <h2 id="first-launch">First launch</h2>
+                <p>
+                    A welcome dialog lists the supported agents and shows which
+                    ones are installed, with their versions. This is the check you
+                    came for: if the agent you use is listed with a version, the
+                    rest of the course will work. If it is not, fix that first
+                    &mdash; the <code>PATH</code> note above is nearly always the
+                    reason. You can also choose a color theme here. Then you choose:
+                </p>
+                <ul>
+                    <li>
+                        <strong>Add a project:</strong> pick a folder. Workspace
+                        opens a new thread in it.
+                    </li>
+                    <li>
+                        <strong>Start a chat:</strong> opens a thread in a scratch
+                        folder (<code>~/.elyra/chats</code>). Use it for questions
+                        that do not belong to a project.
+                    </li>
+                </ul>
+                <p>
+                    You can add more projects at any time with
+                    <code>&#8679;&#8984;O</code> or the folder button in the sidebar.
+                </p>
+
+                <h2 id="looking-at-it">What you are looking at</h2>
+                <img src="images/window.png" alt="The Elyra Workspace window: the project sidebar on the left with a pinned thread, a project and a folder; in the middle a thread with a task list, an agent question with two options, and a plan waiting for review; on the right the Changes panel with a diff, and at the bottom the message box with agent, model, effort and permission mode." />
+                <p>
+                    A busy window, from a demo project. Take it apart. On the
+                    left, <strong>PINNED</strong> holds a thread you want within
+                    reach, and below it the projects and their threads, each with
+                    how long ago it was touched. In the middle is the open thread:
+                    a task list the agent is working through, the edits and
+                    commands it ran as one-line cards, a question it needs
+                    answered, and a plan waiting for your decision. On the right is
+                    the tools panel with its tabs &mdash; Changes, PR, Files,
+                    Context, Terminal &mdash; showing a diff. Along the bottom is
+                    the message box, with the agent, the model, the effort and the
+                    permission mode right under it.
+                </p>
+                <p>
+                    You do not need to understand all of it yet. Notice only that
+                    the question, the plan and the diff are things you can
+                    <em>see</em>, instead of things you have to scroll for.
+                </p>
+
+                <h2 id="first-thread">Your first thread</h2>
+                <ol>
+                    <li>Select a project and press <code>&#8984;N</code> (New thread).</li>
+                    <li>
+                        Below the message box, check the agent, model, effort and
+                        permission mode. The defaults are the ones you used last.
+                    </li>
+                    <li>
+                        If the project is a Git repository, choose
+                        <strong>Local</strong> or <strong>New worktree</strong>.
+                        Local: the agent works in the project folder itself. New
+                        worktree: the agent gets its own copy on its own branch, so
+                        several threads can work in parallel without getting in
+                        each other's way. Chapter 7 is about that choice.
+                    </li>
+                    <li>
+                        Write what you want and press <code>Enter</code>.
+                        <code>Shift+Enter</code> starts a new line.
+                    </li>
+                    <li>
+                        Watch the agent work. Tool calls appear as they run, and
+                        edits show as diffs. Depending on the permission mode, the
+                        agent may stop and ask for approval.
+                    </li>
+                    <li>
+                        Open the tools panel (<code>&#8997;&#8984;B</code>) to see
+                        the <strong>Changes</strong> the agent made, and the
+                        terminal (<code>&#8984;J</code>).
+                    </li>
+                </ol>
+                <p>
+                    Freddy's first message is deliberately small:
+                    <em>&ldquo;Read the README and tell me how the export works.
+                    Do not change anything.&rdquo;</em> A question first is a good
+                    habit &mdash; you learn what the agent understands before it
+                    touches a file.
+                </p>
+                <p>
+                    When the agent finishes, the thread's status in the sidebar
+                    changes. If you were looking at another thread, you get a
+                    notification; if the window was in the background, it is a
+                    system notification and the Dock icon shows a badge. That is
+                    the first problem from chapter 1, already solved.
+                </p>
+
+                <h2 id="next-steps">Three keys worth learning today</h2>
+                <ul>
+                    <li><code>&#8984;K</code> opens the command palette: it finds threads, files and commands.</li>
+                    <li><code>&#8984;/</code> shows every keyboard shortcut.</li>
+                    <li><code>&#8984;,</code> opens Settings.</li>
+                </ul>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> add a real project, start a thread in
+                    <strong>Local</strong> mode, and ask a question that changes
+                    nothing. Then press <code>&#8984;K</code> and type the name of
+                    your thread.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>What Workspace needs: Apple Silicon, git, and at least one signed-in agent</li>
+                    <li>That the welcome dialog is the check that your agent was found, and where to fix the path</li>
+                    <li>How to add a project or start a scratch chat</li>
+                    <li>The parts of the window, from a real one</li>
+                    <li>How to start a first thread, and the choice between Local and New worktree</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-03.html">Chapter 3</a>
+                    you learn how to talk to the agent: the message box, models, effort, permission modes, and what approvals and plans really are.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

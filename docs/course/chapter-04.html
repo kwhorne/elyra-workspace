@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 4: Reading What the Agent Did &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#what-it-shows">What the agent shows</a>
+                <a href="#approvals">Approvals and questions</a>
+                <a href="#plans">Plans</a>
+                <a href="#message-actions">Message actions</a>
+                <a href="#checkpoints">Checkpoints: why going back works</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-03.html">&larr; 3. Talking to an Agent</a>
+                    <a href="chapter-05.html">5. Changes, Commits and Pull Requests &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 4: Reading What the Agent Did</h1>
+                <p class="lead">
+                    
+            The agent has changed something in the export. Freddy's old
+            reflex is to scroll. This chapter is about the three things the
+            window does so that he does not have to: it shows the work as it
+            happens, it stops and asks when a decision is his, and it can put
+            every file back to how it was before a message.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    An agent produces a lot of text and a few facts that matter.
+                    The facts &mdash; which file it edited, which command it ran,
+                    what it needs from you &mdash; are scattered through the text,
+                    and the one that matters most (<em>it is waiting</em>) has no
+                    sound. Worse, when it goes wrong, the question is not what it
+                    did but how to get back.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    Without a view of the work, you review by <code>git diff</code>
+                    after the fact, and you recover by <code>git checkout</code>,
+                    which only works for files Git already knows about and only if
+                    you had committed what you wanted to keep. Anything between your
+                    last commit and the agent's mistake is a loss you cannot fully
+                    describe.
+                </p>
+
+                <h2 id="what-it-shows">What the agent shows</h2>
+                <ul>
+                    <li>
+                        <strong>Text</strong> streams in as Markdown. Its reasoning
+                        is shown in collapsible blocks when the agent shares it.
+                    </li>
+                    <li>
+                        <strong>Tool calls</strong> appear as rows: a command, a
+                        file read, a search, and so on. Click one to see its input
+                        and output. Edits show a diff of the change, and new files
+                        show their content. Running commands show their output
+                        live.
+                    </li>
+                    <li>
+                        <strong>Task lists</strong> the agent keeps appear as a
+                        card with progress. The latest one is shown in full.
+                    </li>
+                    <li>
+                        <strong>Subagents:</strong> work the agent hands to a
+                        subagent is grouped under one card with its own tool calls.
+                    </li>
+                    <li>
+                        After every turn, a line shows how long it took and what it
+                        cost.
+                    </li>
+                </ul>
+                <p>
+                    The one-line rows keep a long turn readable. A turn that read nine files
+                    and edited two is eleven short rows, not a wall of text, and
+                    you open only the two edits.
+                </p>
+
+                <h2 id="approvals">Approvals and questions</h2>
+                <p>When the agent needs permission, an approval card shows what it wants to do:</p>
+                <ul>
+                    <li><strong>Allow:</strong> this time.</li>
+                    <li><strong>Allow for session:</strong> this kind of action for the rest of the session.</li>
+                    <li><strong>Deny.</strong></li>
+                </ul>
+                <p>
+                    The thread is marked <em>needs approval</em> in the sidebar,
+                    and you get a notification if you are elsewhere. That is the
+                    answer to chapter 1's silent question.
+                </p>
+                <p>
+                    When the agent asks a question, it appears as a form. Pick an
+                    option, or several if the question allows it, or type your own
+                    answer under <em>Other</em>. Then press <strong>Submit</strong>,
+                    or <strong>Dismiss</strong> to not answer. Yes/no questions get
+                    <strong>Yes</strong> and <strong>No</strong> buttons.
+                </p>
+                <div class="callout">
+                    <strong>Allow for session is a bigger yes than it looks.</strong>
+                    It covers <em>this kind</em> of action for the rest of the
+                    session, not only the one on the card. That is convenient for a
+                    test command you will run twelve times, and worth a second
+                    thought for anything that deletes. Use <strong>Allow</strong>
+                    when you are not sure.
+                </div>
+
+                <h2 id="plans">Plans</h2>
+                <p>
+                    In <em>Plan only</em> mode, Claude Code presents its plan as a
+                    card with three answers:
+                </p>
+                <ul>
+                    <li><strong>Approve, accept edits:</strong> carry out the plan; edits do not need approval.</li>
+                    <li><strong>Approve, ask for edits:</strong> carry out the plan, asking before each edit.</li>
+                    <li><strong>Keep planning:</strong> stay in plan mode and keep refining.</li>
+                </ul>
+                <p>
+                    Freddy's pattern, and a good default: ask for the plan first,
+                    read it, and approve it as <em>ask for edits</em> the first
+                    time a kind of task comes up. Once the plan has been right a few
+                    times, <em>accept edits</em> stops being a leap.
+                </p>
+
+                <h2 id="message-actions">Message actions</h2>
+                <p>Hover over a message to see its actions:</p>
+                <ul>
+                    <li><strong>Copy</strong> the text.</li>
+                    <li><strong>Edit and resend</strong> (your messages): puts the text back in the message box.</li>
+                    <li>
+                        <strong>Restore files to before this message</strong> (your
+                        messages): puts every file in the thread's folder back to
+                        how it was before that message was sent. Edits made since
+                        are undone, and files created since are deleted. The
+                        conversation and Git commits are not changed. Workspace asks
+                        you to confirm first.
+                    </li>
+                    <li><strong>Pin:</strong> keeps the message in the Context tab (chapter 8).</li>
+                </ul>
+                <p>
+                    Long messages are folded; click <strong>Show more</strong> to
+                    expand them. <code>&#8984;F</code> in the message box opens a
+                    search bar for the conversation: it shows the number of matches
+                    and jumps between them (<code>Enter</code> for the next,
+                    <code>Shift+Enter</code> for the previous,
+                    <code>Escape</code> closes it).
+                </p>
+
+                <h2 id="checkpoints">Checkpoints: why going back works</h2>
+                <p>
+                    Restore is not magic and it is not <code>git stash</code>.
+                    Before every turn, Workspace saves a snapshot of the thread's
+                    folder, as long as it is a Git repository. The snapshot is
+                    stored as a hidden Git reference and does not touch your branch,
+                    index or stash. Snapshots make <strong>Restore files</strong>
+                    possible and let the Changes tab show what <em>one turn</em>
+                    changed (chapter 5). Deleting a thread deletes its snapshots.
+                </p>
+                <p>
+                    Two limits, because they are the ones that surprise people:
+                </p>
+                <ul>
+                    <li>
+                        <strong>It is for files.</strong> The conversation and your
+                        Git commits are not changed by a restore. If the agent
+                        committed something, the commit is still there.
+                    </li>
+                    <li>
+                        <strong>It needs a Git repository.</strong> No repository,
+                        no snapshot.
+                    </li>
+                </ul>
+                <p>
+                    If you use Elyra Grove to run the project as an app, the
+                    checkpoint also takes a snapshot of the app's database (a copy
+                    of a SQLite file, or a <code>grove db snapshot</code> of MySQL,
+                    PostgreSQL or ElyraSQL, found from the app's
+                    <code>.env</code>). <strong>Restore files</strong> then puts the
+                    database back too, so data and migrations the agent changed are
+                    undone with the code. The latest 10 database snapshots per
+                    thread are kept; turn this off in
+                    <strong>Settings &rarr; Agents &amp; MCP &rarr; Database in
+                    checkpoints</strong>.
+                </p>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> in a throwaway thread, ask the agent to
+                    create a file and change another. Hover over your message and
+                    choose <strong>Restore files to before this message</strong>.
+                    Watch the new file disappear and the other come back. Then do it
+                    once more, deliberately, on a task you care about, so the first
+                    time you need it is not the first time you use it.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>What the window shows as it happens: tool rows, diffs, task lists and costs</li>
+                    <li>The three answers on an approval card, and why Allow for session is a bigger yes</li>
+                    <li>How plan cards work and a safe pattern for approving them</li>
+                    <li>How to restore files to before a message, and what the restore does not undo</li>
+                    <li>How checkpoints are stored, and the two limits: files only, and a Git repository</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-05.html">Chapter 5</a>
+                    you review the changes properly: the Changes tab, scopes, committing, and pull requests.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>
