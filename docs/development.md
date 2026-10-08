@@ -46,6 +46,24 @@ crash mid-turn, fail the turn, or wait to be stopped. Scenarios cover the turn
 lifecycle, checks after each turn and stopping. Add one when you change how
 sessions, providers or the gateway behave.
 
+### Layout check
+
+```console
+cargo build -p elyra-app && scripts/layout-check/check.py [--review] [scene …]
+```
+
+[`scripts/layout-check/check.py`](../scripts/layout-check/check.py) takes
+screenshots of the app in states that tend to break the layout: a dozen open
+tabs in narrow and wide windows, long project and thread names, a conversation
+with every kind of row, no sidebar or tools panel, the light theme, the Files
+sheet, each panel and the first launch. Each scene runs in a throwaway
+`ELYRA_HOME` with `ELYRA_NO_ACTIVATE` (it never takes focus) and is captured
+from its first frame into `target/layout-check/<time>/`. With `--review`,
+Claude Code (`claude -p`, if installed) reads the screenshots and writes
+`review.md` against [`rubric.md`](../scripts/layout-check/rubric.md): overlap,
+clipping, overflow, alignment, contrast. The review is advice; look at the
+screenshots before fixing. Run it after layout changes.
+
 GitHub Actions runs the same checks and the scenarios
 ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) on every push to
 `main` and every pull request; clippy runs with `-D warnings`.
