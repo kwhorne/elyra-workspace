@@ -656,6 +656,73 @@ impl ThreadView {
             .update(cx, |session, cx| session.respond(request_id, decision, cx));
     }
 
+    /// Keep a proposed rule: in the repository's AGENTS.md (or CLAUDE.md), or
+    /// in the project's instructions in Elyra.
+    pub fn keep_rule(
+        &mut self,
+        item: ItemId,
+        in_file: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (rule, app, dir, project) = {
+            let session = self.session.read(cx);
+            (
+                session.proposed_rule(item),
+                session.app_entity(),
+                session.working_dir(),
+                session.project.clone(),
+            )
+        };
+        let (Some(rule), Some(app)) = (rule, app) else {
+            return;
+        };
+        let note = if in_file {
+            match crate::rules::add_to_file(&dir, &rule) {
+                Ok(path) => format!(
+                    "Added to {}; commit it with your changes.",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ),
+                Err(err) => {
+                    window.push_notification(
+                        gpui_kit::component::notification::Notification::error(format!(
+                            "Couldn't add the rule: {err}"
+                        )),
+                        cx,
+                    );
+                    return;
+                }
+            }
+        } else {
+            let mut project = project;
+            project.instructions = Some(crate::rules::with_instruction(
+                project.instructions.as_deref(),
+                &rule,
+            ));
+            app.update(cx, |app, cx| app.update_project(project, cx));
+            "Added to the project's instructions; agents get it from their next message."
+                .to_string()
+        };
+        let outcome = if in_file {
+            elyra_core::RuleOutcome::File
+        } else {
+            elyra_core::RuleOutcome::Instructions
+        };
+        self.session.update(cx, |session, cx| {
+            session.set_rule_outcome(item, outcome, cx)
+        });
+        window.push_notification(
+            gpui_kit::component::notification::Notification::success(note),
+            cx,
+        );
+    }
+
+    pub fn dismiss_rule(&mut self, item: ItemId, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.set_rule_outcome(item, elyra_core::RuleOutcome::Dismissed, cx)
+        });
+    }
+
     /// Create the automation the agent proposed, as it is.
     pub fn create_proposal(&mut self, item: ItemId, window: &mut Window, cx: &mut Context<Self>) {
         let (automation, app) = {

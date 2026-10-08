@@ -9,8 +9,10 @@ What it does depends on a tag in the prompt:
   [call TOOL {json}]  call an Elyra Workspace gateway tool as this thread's
            agent and reply with the result
   [mcp]    reply with the names of the MCP servers Elyra gave it
+  [ask]    ask permission to run a command, and say what the answer was
   anything else (also Elyra's follow-ups): add 1 to value.txt
-Every prompt is appended to prompts.log in the working directory.
+Every prompt is appended to prompts.log in the working directory, and every
+model Elyra switches to (session/set_model) to models.log.
 """
 import json
 import os
@@ -64,11 +66,36 @@ def end(rid, reason="end_turn"):
     send({"id": rid, "result": {"stopReason": reason}})
 
 
+def request(method, params):
+    """Ask the client something and wait for its answer."""
+    state["next"] = state.get("next", 1000) + 1
+    rid = state["next"]
+    send({"id": rid, "method": method, "params": params})
+    for line in sys.stdin:
+        message = json.loads(line)
+        if message.get("id") == rid and "method" not in message:
+            return message
+    sys.exit(0)
+
+
 def prompt(rid, params):
     sid = params["sessionId"]
     text = "".join(block.get("text", "") for block in params["prompt"])
     with open(os.path.join(state["cwd"], "prompts.log"), "a") as log:
         log.write(text.replace("\n", " ")[:400] + "\n")
+    if "[ask]" in text:
+        answer = request("session/request_permission", {
+            "sessionId": sid,
+            "toolCall": {"toolCallId": "ask-1", "title": "Run npm test", "kind": "execute"},
+            "options": [
+                {"optionId": "yes", "name": "Allow", "kind": "allow_once"},
+                {"optionId": "always", "name": "Always", "kind": "allow_always"},
+                {"optionId": "no", "name": "Reject", "kind": "reject_once"},
+            ],
+        })
+        outcome = answer.get("result", {}).get("outcome", {})
+        say(sid, "Permission: " + str(outcome.get("optionId", outcome.get("outcome"))))
+        return end(rid)
     if "[mcp]" in text:
         say(sid, "MCP servers: " + ", ".join(sorted(state["servers"])))
         return end(rid)
@@ -114,6 +141,10 @@ for line in sys.stdin:
         send({"id": rid, "result": {"sessionId": params.get("sessionId", "scenario-1")}})
     elif method == "session/prompt":
         prompt(rid, params)
+    elif method == "session/set_model":
+        with open(os.path.join(state["cwd"], "models.log"), "a") as log:
+            log.write(params.get("modelId", "") + "\n")
+        send({"id": rid, "result": None})
     elif method == "session/cancel":
         if state["waiting"] is not None:
             end(state["waiting"], "cancelled")

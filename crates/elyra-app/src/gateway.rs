@@ -176,6 +176,14 @@ fn tools() -> Vec<Tool> {
             }, "required": ["name", "prompt", "schedule"] }),
         ),
         tool(
+            "propose_rule",
+            "When the user corrects how you work in this project (a convention, a command to use, something to avoid) and it will matter in later tasks too, propose it as a rule: one short imperative sentence. It appears as a card in this thread; the user adds it to AGENTS.md or the project's instructions, or dismisses it. Only agents working in a thread can propose.",
+            json!({ "type": "object", "properties": {
+                "rule": { "type": "string", "description": "e.g. Validate requests with Form Requests, not in controllers." },
+                "reason": { "type": "string", "description": "What the user said that taught it" }
+            }, "required": ["rule"] }),
+        ),
+        tool(
             "archive_thread",
             "Archive a finished thread.",
             json!({ "type": "object", "properties": { "thread_id": id }, "required": ["thread_id"] }),
@@ -626,6 +634,25 @@ fn run_tool(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String,
             ))
         }
         "propose_automation" => propose_automation(app, call, cx),
+        "propose_rule" => {
+            let Caller::Thread(thread_id) = call.caller else {
+                return Err("Only an agent working in a thread can propose a rule.".into());
+            };
+            let rule = arg(args, "rule")?.trim().to_string();
+            if rule.chars().count() > 400 {
+                return Err("A rule is one short sentence; this is too long.".into());
+            }
+            let reason = args["reason"].as_str().unwrap_or("").trim().to_string();
+            let session = app
+                .update(cx, |app, cx| app.session(thread_id, cx))
+                .ok_or("could not open the thread")?;
+            session.update(cx, |session, cx| {
+                session.propose_rule(rule.clone(), reason, cx)
+            });
+            Ok(format!(
+                "Proposed the rule \u{201c}{rule}\u{201d} as a card in this thread; it is kept only if the user accepts it. Follow it for the rest of this task anyway."
+            ))
+        }
         "create_thread" => {
             let project_query = arg(args, "project")?.to_lowercase();
             let prompt = arg(args, "prompt")?.to_string();

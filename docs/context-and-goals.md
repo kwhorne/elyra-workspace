@@ -62,6 +62,15 @@ system prompt, such as conventions, commands to run, or things to avoid. They
 apply from the next message, in every thread of the project. Claude Code, Codex,
 Elyra and Pi support this. ACP agents don't take extra instructions.
 
+### Rules agents learn
+
+When you correct an agent (*"no, we always validate with Form Requests"*), it can
+propose that as a rule: a card in the thread with the rule and what taught it.
+**Add to AGENTS.md** puts it under *Learned rules* in the repository's AGENTS.md
+(or CLAUDE.md, when that is what the project has), so every agent and your team
+get it; commit it with your changes. **Add to project instructions** keeps it in
+Elyra only. **Dismiss** drops it.
+
 ## Checks after each turn
 
 *Done means green.* Give the project a check command (tests, lint, or both,
@@ -79,6 +88,10 @@ tries it.
   → Agents & MCP → Automatic fixes when checks fail** (2 by default) the thread
   stops, marked failed, and you are told. 0 only reports the failure. No
   automatic fix is sent when you have queued a message or the budget is used up.
+- **A stronger fix**: when a first automatic fix didn't make them pass, the next
+  one gets the agent's **Escalation model** (Settings → Providers, e.g. `opus`)
+  and its highest effort; the thread goes back to its own model afterwards. With
+  no escalation model set, only the effort goes up.
 - **Stop** stops the checks too. A check is stopped after 20 minutes.
 - Notifications, Félagi reports and `wait_for_thread` wait for the checks, so
   *finished* means the checks passed.

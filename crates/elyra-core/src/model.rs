@@ -271,6 +271,17 @@ pub enum ProposalOutcome {
     Dismissed,
 }
 
+/// Where a proposed rule went.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleOutcome {
+    /// Added to the repository's AGENTS.md (or CLAUDE.md).
+    File,
+    /// Added to the project's instructions in Elyra.
+    Instructions,
+    Dismissed,
+}
+
 /// One durable entry in a thread transcript.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -340,6 +351,26 @@ pub enum ItemContent {
         automation: Box<crate::orchestration::Automation>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         outcome: Option<ProposalOutcome>,
+    },
+    /// A rule the agent learned from the user's correction, for the user to
+    /// keep (in AGENTS.md or the project's instructions) or dismiss.
+    RuleProposal {
+        rule: String,
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<RuleOutcome>,
+    },
+    /// A saved browser journey, replayed (after a turn, or on request).
+    Journey {
+        name: String,
+        passed: bool,
+        /// Steps that ran before it stopped (all of them when it passed).
+        steps_run: usize,
+        total_steps: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failure: Option<String>,
+        duration_ms: u64,
     },
     /// The project's checks, run after a turn that changed files.
     Check {

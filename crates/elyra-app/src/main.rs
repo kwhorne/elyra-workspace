@@ -3,6 +3,7 @@ mod actions;
 mod app_icon;
 mod app_state;
 mod automations;
+mod away;
 mod browser_tools;
 mod browser_view;
 mod changes_view;
@@ -21,15 +22,18 @@ mod felagi_runtime;
 mod files_view;
 mod gateway;
 mod grove;
+mod journeys;
 mod lifecycle;
 mod onboarding;
 mod palette;
+mod phone;
 mod pr_view;
 mod preferences;
 mod quitting;
 mod race;
 mod recovery;
 mod review_inbox;
+mod rules;
 mod search;
 mod settings_window;
 mod shared_setup;
@@ -111,6 +115,7 @@ fn main() {
         preferences::init(&app, cx);
         gateway::init(app.clone(), cx);
         felagi_runtime::init(app.clone(), cx);
+        phone::init(app.clone(), cx);
         // Learn Grove's sites early, so agents can be given its tools.
         cx.background_executor()
             .spawn(async { grove::sites() })
@@ -141,6 +146,7 @@ fn main() {
                 recovery::confirm_start();
             }
             felagi_runtime::hand_back(cx);
+            phone::shutdown(cx);
             shutdown_app.update(cx, |app, cx| app.prepare_quit(cx));
             updater::on_quit(cx);
             async {}

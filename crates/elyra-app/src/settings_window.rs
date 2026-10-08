@@ -498,6 +498,74 @@ impl SettingsView {
                             "Downloads and verifies new versions in the background. They install when you restart or quit.",
                         ),
                     ),
+            )
+            .group(
+                SettingGroup::new()
+                    .title("Phone")
+                    .description(
+                        "While Elyra Workspace isn't the active app, a thread that needs you or finishes sends a push through ntfy. Install the ntfy app and subscribe to the topic below. Allow, Deny and an answer's options have buttons; publish to the topic followed by -reply to answer in your own words or send the last thread a message. Pushes and answers go through the ntfy server: use your own for privacy. Anyone who knows the topic can read and answer, so keep it private.",
+                    )
+                    .item(SettingItem::new(
+                        "Push to the phone while you're away",
+                        switch(
+                            |p| p.phone_notifications,
+                            |p, v| {
+                                p.phone_notifications = v;
+                                if v && p.phone_topic.trim().is_empty() {
+                                    p.phone_topic = crate::phone::new_topic();
+                                }
+                            },
+                        )
+                        .default_value(false),
+                    ))
+                    .item(
+                        SettingItem::new(
+                            "ntfy server",
+                            SettingField::input(
+                                |cx| Preferences::global(cx).phone_server.clone().into(),
+                                |value, cx| {
+                                    preferences::update(cx, |prefs| {
+                                        prefs.phone_server = value.trim().to_string()
+                                    })
+                                },
+                            )
+                            .default_value(SharedString::from("https://ntfy.sh")),
+                        )
+                        .description("https://ntfy.sh, or your own ntfy server."),
+                    )
+                    .item(
+                        SettingItem::new(
+                            "Topic",
+                            SettingField::input(
+                                |cx| Preferences::global(cx).phone_topic.clone().into(),
+                                |value, cx| {
+                                    preferences::update(cx, |prefs| {
+                                        prefs.phone_topic = value.trim().to_string()
+                                    })
+                                },
+                            )
+                            .default_value(SharedString::default()),
+                        )
+                        .description("Made for you when you turn it on. Subscribe to it in the ntfy app."),
+                    )
+                    .item(SettingItem::new(
+                        "Try it",
+                        SettingField::render(|_, _, _| {
+                            Button::new("phone-test")
+                                .small()
+                                .label("Send a test push")
+                                .on_click(|_, window, cx| {
+                                    use gpui_kit::component::WindowExt as _;
+                                    use gpui_kit::component::notification::Notification;
+                                    let note = match crate::phone::send_test(cx) {
+                                        Ok(()) => Notification::success("Sent. It should arrive on your phone in a moment."),
+                                        Err(err) => Notification::warning(err),
+                                    };
+                                    window.push_notification(note, cx);
+                                })
+                                .into_any_element()
+                        }),
+                    )),
             );
 
         let mut providers = SettingPage::new("Providers")
@@ -1292,6 +1360,19 @@ fn provider_group(kind: ProviderKind, cx: &App) -> SettingGroup {
             )
             .description(
                 "Named environments to pick per thread, e.g. `work: CLAUDE_CONFIG_DIR=~/.claude-work; personal: CLAUDE_CONFIG_DIR=~/.claude`.",
+            ),
+        )
+        .item(
+            SettingItem::new(
+                "Escalation model",
+                provider_field(
+                    kind,
+                    |p| p.escalation_model.clone(),
+                    |p, v| p.escalation_model = v,
+                ),
+            )
+            .description(
+                "When the checks or journeys still fail after an automatic fix, the next fix uses this model and the highest effort, e.g. `opus`; the thread goes back to its own afterwards. Empty: the same model at the highest effort.",
             ),
         )
 }

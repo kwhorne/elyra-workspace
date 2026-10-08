@@ -55,6 +55,12 @@ pub struct Preferences {
     pub agent_gateway: bool,
     /// Automatic turns a thread goal may take before pausing.
     pub goal_max_turns: u32,
+    /// Push to the phone (ntfy) while the app isn't active, and take answers.
+    pub phone_notifications: bool,
+    /// The ntfy server (blank: https://ntfy.sh).
+    pub phone_server: String,
+    /// The private topic pushes go to; answers come on `<topic>-reply`.
+    pub phone_topic: String,
     /// Times a failed project check goes back to the agent before it is
     /// handed to the user (0: only report it).
     pub check_fix_attempts: u32,
@@ -86,6 +92,9 @@ pub struct ProviderSettings {
     pub env: String,
     /// `work: KEY=value; personal: KEY=value`.
     pub accounts: String,
+    /// The model a fix gets once a first automatic fix didn't make the
+    /// checks pass (empty: the same model, at the highest effort).
+    pub escalation_model: String,
 }
 
 /// A starred provider + model (+ effort) combination.
@@ -184,6 +193,9 @@ impl Default for Preferences {
             agent_gateway: false,
             goal_max_turns: 10,
             check_fix_attempts: 2,
+            phone_notifications: false,
+            phone_server: "https://ntfy.sh".into(),
+            phone_topic: String::new(),
             conventional_titles: true,
             grove_mcp: true,
             grove_worktrees: true,

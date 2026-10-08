@@ -157,6 +157,9 @@ pub struct BrowserView {
     picking: bool,
     /// The thread's agent may click and type on the page (until Take over).
     agent_control: bool,
+    /// What agents did on the page since it was last opened, to save as a
+    /// journey.
+    recording: Vec<crate::journeys::Step>,
     _pick: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -296,6 +299,7 @@ impl BrowserView {
             seen: HashSet::new(),
             picking: false,
             agent_control: false,
+            recording: Vec::new(),
             _pick: None,
             _tasks: vec![drain, cover, errors],
             _subscriptions: subscriptions,
@@ -535,6 +539,18 @@ impl BrowserView {
 
     pub fn page_state(&self) -> &PageState {
         &self.state
+    }
+
+    /// Note a step an agent took (an open starts the recording over).
+    pub fn record(&mut self, step: crate::journeys::Step) {
+        if matches!(step, crate::journeys::Step::Open(_)) {
+            self.recording.clear();
+        }
+        self.recording.push(step);
+    }
+
+    pub fn recording(&self) -> Vec<crate::journeys::Step> {
+        self.recording.clone()
     }
 
     pub fn agent_control(&self) -> bool {

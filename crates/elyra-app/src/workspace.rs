@@ -93,6 +93,10 @@ pub struct Workspace {
     terminal_full: bool,
     /// The thread whose Files view is open in the large editor sheet.
     files_sheet: Option<ThreadId>,
+    /// When the window last lost focus (for "While you were away").
+    away_since: Option<chrono::DateTime<chrono::Utc>>,
+    /// The last time away that was summarized: (from, to).
+    last_away: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
     /// Scrolls the thread tabs when they don't fit.
     tab_scroll: ScrollHandle,
     /// The tab last scrolled into view.
@@ -131,6 +135,9 @@ impl Workspace {
                 this.mark_active_read(window, cx);
                 if window.is_window_active() {
                     crate::quitting::came_back(window, cx);
+                    this.came_back(window, cx);
+                } else {
+                    this.away_since = Some(chrono::Utc::now());
                 }
             }),
             cx.observe_window_appearance(window, |_, _, cx| {
@@ -210,6 +217,8 @@ impl Workspace {
             forward: Vec::new(),
             terminal_full: false,
             files_sheet: None,
+            away_since: None,
+            last_away: None,
             tab_scroll: ScrollHandle::new(),
             tab_revealed: std::cell::Cell::new(None),
             active_space,
@@ -277,6 +286,20 @@ impl Workspace {
         };
         if let Some(panel) = panel {
             self.toggle_panel(panel, window, cx);
+        }
+        // `away`: what the threads did in the last day.
+        if std::env::var("ELYRA_OPEN_PANEL").as_deref() == Ok("away") {
+            let now = chrono::Utc::now();
+            self.show_away(now - chrono::Duration::hours(24), now, window, cx);
+        }
+        // `race`: the best-of-N comparison of the active thread's race.
+        if std::env::var("ELYRA_OPEN_PANEL").as_deref() == Ok("race")
+            && let Some(race) = self
+                .active
+                .and_then(|id| self.app.read(cx).thread(id))
+                .and_then(|t| t.race_id)
+        {
+            self.show_race(race, window, cx);
         }
         // `files` or `files:<path>`: the large file editor.
         if let Ok(spec) = std::env::var("ELYRA_OPEN_PANEL")
@@ -1201,6 +1224,160 @@ impl Workspace {
         crate::shortcuts::show(window, cx);
     }
 
+    /// Back at the window: after a while away, say what happened meanwhile.
+    fn came_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(since) = self.away_since.take() else {
+            return;
+        };
+        let now = chrono::Utc::now();
+        if now - since >= crate::away::AWAY {
+            self.last_away = Some((since, now));
+            self.show_away(since, now, window, cx);
+        }
+    }
+
+    /// What the threads did between `from` and `to`; false when nothing.
+    pub(crate) fn show_away(
+        &mut self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mut entries: Vec<crate::away::Entry> = Vec::new();
+        {
+            let state = self.app.read(cx);
+            for thread in &state.threads {
+                let recent = thread
+                    .last_activity_at
+                    .unwrap_or(thread.updated_at)
+                    .max(thread.updated_at)
+                    >= from;
+                let session = state.existing_session(thread.id);
+                let running = session.as_ref().is_some_and(|s| s.read(cx).running);
+                if !recent && !running {
+                    continue;
+                }
+                let items = match &session {
+                    Some(session) => session.read(cx).items.clone(),
+                    None => state.store.transcript(thread.id).unwrap_or_default(),
+                };
+                let project = state
+                    .project(thread.project_id)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
+                if let Some(entry) = crate::away::summarize(thread, &project, &items, from, running)
+                {
+                    entries.push(entry);
+                }
+            }
+        }
+        if entries.is_empty() {
+            return false;
+        }
+        entries.sort_by_key(|e| e.state);
+        let total: f64 = entries.iter().map(|e| e.cost).sum();
+        let title = format!("While you were away ({})", crate::away::duration(to - from));
+        let workspace = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let rows = entries.iter().map(|entry| {
+                let (icon, color) = match entry.state {
+                    crate::away::State::NeedsYou => (IconName::CircleAlert, cx.theme().warning),
+                    crate::away::State::Failed => (IconName::CircleX, cx.theme().danger),
+                    crate::away::State::Finished => (IconName::CircleCheck, cx.theme().success),
+                    crate::away::State::Working => (IconName::LoaderCircle, cx.theme().info),
+                };
+                let id = entry.thread;
+                let workspace = workspace.clone();
+                h_flex()
+                    .id(SharedString::from(format!("away-{id}")))
+                    .w_full()
+                    .items_start()
+                    .gap_2()
+                    .p_2()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|this| this.bg(cx.theme().muted))
+                    .child(Icon::new(icon).small().text_color(color))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .text_sm()
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
+                                            .whitespace_nowrap()
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(entry.title.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_none()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(entry.project.clone()),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .whitespace_normal()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(entry.line.clone()),
+                            ),
+                    )
+                    .when(entry.cost > 0.0, |this| {
+                        this.child(
+                            div()
+                                .flex_none()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(crate::thread_session::format_usd(entry.cost)),
+                        )
+                    })
+                    .on_click(move |_, window, cx| {
+                        window.close_dialog(cx);
+                        let _ = workspace.update(cx, |this, cx| this.activate(id, window, cx));
+                    })
+            });
+            dialog
+                .title(title.clone())
+                .w(px(560.))
+                .child(v_flex().gap_1().children(rows))
+                .footer(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(if total > 0.0 {
+                                    format!(
+                                        "Spent meanwhile: {}",
+                                        crate::thread_session::format_usd(total)
+                                    )
+                                } else {
+                                    String::new()
+                                }),
+                        )
+                        .child(
+                            Button::new("away-close")
+                                .small()
+                                .label("Close")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        ),
+                )
+        });
+        true
+    }
+
     fn on_open_files_editor(
         &mut self,
         _: &OpenFilesEditor,
@@ -1327,6 +1504,21 @@ impl Workspace {
 
     /// Open `url` in a thread's browser, and show it when that thread is in
     /// front.
+    /// The thread's browser, made (blank) if it has none yet.
+    pub(crate) fn browser_for(
+        &mut self,
+        id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<crate::browser_view::BrowserView>> {
+        let cwd = {
+            let state = self.app.read(cx);
+            let thread = state.thread(id)?;
+            thread.working_dir(state.project(thread.project_id)?)
+        };
+        Some(self.browser_view(id, cwd, window, cx))
+    }
+
     pub(crate) fn open_in_browser(
         &mut self,
         id: ThreadId,
@@ -2375,6 +2567,18 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_shortcuts))
             .on_action(cx.listener(Self::on_toggle_terminal_workspace))
             .on_action(cx.listener(Self::on_open_files_editor))
+            .on_action(cx.listener(|this, _: &WhileAway, window, cx| {
+                let (from, to) = this.last_away.unwrap_or_else(|| {
+                    let now = chrono::Utc::now();
+                    (now - chrono::Duration::hours(8), now)
+                });
+                if !this.show_away(from, to, window, cx) {
+                    window.push_notification(
+                        Notification::info("Nothing happened in the threads while you were away."),
+                        cx,
+                    );
+                }
+            }))
             .on_action(cx.listener(Self::on_open_in_editor))
             .on_action(cx.listener(Self::on_new_side_chat))
             .on_action(cx.listener(Self::on_import_thread))

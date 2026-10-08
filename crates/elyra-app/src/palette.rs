@@ -255,6 +255,12 @@ fn commands() -> Vec<Command> {
             actions::CheckForUpdates
         ),
         command!(
+            "While you were away…",
+            "",
+            IconName::Coffee,
+            actions::WhileAway
+        ),
+        command!(
             "Go back to the previous version…",
             "",
             IconName::Undo2,

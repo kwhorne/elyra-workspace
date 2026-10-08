@@ -86,7 +86,7 @@ class World:
         with open(os.path.join(path, "value.txt"), "w") as f:
             f.write(f"{value}\n")
         with open(os.path.join(path, ".gitignore"), "w") as f:
-            f.write("prompts.log\n")
+            f.write("prompts.log\nmodels.log\n")
         git("add", ".")
         git("-c", "user.email=s@s", "-c", "user.name=s", "commit", "-qm", "start")
         self.projects[name] = {"path": path, "check": check, "allow_mcp_json": allow_mcp_json}
@@ -147,7 +147,8 @@ class World:
             row = db.execute("SELECT value FROM settings WHERE key = 'preferences'").fetchone()
             prefs = json.loads(row[0]) if row else {}
             prefs.setdefault("providers", {})["acp"] = {
-                "path": sys.executable, "args": os.path.join(HERE, "agent.py")}
+                "path": sys.executable, "args": os.path.join(HERE, "agent.py"),
+                "escalation_model": "big"}
             prefs["check_fix_attempts"] = 2
             prefs["agent_gateway"] = True
             prefs["check_updates"] = False
@@ -233,6 +234,20 @@ def checks_hand_over_after_the_attempts(world, project):
     expect(checks_of(items) == [False, False, False], f"checks: {checks_of(items)}")
     expect(world.status(thread) == "failed", f"status {world.status(thread)}")
     expect(any(i["kind"] == "notice" and "over to you" in i["text"] for i in items), "said so")
+
+
+@scenario(check=AT_LEAST_TWO, value=-5)
+def a_second_fix_gets_the_escalation_model(world, project):
+    thread = world.new_thread(project, "Make the value right")
+    world.wait(thread)
+    models = os.path.join(world.projects[project]["path"], "models.log")
+    switched = open(models).read().split() if os.path.exists(models) else []
+    expect(switched == ["big"], f"switched to {switched}")
+    notices = [i["text"] for i in world.items(thread) if i["kind"] == "notice"]
+    expect(any("model big" in n for n in notices), f"said so: {notices}")
+    with world.db() as db:
+        model = db.execute("SELECT model FROM threads WHERE id = ?", (thread,)).fetchone()[0]
+    expect(model is None, f"back to its own model, not {model}")
 
 
 @scenario(check="echo checked; exit 1", value=0)
@@ -342,6 +357,35 @@ def an_mcp_json_nobody_allowed_is_not_passed_on(world, project):
     thread = world.new_thread(project, "[mcp] Which servers?")
     reply = world.wait(thread, 30)
     expect("probe" not in reply and "elyra" in reply, reply[-200:])
+
+
+@scenario()
+def agents_save_journeys_with_the_project(world, project):
+    steps = [{"open": "http://shop.test/"}, {"click": {"text": "Add to cart"}}]
+    thread = world.new_thread(project, "[call browser_save_journey %s]" % json.dumps(
+        {"name": "Add to cart", "steps": steps, "expect": ["1 item"]}))
+    reply = world.wait(thread, 30)
+    expect("Saved" in reply and "3 steps" in reply, reply[-300:])
+    path = os.path.join(world.projects[project]["path"], ".elyra", "journeys", "add-to-cart.json")
+    saved = json.load(open(path))
+    expect(saved["steps"][-1] == {"expect": {"text": "1 item"}}, saved)
+    thread = world.new_thread(project, "[call browser_list_journeys {}]")
+    expect("Add to cart" in world.wait(thread, 30), "listed")
+    # A journey that proves nothing is refused.
+    thread = world.new_thread(project, "[call browser_save_journey %s]" % json.dumps(
+        {"name": "Nothing", "steps": steps}))
+    expect("expect step" in world.wait(thread, 30), "refused without expect")
+
+
+@scenario()
+def agents_propose_rules_for_the_user_to_keep(world, project):
+    thread = world.new_thread(project, '[call propose_rule {"rule": "Validate requests with Form Requests.", "reason": "you said so"}]')
+    reply = world.wait(thread, 30)
+    expect("as a card" in reply, reply[-200:])
+    cards = [i for i in world.items(thread) if i["kind"] == "rule_proposal"]
+    expect(len(cards) == 1 and cards[0]["rule"] == "Validate requests with Form Requests.", cards)
+    expect("outcome" not in cards[0], "the user hasn't decided")
+    expect(not os.path.exists(os.path.join(world.projects[project]["path"], "AGENTS.md")), "no file written yet")
 
 
 def main():

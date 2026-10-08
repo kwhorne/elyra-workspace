@@ -640,6 +640,23 @@ impl AppState {
             session.fork_pending = shared;
             session
         });
+        // Every thread can reach the phone, also those no tab shows
+        // (automations, Félagi, the gateway).
+        cx.subscribe(
+            &session,
+            move |_, _, event: &crate::thread_session::SessionEvent, cx| {
+                let app = cx.entity();
+                let event = match event {
+                    crate::thread_session::SessionEvent::NeedsAttention => Some(true),
+                    crate::thread_session::SessionEvent::TurnCompleted => Some(false),
+                    _ => None,
+                };
+                if let Some(needs_you) = event {
+                    cx.defer(move |cx| crate::phone::on_session_event(&app, id, needs_you, cx));
+                }
+            },
+        )
+        .detach();
         self.sessions.insert(id, session.clone());
         Some(session)
     }
@@ -676,6 +693,27 @@ pub fn transcript_text(items: &[elyra_core::TranscriptItem], budget: usize) -> S
                     None => "waiting for the user",
                     Some(elyra_core::ProposalOutcome::Created) => "created",
                     Some(elyra_core::ProposalOutcome::Dismissed) => "dismissed",
+                }
+            )),
+            ItemContent::RuleProposal { rule, outcome, .. } => Some(format!(
+                "[proposed rule] {rule}: {}",
+                match outcome {
+                    None => "waiting for the user",
+                    Some(elyra_core::RuleOutcome::Dismissed) => "dismissed",
+                    Some(_) => "kept",
+                }
+            )),
+            ItemContent::Journey {
+                name,
+                passed,
+                failure,
+                ..
+            } => Some(format!(
+                "[journey] {name}: {}",
+                if *passed {
+                    "passed".to_string()
+                } else {
+                    format!("failed: {}", failure.as_deref().unwrap_or(""))
                 }
             )),
             ItemContent::Check {

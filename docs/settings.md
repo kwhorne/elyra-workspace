@@ -12,6 +12,8 @@ that restores its defaults.
 | External editor → Open projects in | The editor ⌘O uses. *Automatic* picks the first one installed. |
 | Updates → Check for updates automatically | Looks for a newer release on GitHub at launch and every six hours. **Elyra Workspace → Check for Updates…** checks now. |
 | Updates → Download and install updates automatically | Downloads and verifies a new version in the background; it installs when you restart or quit. Off: you're told about the new version and click to install it. See [Updates](troubleshooting.md#updates). |
+| Phone → Push to the phone while you're away | Pushes to your phone through ntfy when a thread needs you or finishes while Elyra Workspace isn't the active app, and takes your answers. Off by default. See [On your phone](chat.md#on-your-phone). |
+| Phone → ntfy server, Topic | The ntfy server (`https://ntfy.sh` or your own) and the private topic, made for you when you turn it on. **Send a test push** checks it. |
 
 ## Appearance
 
@@ -52,7 +54,9 @@ and committing or creating a pull request checks it. See
 ## Providers
 
 One section per agent: status and version, **Sign in…**, enabled, executable,
-arguments (ACP agents), environment and accounts. See [Providers](providers.md).
+arguments (ACP agents), environment, accounts, and the **escalation model** a
+fix gets when the [checks](context-and-goals.md#checks-after-each-turn) still
+fail after a first automatic fix. See [Providers](providers.md).
 
 ## Agents & MCP
 

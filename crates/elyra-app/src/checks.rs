@@ -193,7 +193,7 @@ const FIX_PROMPT_START: &str = "The project's checks failed after your changes:"
 /// "automatic fix 1 of 2" when `text` is a follow-up message for a failed
 /// check (shown folded in the transcript).
 pub fn fix_prompt_label(text: &str) -> Option<String> {
-    if !text.starts_with(FIX_PROMPT_START) {
+    if !text.starts_with(FIX_PROMPT_START) && !text.starts_with("The browser journey ") {
         return None;
     }
     let start = text.find("(automatic fix ")? + 1;

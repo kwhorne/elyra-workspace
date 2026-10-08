@@ -34,6 +34,33 @@ If Elyra quit while a turn was running (or crashed), the thread shows *The last
 turn was interrupted when the app quit* with **Resume** and **Dismiss**, and at
 launch a notification offers to continue every interrupted turn at once.
 
+## While you were away
+
+Back at the window after ten minutes or more, a summary shows what the threads
+did meanwhile: what needs you (an approval, a question, a proposed rule or
+automation), what failed (the turn, the checks, a journey), what finished, and
+what is still working, each with a line about it and what it cost. Click a row to
+open the thread. **While you were away…** in the command palette shows it again.
+
+## On your phone
+
+Turn on **Settings → General → Phone** to get a push through
+[ntfy](https://ntfy.sh) when a thread needs you or finishes while Elyra
+Workspace isn't the active app, for every thread, also those an automation or
+Félagi started. Install the ntfy app and subscribe to the topic shown there;
+**Send a test push** checks it.
+
+- An approval has **Allow**, **Always** and **Deny** buttons; a yes/no question
+  **Yes** and **No**; a question with up to three options a button each. The
+  answer goes straight to the agent.
+- To answer in your own words, publish to the topic followed by `-reply` (in the
+  ntfy app: subscribe to it too, and publish there). The text answers the open
+  question, or goes to the last thread as a message.
+- Pushes and answers go through the ntfy server, so the Mac needs no incoming
+  connection. They pass through that server, though: use your own for privacy.
+  Anyone who knows the topic can read the pushes and answer them, so keep it
+  private (it's a long random name).
+
 ## Attachments
 
 - **Images**: paste them (⌘V), drop them on the window, or use the paperclip

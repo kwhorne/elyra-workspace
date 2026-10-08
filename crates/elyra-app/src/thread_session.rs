@@ -70,6 +70,8 @@ pub struct ThreadSession {
     check_attempts: u32,
     /// The user stopped this turn: don't check it.
     stopped: bool,
+    /// Model and effort to go back to after an escalated fix.
+    escalated_from: Option<(Option<String>, Option<String>)>,
     _events: Option<Task<()>>,
 }
 
@@ -126,6 +128,7 @@ impl ThreadSession {
             check_cancel: None,
             check_attempts: 0,
             stopped: false,
+            escalated_from: None,
             _events: None,
         }
     }
@@ -1354,11 +1357,10 @@ impl ThreadSession {
             cx,
         );
         self.thread.last_activity_at = Some(Utc::now());
-        // Done means green: the turn ends when the project's checks pass.
-        if !is_error
-            && !self.stopped
-            && let Some(command) = self.check_command()
-        {
+        // Done means green: the turn ends when the project's checks and
+        // journeys pass.
+        let command = self.check_command();
+        if !is_error && !self.stopped && (command.is_some() || self.journeys_after_turn(cx)) {
             self.run_checks(command, spent_before, cx);
             return;
         }
@@ -1367,6 +1369,9 @@ impl ThreadSession {
 
     /// The end of a turn (after its checks): idle, notify, next message.
     fn finish_turn(&mut self, is_error: bool, spent_before: f64, cx: &mut Context<Self>) {
+        if let Some((model, effort)) = self.escalated_from.take() {
+            self.apply_model_effort(model, effort, cx);
+        }
         self.running = false;
         self.activity = None;
         self.set_status(
@@ -1410,7 +1415,7 @@ impl ThreadSession {
 
     /// Run the checks if the turn changed files; the turn stays running
     /// until they are done.
-    fn run_checks(&mut self, command: String, spent_before: f64, cx: &mut Context<Self>) {
+    fn run_checks(&mut self, command: Option<String>, spent_before: f64, cx: &mut Context<Self>) {
         let dir = self.working_dir();
         // The snapshot taken before this turn's message reached the agent.
         let checkpoint = self
@@ -1423,14 +1428,17 @@ impl ThreadSession {
             });
         let cancel = Arc::new(AtomicBool::new(false));
         self.check_cancel = Some(cancel.clone());
-        self.activity = Some(format!("Running checks: {command}"));
+        if let Some(command) = &command {
+            self.activity = Some(format!("Running checks: {command}"));
+        }
         cx.notify();
         let run_command = command.clone();
+        // None: the turn changed no files; Some(None): no check command.
         let job = cx.background_executor().spawn(async move {
             if !crate::checks::changed_since(&dir, checkpoint.flatten().as_deref()) {
                 return None;
             }
-            Some(crate::checks::run(&dir, &run_command, &cancel))
+            Some(run_command.map(|command| crate::checks::run(&dir, &command, &cancel)))
         });
         cx.spawn(async move |this, cx| {
             let outcome = job.await;
@@ -1443,8 +1451,8 @@ impl ThreadSession {
 
     fn checks_done(
         &mut self,
-        command: String,
-        outcome: Option<crate::checks::Outcome>,
+        command: Option<String>,
+        outcome: Option<Option<crate::checks::Outcome>>,
         spent_before: f64,
         cx: &mut Context<Self>,
     ) {
@@ -1452,6 +1460,11 @@ impl ThreadSession {
         // The turn changed no files.
         let Some(outcome) = outcome else {
             self.finish_turn(false, spent_before, cx);
+            return;
+        };
+        // No check command: on to the journeys.
+        let (Some(command), Some(outcome)) = (command, outcome) else {
+            self.replay_journeys(spent_before, cx);
             return;
         };
         let passed = outcome.passed;
@@ -1465,30 +1478,235 @@ impl ThreadSession {
             },
             cx,
         );
-        if passed || self.stopped {
+        if self.stopped {
             self.finish_turn(false, spent_before, cx);
             return;
         }
+        if passed {
+            self.replay_journeys(spent_before, cx);
+            return;
+        }
+        self.fix_or_hand_over(
+            "The checks",
+            |attempt, attempts| crate::checks::fix_prompt(&command, &outcome, attempt, attempts),
+            spent_before,
+            cx,
+        );
+    }
+
+    /// Something failed after the turn: send it back to the agent while
+    /// attempts are left, else hand the thread to the user.
+    fn fix_or_hand_over(
+        &mut self,
+        what: &str,
+        prompt: impl FnOnce(u32, u32) -> String,
+        spent_before: f64,
+        cx: &mut Context<Self>,
+    ) {
         let attempts = crate::preferences::Preferences::global(cx).check_fix_attempts;
         let can_fix = self.check_attempts < attempts
             && self.queued.is_empty()
             && self.budget_reached().is_none();
         if can_fix {
             self.check_attempts += 1;
-            let prompt =
-                crate::checks::fix_prompt(&command, &outcome, self.check_attempts, attempts);
+            // A fix already failed: the next one gets a stronger model.
+            if self.check_attempts >= 2 {
+                self.escalate(cx);
+            }
+            let prompt = prompt(self.check_attempts, attempts);
             self.activity = None;
             self.send(Prompt::text(prompt), cx);
             return;
         }
         if attempts > 0 && self.check_attempts >= attempts {
             self.notice(
-                format!("The checks still fail after {attempts} automatic fixes; over to you."),
+                format!("{what} still fail after {attempts} automatic fixes; over to you."),
                 true,
                 cx,
             );
         }
         self.finish_turn(true, spent_before, cx);
+    }
+
+    /// Switch to the escalation model and the highest effort for the next
+    /// fix, remembering what to go back to.
+    fn escalate(&mut self, cx: &mut Context<Self>) {
+        if self.escalated_from.is_some() {
+            return;
+        }
+        let configured = crate::preferences::Preferences::global(cx)
+            .provider(self.thread.provider)
+            .escalation_model
+            .trim()
+            .to_string();
+        let model = Some(configured)
+            .filter(|m| !m.is_empty())
+            .or_else(|| self.thread.model.clone());
+        let effort = self
+            .capabilities()
+            .efforts
+            .last()
+            .map(|(id, _)| id.to_string())
+            .or_else(|| self.thread.effort.clone());
+        if model == self.thread.model && effort == self.thread.effort {
+            return;
+        }
+        self.escalated_from = Some((self.thread.model.clone(), self.thread.effort.clone()));
+        let mut parts = Vec::new();
+        if model != self.thread.model {
+            parts.push(format!("model {}", model.as_deref().unwrap_or("default")));
+        }
+        if effort != self.thread.effort {
+            parts.push(format!("effort {}", effort.as_deref().unwrap_or("default")));
+        }
+        self.notice(
+            format!(
+                "The first fix didn't do it; the next one gets {} (back afterwards).",
+                parts.join(" and ")
+            ),
+            false,
+            cx,
+        );
+        self.apply_model_effort(model, effort, cx);
+    }
+
+    /// Change the thread's model and effort without making them the
+    /// provider's defaults.
+    fn apply_model_effort(
+        &mut self,
+        model: Option<String>,
+        effort: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread.model != model {
+            self.thread.model = model;
+            if let Some(provider) = &self.provider
+                && let Err(err) = provider.set_model(self.thread.model.as_deref())
+            {
+                log::warn!("set_model failed: {err:#}");
+                self.needs_restart = true;
+            }
+            // Going back to the provider's default needs a fresh start.
+            if self.thread.model.is_none() {
+                self.needs_restart = true;
+            }
+        }
+        if self.thread.effort != effort {
+            self.thread.effort = effort;
+            if let Some(provider) = &self.provider {
+                match provider.set_effort(self.thread.effort.as_deref()) {
+                    Ok(true) => {}
+                    Ok(false) => self.needs_restart = true,
+                    Err(err) => log::warn!("set_effort failed: {err:#}"),
+                }
+            }
+        }
+        self.save_thread(cx);
+        cx.notify();
+    }
+
+    /// Whether the project replays its journeys after each turn (and has any).
+    fn journeys_after_turn(&self, cx: &App) -> bool {
+        let Some(app) = self.app.upgrade() else {
+            return false;
+        };
+        crate::journeys::replay_after_turn(&app.read(cx).store, self.project.id)
+            && !crate::journeys::load_all(&self.working_dir()).is_empty()
+    }
+
+    /// After the checks passed: replay the project's journeys (when it does
+    /// that after each turn), then end the turn.
+    fn replay_journeys(&mut self, spent_before: f64, cx: &mut Context<Self>) {
+        if !self.journeys_after_turn(cx) || !cx.has_global::<crate::browser_tools::BrowserHub>() {
+            self.finish_turn(false, spent_before, cx);
+            return;
+        }
+        let journeys: Vec<crate::journeys::Journey> =
+            crate::journeys::load_all(&self.working_dir())
+                .into_iter()
+                .filter_map(|(_, journey)| journey.ok())
+                .collect();
+        let thread = self.thread.id;
+        self.activity = Some("Replaying journeys".into());
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            for journey in journeys {
+                let stopped = this.update(cx, |this, _| this.stopped).unwrap_or(true);
+                if stopped {
+                    break;
+                }
+                let outcome = crate::browser_tools::replay(thread, &journey, cx).await;
+                let failed = this
+                    .update(cx, |this, cx| {
+                        this.append_journey(&journey, &outcome, cx);
+                        if outcome.passed {
+                            return false;
+                        }
+                        let name = journey.name.clone();
+                        this.fix_or_hand_over(
+                            "The journeys",
+                            |attempt, attempts| {
+                                crate::journeys::fix_prompt(&name, &outcome, attempt, attempts)
+                            },
+                            spent_before,
+                            cx,
+                        );
+                        true
+                    })
+                    .unwrap_or(true);
+                if failed {
+                    return;
+                }
+            }
+            let _ = this.update(cx, |this, cx| this.finish_turn(false, spent_before, cx));
+        })
+        .detach();
+    }
+
+    fn append_journey(
+        &mut self,
+        journey: &crate::journeys::Journey,
+        outcome: &crate::journeys::Outcome,
+        cx: &mut Context<Self>,
+    ) {
+        self.append(
+            ItemContent::Journey {
+                name: journey.name.clone(),
+                passed: outcome.passed,
+                steps_run: outcome.steps_run,
+                total_steps: journey.steps.len(),
+                failure: outcome.failure.clone(),
+                duration_ms: outcome.duration_ms,
+            },
+            cx,
+        );
+    }
+
+    /// Replay journeys now (from the Context tab): shown, not sent to the agent.
+    pub fn run_journeys_now(&mut self, name: Option<String>, cx: &mut Context<Self>) {
+        if self.running || self.activity.is_some() {
+            return;
+        }
+        let journeys: Vec<crate::journeys::Journey> =
+            crate::journeys::load_all(&self.working_dir())
+                .into_iter()
+                .filter_map(|(_, journey)| journey.ok())
+                .filter(|j| name.as_deref().is_none_or(|name| j.name == name))
+                .collect();
+        let thread = self.thread.id;
+        self.activity = Some("Replaying journeys".into());
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            for journey in journeys {
+                let outcome = crate::browser_tools::replay(thread, &journey, cx).await;
+                let _ = this.update(cx, |this, cx| this.append_journey(&journey, &outcome, cx));
+            }
+            let _ = this.update(cx, |this, cx| {
+                this.activity = None;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Run the checks now, outside a turn (to try the command): the result is
@@ -1555,6 +1773,49 @@ impl ThreadSession {
         cx.notify();
     }
 
+    /// Show a rule the agent learned, for the user to keep or dismiss.
+    pub fn propose_rule(&mut self, rule: String, reason: String, cx: &mut Context<Self>) {
+        self.append(
+            ItemContent::RuleProposal {
+                rule,
+                reason,
+                outcome: None,
+            },
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// The rule a proposal item holds.
+    pub fn proposed_rule(&self, item: ItemId) -> Option<String> {
+        self.items
+            .iter()
+            .find(|i| i.id == item)
+            .and_then(|i| match &i.content {
+                ItemContent::RuleProposal { rule, .. } => Some(rule.clone()),
+                _ => None,
+            })
+    }
+
+    pub fn set_rule_outcome(
+        &mut self,
+        item: ItemId,
+        outcome: elyra_core::RuleOutcome,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.items.iter().position(|i| i.id == item) else {
+            return;
+        };
+        if let ItemContent::RuleProposal {
+            outcome: current, ..
+        } = &mut self.items[index].content
+        {
+            *current = Some(outcome);
+            self.persist_item(index, cx);
+            cx.notify();
+        }
+    }
+
     /// The automation a proposal item holds.
     pub fn proposal(&self, item: ItemId) -> Option<elyra_core::Automation> {
         self.items
@@ -1600,7 +1861,13 @@ impl ThreadSession {
                     ItemContent::TurnSummary { .. } | ItemContent::Notice { .. }
                 )
             })
-            .is_some_and(|item| matches!(item.content, ItemContent::Check { passed: false, .. }))
+            .is_some_and(|item| {
+                matches!(
+                    item.content,
+                    ItemContent::Check { passed: false, .. }
+                        | ItemContent::Journey { passed: false, .. }
+                )
+            })
     }
 
     // ---- goals ------------------------------------------------------------

@@ -98,6 +98,30 @@ allowed, a bar above the page says so; **Take over** there withdraws it. Threads
 in *Full access* aren't asked. An agent using *another* thread's browser is asked
 about like any [change to another thread](agent-gateway.md).
 
+## Journeys
+
+A journey is a flow through your app that an agent walked through in the
+browser and saved: open a page, click, fill in, press keys, wait, and what must
+be on the page when it works. Ask for one, for example *"try the checkout with
+the code SUMMER and save it as a journey"*. The agent saves the steps it just
+took in `.elyra/journeys/<name>.json` in the project, a small JSON file you can
+read, edit and commit with the code.
+
+- **Replay**: the **Context** tab lists the project's journeys; **▶** replays one
+  in the thread's browser and **Run all** every one. Agents replay them too, to
+  confirm a change didn't break a flow. **Journey passed** or **Journey failed**
+  (with the step and why) appears in the conversation.
+- **Replay after each turn**: switch it on in the Context tab, and after every
+  turn that changed files (and after the [checks](context-and-goals.md#checks-after-each-turn)
+  passed) the journeys run. A broken flow goes back to the agent like a failing
+  check, with the same number of automatic fixes. It needs the dev server
+  running and the window open.
+- Addresses are replayed on the site the thread's browser shows, so a journey
+  saved on `shop.test` also runs on a worktree's own site.
+
+Replaying clicks and types on the page, like the agent's own actions: an agent
+asks first unless the thread is in Full access.
+
 For safety, agents can only open, read and use pages served from this Mac:
 `localhost`, `127.0.0.1`, `[::1]`, and names ending in `.localhost`, `.test` or
 `.local`. If the thread's browser shows any other site, the tools refuse it.

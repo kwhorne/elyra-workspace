@@ -122,6 +122,8 @@ pub struct ContextView {
     /// The project's .mcp.json and skills, shared with every agent.
     mcp_json: Option<crate::shared_setup::McpJson>,
     skills: Vec<crate::shared_setup::Skill>,
+    /// The project's saved browser journeys.
+    journeys: Vec<(std::path::PathBuf, Result<crate::journeys::Journey, String>)>,
     goal: Entity<TextareaState>,
     budget: Entity<InputState>,
     servers: Vec<Server>,
@@ -223,6 +225,7 @@ impl ContextView {
             check_suggestion,
             mcp_json: None,
             skills: Vec::new(),
+            journeys: Vec::new(),
             goal,
             budget,
             servers: Vec::new(),
@@ -242,7 +245,124 @@ impl ContextView {
         let path = self.session.read(cx).project.path.clone();
         self.mcp_json = crate::shared_setup::mcp_json(&path);
         self.skills = crate::shared_setup::skills(&path);
+        self.journeys = crate::journeys::load_all(&self.session.read(cx).working_dir());
         cx.notify();
+    }
+
+    fn render_journeys(&self, cx: &Context<Self>) -> AnyElement {
+        let session = self.session.read(cx);
+        let busy = session.running || session.activity.is_some();
+        let project = session.project.id;
+        let auto = crate::journeys::replay_after_turn(&self.app.read(cx).store, project);
+        let muted = |text: String| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .whitespace_normal()
+                .child(text)
+        };
+        let mut section = v_flex()
+            .gap_2()
+            .child(
+                Self::section("Browser journeys", cx)
+                    .child(
+                        Button::new("journeys-refresh")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::RefreshCw)
+                            .tooltip("Read again")
+                            .on_click(cx.listener(|this, _, _, cx| this.load_shared(cx))),
+                    )
+                    .when(!self.journeys.is_empty(), |this| {
+                        this.child(
+                            Button::new("journeys-run-all")
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Play)
+                                .label("Run all")
+                                .disabled(busy)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.session
+                                        .update(cx, |session, cx| session.run_journeys_now(None, cx))
+                                })),
+                        )
+                    }),
+            )
+            .child(muted(
+                "Flows an agent walked through in the browser and saved in .elyra/journeys. Replay them here, or after every turn that changed files: a broken flow goes back to the agent like a failing check.".into(),
+            ));
+        if self.journeys.is_empty() {
+            return section
+                .child(muted(
+                    "None saved yet. Ask an agent to try a flow in the browser (with the dev server running) and save it as a journey.".into(),
+                ))
+                .into_any_element();
+        }
+        section = section.child(
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .child(
+                    gpui_kit::component::switch::Switch::new("journeys-after-turn")
+                        .checked(auto)
+                        .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                            let on = *checked;
+                            this.app.update(cx, |app, cx| {
+                                crate::journeys::set_replay_after_turn(&app.store, project, on);
+                                cx.notify();
+                            });
+                            cx.notify();
+                        })),
+                )
+                .child("Replay after each turn"),
+        );
+        for (index, (path, journey)) in self.journeys.iter().enumerate() {
+            section = section.child(match journey {
+                Ok(journey) => {
+                    let name = journey.name.clone();
+                    h_flex()
+                        .gap_2()
+                        .text_xs()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(journey.name.clone()),
+                        )
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("{} steps", journey.steps.len())),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("journey-run-{index}")))
+                                .ghost()
+                                .xsmall()
+                                .icon(IconName::Play)
+                                .tooltip("Replay in the thread's browser")
+                                .disabled(busy)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let name = name.clone();
+                                    this.session.update(cx, |session, cx| {
+                                        session.run_journeys_now(Some(name), cx)
+                                    })
+                                })),
+                        )
+                        .into_any_element()
+                }
+                Err(error) => muted(format!(
+                    "{}: {error}",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ))
+                .into_any_element(),
+            });
+        }
+        section.into_any_element()
     }
 
     /// Give the project's .mcp.json servers to every agent, or stop.
@@ -945,6 +1065,7 @@ impl Render for ContextView {
                             }),
                     )
                     .child(self.render_checks(&project_name, cx))
+                    .child(self.render_journeys(cx))
                     .child(self.render_shared(cx))
                     .child(
                         v_flex()

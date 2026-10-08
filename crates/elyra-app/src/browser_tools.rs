@@ -39,10 +39,16 @@ pub const READ_TOOLS: &[&str] = &[
     "browser_network",
     "browser_screenshot",
     "browser_wait",
+    "browser_list_journeys",
 ];
 
 /// Tools that act on the page like a user.
-pub const ACT_TOOLS: &[&str] = &["browser_click", "browser_fill", "browser_press"];
+pub const ACT_TOOLS: &[&str] = &[
+    "browser_click",
+    "browser_fill",
+    "browser_press",
+    "browser_run_journey",
+];
 
 /// Longest `browser_wait` may wait.
 const MAX_WAIT: Duration = Duration::from_secs(60);
@@ -127,6 +133,31 @@ pub fn tools() -> Vec<Tool> {
             } }),
         ),
         tool(
+            "browser_save_journey",
+            "Save the flow you just walked through in this thread's browser (since the last browser_open: opens, clicks, fills, keys, waits) as a journey in the project's .elyra/journeys, so it can be replayed after later changes like a test. Add what must be on the page when it works (expect). Or pass steps yourself.",
+            json!({ "type": "object", "properties": {
+                "name": { "type": "string", "description": "e.g. Checkout with a discount code" },
+                "description": { "type": "string" },
+                "expect": { "type": "array", "items": { "type": "string" }, "description": "Texts that must be on the page at the end" },
+                "expect_selectors": { "type": "array", "items": { "type": "string" }, "description": "CSS selectors that must match at the end" },
+                "steps": { "type": "array", "description": "Instead of the recording: [{\"open\":\"http://shop.test/\"}, {\"click\":{\"text\":\"Add to cart\"}}, {\"fill\":{\"text\":\"Code\",\"value\":\"SUMMER\"}}, {\"press\":{\"key\":\"Enter\"}}, {\"wait\":{\"text\":\"Total\"}}, {\"expect\":{\"text\":\"90,00\"}}]" },
+                "thread_id": thread
+            }, "required": ["name"] }),
+        ),
+        tool(
+            "browser_run_journey",
+            "Replay a saved journey (or all of them without a name) in this thread's browser and report which step failed, if any. Use it to confirm a change didn't break a flow.",
+            json!({ "type": "object", "properties": {
+                "name": { "type": "string" },
+                "thread_id": thread
+            } }),
+        ),
+        tool(
+            "browser_list_journeys",
+            "The journeys saved in the project (.elyra/journeys): name, description and steps.",
+            json!({ "type": "object", "properties": { "thread_id": thread } }),
+        ),
+        tool(
             "browser_reload",
             "Reload the page, for instance after changing its code. Console and network logs start over.",
             json!({ "type": "object", "properties": { "thread_id": thread } }),
@@ -172,6 +203,12 @@ pub async fn run(
     if !exists {
         return Err(format!("No thread {thread}."));
     }
+    match tool {
+        "browser_list_journeys" => return list_journeys(app, thread, cx),
+        "browser_save_journey" => return save_journey(app, thread, args, cx),
+        "browser_run_journey" => return run_journeys(app, caller, thread, args, cx).await,
+        _ => {}
+    }
     if tool == "browser_open" {
         let url = args["url"].as_str().unwrap_or("").trim().to_string();
         let url = crate::browser_view::normalize_address(&url).unwrap_or(url);
@@ -195,6 +232,10 @@ pub async fn run(
                 .ok()
                 .flatten()
         });
+        if opened.is_some() {
+            let step = crate::journeys::Step::Open(url.clone());
+            cx.update(|cx| record(thread, step, cx));
+        }
         return match opened {
             Some(_) => Ok(format!("Opening {url} in the thread's browser.").into()),
             None => Err("Elyra Workspace has no window to show the browser in.".into()),
@@ -343,6 +384,9 @@ pub async fn run(
                 });
                 let found = wait(found_rx, cx).await.flatten().unwrap_or_default();
                 if found.contains("\"present\":true") {
+                    if let Some(step) = step_for(tool, args) {
+                        cx.update(|cx| record(thread, step, cx));
+                    }
                     return Ok(format!(
                         "{label}\nFound after {:.1} s: {found}",
                         started.elapsed().as_secs_f64()
@@ -385,9 +429,448 @@ pub async fn run(
         }
         _ => match answer {
             Some(json) if json.starts_with("{\"error\"") => Err(format!("{label}\n{json}")),
-            Some(json) => Ok(format!("{label}\n{json}").into()),
+            Some(json) => {
+                if let Some(step) = step_for(tool, args) {
+                    cx.update(|cx| record(thread, step, cx));
+                }
+                Ok(format!("{label}\n{json}").into())
+            }
             None => Err(format!("{label} didn't answer; it may still be loading.")),
         },
+    }
+}
+
+// ---- journeys ---------------------------------------------------------------
+
+/// Note an agent's step in the thread's browser, for saving as a journey.
+fn record(thread: ThreadId, step: crate::journeys::Step, cx: &mut App) {
+    if let Some(browser) = browser_of(thread, cx) {
+        browser.update(cx, |browser, _| browser.record(step));
+    }
+}
+
+/// The journey step a browser tool call amounts to.
+fn step_for(tool: &str, args: &Value) -> Option<crate::journeys::Step> {
+    use crate::journeys::{Step, Target};
+    let field = |key: &str| {
+        args[key]
+            .as_str()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    let target = Target {
+        selector: field("selector"),
+        text: field("text"),
+    };
+    Some(match tool {
+        "browser_click" => Step::Click(target),
+        "browser_fill" => Step::Fill {
+            target,
+            value: args["value"].as_str().unwrap_or("").to_string(),
+        },
+        "browser_press" => Step::Press {
+            key: field("key")?,
+            target,
+        },
+        "browser_wait" => Step::Wait(target),
+        _ => return None,
+    })
+}
+
+fn working_dir(
+    app: &Entity<AppState>,
+    thread: ThreadId,
+    cx: &mut AsyncApp,
+) -> Option<std::path::PathBuf> {
+    cx.update(|cx| {
+        let state = app.read(cx);
+        let thread = state.thread(thread)?;
+        let project = state.project(thread.project_id)?;
+        Some(thread.working_dir(project))
+    })
+}
+
+fn list_journeys(
+    app: &Entity<AppState>,
+    thread: ThreadId,
+    cx: &mut AsyncApp,
+) -> Result<Output, String> {
+    let dir = working_dir(app, thread, cx).ok_or("no such thread")?;
+    let journeys = crate::journeys::load_all(&dir);
+    if journeys.is_empty() {
+        return Ok("No journeys saved in this project yet (.elyra/journeys). Walk through a flow in the browser, then save it with browser_save_journey.".to_string().into());
+    }
+    let list: Vec<Value> = journeys
+        .into_iter()
+        .map(|(path, journey)| match journey {
+            Ok(j) => json!({
+                "name": j.name,
+                "description": j.description,
+                "steps": j.steps.iter().map(|s| s.describe()).collect::<Vec<_>>(),
+            }),
+            Err(error) => json!({ "file": path.display().to_string(), "error": error }),
+        })
+        .collect();
+    Ok(serde_json::to_string_pretty(&list)
+        .unwrap_or_default()
+        .into())
+}
+
+fn save_journey(
+    app: &Entity<AppState>,
+    thread: ThreadId,
+    args: &Value,
+    cx: &mut AsyncApp,
+) -> Result<Output, String> {
+    use crate::journeys::{Journey, Step, Target};
+    let dir = working_dir(app, thread, cx).ok_or("no such thread")?;
+    let name = args["name"].as_str().unwrap_or("").trim().to_string();
+    let mut steps: Vec<Step> = match args.get("steps").filter(|s| !s.is_null()) {
+        Some(steps) => {
+            serde_json::from_value(steps.clone()).map_err(|err| format!("`steps`: {err}"))?
+        }
+        None => cx.update(|cx| {
+            browser_of(thread, cx)
+                .map(|b| b.read(cx).recording())
+                .unwrap_or_default()
+        }),
+    };
+    let strings = |key: &str| -> Vec<String> {
+        args[key]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    for text in strings("expect") {
+        steps.push(Step::Expect(Target {
+            text: Some(text),
+            selector: None,
+        }));
+    }
+    for selector in strings("expect_selectors") {
+        steps.push(Step::Expect(Target {
+            selector: Some(selector),
+            text: None,
+        }));
+    }
+    let journey = Journey {
+        name,
+        description: args["description"]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+        steps,
+    };
+    let path = crate::journeys::save(&dir, &journey)?;
+    Ok(format!(
+        "Saved \u{201c}{}\u{201d} ({} steps) to {}:\n{}\nIt is part of the project now; commit it with your changes.",
+        journey.name,
+        journey.steps.len(),
+        path.display(),
+        journey.steps.iter().map(|s| format!("- {}", s.describe())).collect::<Vec<_>>().join("\n")
+    )
+    .into())
+}
+
+async fn run_journeys(
+    app: &Entity<AppState>,
+    caller: Option<ThreadId>,
+    thread: ThreadId,
+    args: &Value,
+    cx: &mut AsyncApp,
+) -> Result<Output, String> {
+    let dir = working_dir(app, thread, cx).ok_or("no such thread")?;
+    let name = args["name"]
+        .as_str()
+        .map(str::trim)
+        .filter(|n| !n.is_empty());
+    let journeys: Vec<crate::journeys::Journey> = match name {
+        Some(name) => vec![crate::journeys::find(&dir, name).ok_or_else(|| {
+            format!("No journey called \u{201c}{name}\u{201d} (see browser_list_journeys).")
+        })?],
+        None => crate::journeys::load_all(&dir)
+            .into_iter()
+            .filter_map(|(_, journey)| journey.ok())
+            .collect(),
+    };
+    if journeys.is_empty() {
+        return Err("No journeys saved in this project yet.".into());
+    }
+    if caller == Some(thread) {
+        let first = journeys[0]
+            .steps
+            .first()
+            .map(|s| s.describe())
+            .unwrap_or_default();
+        let browser = ensure_browser(thread, cx)
+            .ok_or("Elyra Workspace has no window to show the browser in.")?;
+        let url = cx.update(|cx| browser.read(cx).page_state().url.clone());
+        allowed_to_act(
+            app,
+            &browser,
+            thread,
+            "browser_run_journey",
+            &json!({ "text": first }),
+            &url,
+            cx,
+        )
+        .await?;
+    }
+    let mut lines = Vec::new();
+    let mut failed = 0;
+    for journey in &journeys {
+        let outcome = replay(thread, journey, cx).await;
+        if !outcome.passed {
+            failed += 1;
+        }
+        lines.push(match &outcome.failure {
+            None => format!(
+                "passed  {} ({} steps, {:.1} s)",
+                journey.name,
+                outcome.steps_run,
+                outcome.duration_ms as f64 / 1000.
+            ),
+            Some(why) => format!(
+                "FAILED  {} at step {}: {why}",
+                journey.name,
+                outcome.steps_run + 1
+            ),
+        });
+    }
+    let text = lines.join("\n");
+    if failed > 0 {
+        Err(text)
+    } else {
+        Ok(text.into())
+    }
+}
+
+/// The thread's browser, made if it has none yet (blank).
+fn ensure_browser(thread: ThreadId, cx: &mut AsyncApp) -> Option<Entity<BrowserView>> {
+    cx.update(|cx| {
+        if let Some(browser) = browser_of(thread, cx) {
+            return Some(browser);
+        }
+        let hub = cx.try_global::<BrowserHub>()?;
+        let (workspace, window) = (hub.workspace.clone(), hub.window);
+        window
+            .update(cx, |_, window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.browser_for(thread, window, cx)
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .ok()
+            .flatten()
+    })
+}
+
+/// Replay a journey in the thread's browser, step by step. Addresses move to
+/// the origin the thread's browser shows (such as its worktree's site).
+pub async fn replay(
+    thread: ThreadId,
+    journey: &crate::journeys::Journey,
+    cx: &mut AsyncApp,
+) -> crate::journeys::Outcome {
+    use crate::journeys::{Outcome, Step};
+    let started = std::time::Instant::now();
+    let fail = |steps_run: usize, step: &Step, why: String| Outcome {
+        passed: false,
+        steps_run,
+        failure: Some(format!("{}: {why}", step.describe())),
+        duration_ms: started.elapsed().as_millis() as u64,
+    };
+    let origin = cx.update(|cx| {
+        browser_of(thread, cx)
+            .map(|b| b.read(cx).page_state().url.clone())
+            .filter(|url| webview::is_local_address(url))
+            .and_then(|url| crate::journeys::origin_of(&url))
+    });
+    for (index, step) in journey.steps.iter().enumerate() {
+        let result = match step {
+            Step::Open(url) => {
+                open_and_settle(thread, &crate::journeys::rebase(url, origin.as_deref()), cx).await
+            }
+            Step::Click(target) => {
+                act_until(
+                    thread,
+                    format!("click({})", js_target(target)),
+                    ACT_WAIT,
+                    cx,
+                )
+                .await
+            }
+            Step::Fill { target, value } => {
+                let value = serde_json::to_string(value).unwrap_or_default();
+                act_until(
+                    thread,
+                    format!("fill({}, {value})", js_target(target)),
+                    ACT_WAIT,
+                    cx,
+                )
+                .await
+            }
+            Step::Press { key, target } => {
+                let key = serde_json::to_string(key).unwrap_or_default();
+                act_until(
+                    thread,
+                    format!("press({key}, {})", js_target(target)),
+                    ACT_WAIT,
+                    cx,
+                )
+                .await
+            }
+            Step::Wait(target) => present_within(thread, target, Duration::from_secs(10), cx).await,
+            Step::Expect(target) => {
+                present_within(thread, target, Duration::from_secs(5), cx).await
+            }
+        };
+        if let Err(why) = result {
+            return fail(index, step, why);
+        }
+    }
+    Outcome {
+        passed: true,
+        steps_run: journey.steps.len(),
+        failure: None,
+        duration_ms: started.elapsed().as_millis() as u64,
+    }
+}
+
+/// How long an action keeps looking for its element (the page may still render).
+const ACT_WAIT: Duration = Duration::from_secs(5);
+
+fn js_target(target: &crate::journeys::Target) -> String {
+    let quote =
+        |v: &Option<String>| serde_json::to_string(v.as_deref().unwrap_or("")).unwrap_or_default();
+    format!("{}, {}", quote(&target.selector), quote(&target.text))
+}
+
+/// Open `url` in the thread's browser and wait until it has loaded.
+async fn open_and_settle(thread: ThreadId, url: &str, cx: &mut AsyncApp) -> Result<(), String> {
+    if !webview::is_local_address(url) {
+        return Err(format!("{url} isn't a local development page"));
+    }
+    let opened = cx.update(|cx| {
+        let hub = cx.try_global::<BrowserHub>()?;
+        let (workspace, window) = (hub.workspace.clone(), hub.window);
+        window
+            .update(cx, |_, window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.open_in_browser(thread, url, window, cx)
+                    })
+                    .ok()
+                    .flatten()
+            })
+            .ok()
+            .flatten()
+    });
+    if opened.is_none() {
+        return Err("Elyra Workspace has no window to show the browser in".into());
+    }
+    let started = std::time::Instant::now();
+    // Give the load a moment to begin, then wait for it to finish.
+    cx.background_executor()
+        .timer(Duration::from_millis(300))
+        .await;
+    loop {
+        let loading =
+            cx.update(|cx| browser_of(thread, cx).map(|b| b.read(cx).page_state().loading));
+        if loading == Some(false) {
+            cx.background_executor()
+                .timer(Duration::from_millis(300))
+                .await;
+            return Ok(());
+        }
+        if started.elapsed() > PAGE_TIMEOUT {
+            return Err("the page didn't finish loading".into());
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(100))
+            .await;
+    }
+}
+
+/// Run an agent-act.js call, retrying while the element isn't there yet.
+async fn act_until(
+    thread: ThreadId,
+    call: String,
+    within: Duration,
+    cx: &mut AsyncApp,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    loop {
+        let page = cx.update(|cx| browser_of(thread, cx).and_then(|b| b.read(cx).web_view()));
+        let Some(page) = page else {
+            return Err("the browser has no page".into());
+        };
+        let (tx, rx) = async_channel::bounded::<Option<String>>(1);
+        page.agent_act(&call, move |json| {
+            tx.try_send(json).ok();
+        });
+        let answer = wait(rx, cx).await.flatten().unwrap_or_default();
+        if !answer.is_empty() && !answer.starts_with("{\"error\"") {
+            // Let the page react (navigation, rendering) before the next step.
+            cx.background_executor()
+                .timer(Duration::from_millis(400))
+                .await;
+            return Ok(());
+        }
+        let still_missing = answer.is_empty() || answer.contains("Nothing matches");
+        if !still_missing || started.elapsed() >= within {
+            let error = serde_json::from_str::<Value>(&answer)
+                .ok()
+                .and_then(|v| v["error"].as_str().map(str::to_string))
+                .unwrap_or_else(|| "the page didn't answer".into());
+            return Err(error);
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(250))
+            .await;
+    }
+}
+
+/// Wait until the target is on the page.
+async fn present_within(
+    thread: ThreadId,
+    target: &crate::journeys::Target,
+    within: Duration,
+    cx: &mut AsyncApp,
+) -> Result<(), String> {
+    let call = format!("present({})", js_target(target));
+    let started = std::time::Instant::now();
+    loop {
+        let page = cx.update(|cx| browser_of(thread, cx).and_then(|b| b.read(cx).web_view()));
+        if let Some(page) = page {
+            let (tx, rx) = async_channel::bounded::<Option<String>>(1);
+            page.agent_act(&call, move |json| {
+                tx.try_send(json).ok();
+            });
+            if wait(rx, cx)
+                .await
+                .flatten()
+                .is_some_and(|a| a.contains("\"present\":true"))
+            {
+                return Ok(());
+            }
+        }
+        if started.elapsed() >= within {
+            return Err(format!("not on the page after {} s", within.as_secs()));
+        }
+        cx.background_executor()
+            .timer(Duration::from_millis(250))
+            .await;
     }
 }
 

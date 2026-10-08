@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- **While you were away.** Back at the window after a while, a summary shows what
+  the threads did meanwhile: what needs you, what failed, what finished and what
+  is still working, with the cost. Click a row to open the thread; the command
+  palette shows it again.
+- **Answer from your phone.** Turn on Settings → General → Phone and threads that
+  need you or finish while you're away push to your phone through ntfy, with
+  Allow, Deny and answer buttons; reply in your own words to answer a question
+  or send a message. Works for every thread, also automations and Félagi runs.
+- **Rules agents learn.** Correct an agent and it can propose the correction as a
+  rule; one click adds it to AGENTS.md (or the project's instructions).
+- **A stronger second fix.** When the checks or journeys still fail after a first
+  automatic fix, the next one gets the agent's escalation model (Settings →
+  Providers, e.g. `opus`) and its highest effort, then the thread goes back to
+  its own model. Cheap model for the easy turns, strong model when it counts.
+- **Browser journeys.** An agent that tried a flow in the browser (open a page,
+  click, fill in, press, wait) can save it as a journey in the project's
+  `.elyra/journeys`, with what must be on the page when it works. Replay journeys
+  from the Context tab, or switch on **Replay after each turn**: after every turn
+  that changed files they run in the thread's browser, and a broken flow goes back
+  to the agent like a failing check. UI regressions get caught without anyone
+  writing browser tests.
+
 ## 1.0.0
 
 Elyra Workspace 1.0. Threads for every task with Claude Code, Codex, Elyra, Pi and

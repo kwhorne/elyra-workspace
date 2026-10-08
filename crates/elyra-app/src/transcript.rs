@@ -538,6 +538,158 @@ fn render_item(
             automation,
             outcome,
         } => proposal_card(id, automation, *outcome, session, cx),
+        ItemContent::RuleProposal {
+            rule,
+            reason,
+            outcome,
+        } => {
+            use elyra_core::RuleOutcome;
+            let pending = outcome.is_none();
+            let file = crate::rules::instructions_file(&session.working_dir());
+            let file_name = file
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let title = match outcome {
+                None => "Proposed rule".to_string(),
+                Some(RuleOutcome::File) => format!("Rule added to {file_name}"),
+                Some(RuleOutcome::Instructions) => {
+                    "Rule added to the project's instructions".into()
+                }
+                Some(RuleOutcome::Dismissed) => "Rule dismissed".into(),
+            };
+            let mut card = v_flex()
+                .w_full()
+                .p_3()
+                .gap_2()
+                .rounded_lg()
+                .border_1()
+                .border_color(if pending {
+                    cx.theme().info
+                } else {
+                    cx.theme().border
+                })
+                .when(pending, |this| this.bg(cx.theme().info.opacity(0.06)))
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Icon::new(IconName::Lightbulb)
+                                .small()
+                                .text_color(cx.theme().info),
+                        )
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(title)),
+                )
+                .child(div().text_sm().whitespace_normal().child(rule.clone()))
+                .when(!reason.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .whitespace_normal()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("Learned from: {reason}")),
+                    )
+                });
+            if pending {
+                card = card.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new(SharedString::from(format!("rule-file-{id}")))
+                                .primary()
+                                .small()
+                                .label(format!("Add to {file_name}"))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.keep_rule(id, true, window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("rule-instructions-{id}")))
+                                .small()
+                                .label("Add to project instructions")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.keep_rule(id, false, window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("rule-dismiss-{id}")))
+                                .ghost()
+                                .small()
+                                .label("Dismiss")
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.dismiss_rule(id, cx)),
+                                ),
+                        ),
+                );
+            }
+            card.into_any_element()
+        }
+        ItemContent::Journey {
+            name,
+            passed,
+            steps_run,
+            total_steps,
+            failure,
+            duration_ms,
+        } => {
+            let (icon, color, label) = if *passed {
+                (IconName::Route, cx.theme().success, "Journey passed")
+            } else {
+                (IconName::Route, cx.theme().danger, "Journey failed")
+            };
+            let summary = if *passed {
+                format!(
+                    "{name} · {total_steps} steps · {:.1}s",
+                    *duration_ms as f64 / 1000.0
+                )
+            } else {
+                format!("{name} · step {} of {total_steps}", steps_run + 1)
+            };
+            v_flex()
+                .w_full()
+                .rounded_md()
+                .border_1()
+                .border_color(if *passed { cx.theme().border } else { color })
+                .child(
+                    h_flex()
+                        .w_full()
+                        .px_2()
+                        .py_1()
+                        .gap_2()
+                        .text_sm()
+                        .child(Icon::new(icon).small().text_color(color))
+                        .child(
+                            div()
+                                .flex_none()
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(label),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(summary),
+                        ),
+                )
+                .when_some(failure.clone(), |this, failure| {
+                    this.child(
+                        div()
+                            .px_2()
+                            .pb_1()
+                            .text_xs()
+                            .whitespace_normal()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(failure),
+                    )
+                })
+                .into_any_element()
+        }
         ItemContent::Check {
             command,
             passed,

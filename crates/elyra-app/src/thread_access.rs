@@ -26,6 +26,8 @@ pub const WRITES: &[&str] = &[
     "browser_click",
     "browser_fill",
     "browser_press",
+    "browser_save_journey",
+    "browser_run_journey",
 ];
 
 const KEY: &str = "gateway_thread_pairs";
@@ -98,6 +100,11 @@ fn describe(tool: &str, args: &serde_json::Value) -> String {
             args["url"].as_str().unwrap_or("a page")
         ),
         "browser_reload" => "reload the page in its browser".into(),
+        "browser_save_journey" => format!(
+            "save a journey \u{201c}{}\u{201d} in its project",
+            args["name"].as_str().unwrap_or("")
+        ),
+        "browser_run_journey" => "replay a journey in its browser".into(),
         "browser_click" | "browser_fill" | "browser_press" => format!(
             "{} in its browser",
             crate::browser_tools::describe_action(tool, args)

@@ -34,6 +34,9 @@ token, and every call is written to an audit log. The address is shown in
 | `browser_fill` | Fill in a field by selector, label or placeholder; selects and checkboxes too (asked the first time) | |
 | `browser_press` | Press a key; Enter in a form field submits it (asked the first time) | |
 | `browser_wait` | Wait until an element or a text appears (at most 60 seconds) | ✓ |
+| `browser_save_journey` | Save the flow just walked through (or given steps) as a [journey](browser.md#journeys) in the project | |
+| `browser_run_journey` | Replay one journey, or all, and report the step that failed (asked the first time) | |
+| `browser_list_journeys` | The project's journeys and their steps | ✓ |
 
 Projects can be named by id, name or path. A thread can't wait for, interrupt or
 archive itself.

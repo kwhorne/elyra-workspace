@@ -75,7 +75,7 @@ GitHub Actions runs the same checks and the scenarios
 | `ELYRA_HOME=<dir>` | Use `<dir>` instead of `~/.elyra` (isolated instances; never test against your real data) |
 | `ELYRA_NO_ACTIVATE=1` | Open the window in the background without taking focus |
 | `ELYRA_HEADLESS=1` | No window, Dock icon or update checks; for the scenarios, driven through the gateway |
-| `ELYRA_OPEN_PANEL=tasks\|automations\|stats\|review\|files[:<path>]` | Open that panel (or the large file editor, with a file) at launch (screenshots without input) |
+| `ELYRA_OPEN_PANEL=tasks\|automations\|stats\|review\|race\|files[:<path>]` | Open that panel (or the large file editor, with a file) at launch (screenshots without input) |
 | `ELYRA_BROWSER_URL=<url>` | Open `<url>` in the active thread's browser at launch |
 | `ELYRA_UPDATE_RESTART_WHEN_READY=1` | Restart into a staged update as soon as it is ready (end-to-end update tests) |
 | `RUST_LOG=debug` | More logging |
