@@ -940,7 +940,7 @@ impl ThreadSession {
         self.set_status(ThreadStatus::Idle, cx);
         self.submit(
             Prompt::text(
-                "Your previous turn was interrupted because the app quit. Continue where you left off.",
+                "Your previous turn was interrupted because the app quit. First check what was already done (files changed, commands that ran) so nothing is done twice, then continue where you left off.",
             ),
             cx,
         );
