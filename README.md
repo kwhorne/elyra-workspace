@@ -23,12 +23,22 @@ updates itself after that.
   line comments to the agent, pull requests and a code review inbox (via `gh`).
 - **Files and terminal**: a command palette, file and content search, an editor,
   and a full terminal for vim, htop or lazygit, with splits and search.
-- **Automation**: scheduled prompts, a task board, and thread goals that keep an
-  agent going until the job is done.
+- **Done means green**: give a project a check command (tests, lint) and it runs
+  after every turn that changed files; failures go back to the agent, and the
+  thread is done when they pass.
+- **Agents that try their work**: a built-in browser for your dev servers where
+  agents read the page, console and network calls, and (once you allow it) click,
+  fill in forms and press keys.
+- **One setup for every agent**: the project's `.mcp.json` servers (once you allow
+  them) and skills reach Codex, Elyra, Pi and ACP agents too, not only Claude Code.
+- **Automation**: scheduled prompts (an agent can propose one), a task board, and
+  thread goals that keep an agent going until the job is done.
 - **Agent gateway (MCP)**: let agents start and steer other threads, or connect
   Claude Desktop and Codex. Every call is in an audit log.
 - **Local and private**: no account and no telemetry. Data lives in `~/.elyra`, and
   the agents run as the command-line tools you install.
+- **Safe updates**: signed, notarized updates that install themselves; a version
+  that doesn't start is replaced by the previous one automatically.
 
 ## Supported agents
 

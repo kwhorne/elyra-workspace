@@ -16,14 +16,14 @@ and the agents run as the command-line tools you already have installed.
 | [Providers](providers.md) | Claude Code, Codex, Elyra, Pi, Gemini CLI, Cursor, OpenCode and other ACP agents; accounts |
 | [Changes, Git and review](git-and-review.md) | Diffs, staging, commits, branches, worktrees, pull requests, the review inbox |
 | [Files and search](files-and-search.md) | Command palette, file finder, content search, the editor, external editors |
-| [Browser](browser.md) | The built-in browser for your dev servers, page errors, before and after pictures, and letting agents look at pages |
+| [Browser](browser.md) | The built-in browser for your dev servers, page errors, before and after pictures, and letting agents look at and use pages |
 | [Terminal](terminal.md) | Terminal tabs and splits, search, full-screen programs, copy and paste |
-| [Context, notes and goals](context-and-goals.md) | Notes, pinned messages, recaps, project instructions, dev servers, goals, budgets |
-| [Automations and tasks](automations-and-tasks.md) | Scheduled prompts, the task board, and Félagi tasks and time |
+| [Context, notes and goals](context-and-goals.md) | Notes, pinned messages, recaps, project instructions, checks after each turn, MCP servers and skills shared with every agent, dev servers, goals, budgets |
+| [Automations and tasks](automations-and-tasks.md) | Scheduled prompts (also proposed by agents), the task board, and Félagi tasks and time |
 | [Agent gateway and MCP](agent-gateway.md) | Letting agents manage threads, connecting Claude Desktop and Codex |
 | [Settings](settings.md) | Every page of the Settings window |
 | [Keyboard shortcuts](keyboard-shortcuts.md) | All shortcuts and how to change them |
-| [Data, privacy and troubleshooting](troubleshooting.md) | Where data lives, logs, common problems |
+| [Data, privacy and troubleshooting](troubleshooting.md) | Where data lives, logs, updates and going back a version, common problems |
 
 Building Elyra Workspace yourself, or contributing? See [Development](development.md).
 
@@ -55,4 +55,5 @@ Building Elyra Workspace yourself, or contributing? See [Development](developmen
   thread uses one provider. You can fork a thread or hand it off to another
   provider.
 - **Turn**: one message from you and the agent's work until it stops. Before every
-  turn, Elyra saves a checkpoint of your files so you can go back.
+  turn, Elyra saves a checkpoint of your files so you can go back. If the project
+  has a check command, the turn is only done when it passes.
