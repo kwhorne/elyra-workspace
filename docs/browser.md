@@ -80,20 +80,28 @@ This only happens while the Browser tab is on screen, since the page can only be
 pictured then. The pictures are kept in `~/.elyra/snapshots` and deleted with the
 thread.
 
-## Letting the agent look at the page
+## Letting the agent look at and use the page
 
 With the [agent gateway](agent-gateway.md) on, agents get tools to open a page in
 their thread's browser and look at it: its structure, elements and their styles,
-the console, network calls and a screenshot. You can ask things like:
+the console, network calls and a screenshot. They can also use it like you
+would: click (by selector or visible text), fill in fields (by selector, label or
+placeholder; selects and checkboxes too), press keys, and wait for something to
+appear. You can ask things like:
 
-> Open localhost:5173, check why the cart total is wrong, fix it and reload to
-> confirm.
+> Open localhost:5173, check why the cart total is wrong, fix it, then add two
+> items, apply the code SUMMER and check the total.
 
-For safety, agents can only open and read pages served from this Mac:
+The first time an agent wants to click or type in its thread's browser, Elyra
+asks: **Don't allow**, **Allow once** or **Allow for this thread**. While it is
+allowed, a bar above the page says so; **Take over** there withdraws it. Threads
+in *Full access* aren't asked. An agent using *another* thread's browser is asked
+about like any [change to another thread](agent-gateway.md).
+
+For safety, agents can only open, read and use pages served from this Mac:
 `localhost`, `127.0.0.1`, `[::1]`, and names ending in `.localhost`, `.test` or
-`.local`. If the thread's browser shows any other site, the tools refuse to read
-it. Apart from opening and reloading a page, the tools only read; an agent can't
-click, type or run its own scripts in the page.
+`.local`. If the thread's browser shows any other site, the tools refuse it.
+Agents never read password fields, and can't run their own scripts in the page.
 
 The console and network calls are recorded from when a local page loads. A
 screenshot needs the Browser tab to be on screen.

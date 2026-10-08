@@ -516,6 +516,22 @@ impl WebView {
         });
     }
 
+    /// For an agent: `call` on resources/agent-act.js (`click(…)`, `fill(…)`,
+    /// `press(…)`, `present(…)`) in the isolated world; `done` gets its JSON.
+    pub fn agent_act(&self, call: &str, done: impl Fn(Option<String>) + 'static) {
+        let script = format!(
+            "{}\nwindow.__elyraAct.{call}",
+            include_str!("../resources/agent-act.js")
+        );
+        self.evaluate_isolated(&script, move |result| {
+            done(
+                result
+                    .and_then(|value| value.downcast_ref::<NSString>())
+                    .map(|value| value.to_string()),
+            );
+        });
+    }
+
     /// "Pick element": `call` on resources/element-pick.js (`start()`,
     /// `stop()`, `take()`) in the isolated world; `done` gets its string.
     pub fn pick(&self, call: &str, done: impl Fn(Option<String>) + 'static) {

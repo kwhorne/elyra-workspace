@@ -13,7 +13,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, Theme, WindowExt as _, h_flex, v_flex,
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, Theme, WindowExt as _, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -155,6 +155,8 @@ pub struct BrowserView {
     seen: HashSet<String>,
     /// "Pick element" is on: the next click on the page picks.
     picking: bool,
+    /// The thread's agent may click and type on the page (until Take over).
+    agent_control: bool,
     _pick: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -293,6 +295,7 @@ impl BrowserView {
             errors: Vec::new(),
             seen: HashSet::new(),
             picking: false,
+            agent_control: false,
             _pick: None,
             _tasks: vec![drain, cover, errors],
             _subscriptions: subscriptions,
@@ -534,6 +537,17 @@ impl BrowserView {
         &self.state
     }
 
+    pub fn agent_control(&self) -> bool {
+        self.agent_control
+    }
+
+    pub fn set_agent_control(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.agent_control != on {
+            self.agent_control = on;
+            cx.notify();
+        }
+    }
+
     pub fn is_on_screen(&self) -> bool {
         self.page.as_ref().is_some_and(|page| page.is_attached())
     }
@@ -745,6 +759,37 @@ impl Render for BrowserView {
         v_flex()
             .size_full()
             .child(self.toolbar(cx))
+            .when(self.agent_control, |this| {
+                this.child(
+                    h_flex()
+                        .w_full()
+                        .px_3()
+                        .py_1()
+                        .gap_2()
+                        .bg(cx.theme().warning.opacity(0.12))
+                        .border_b_1()
+                        .border_color(cx.theme().warning)
+                        .text_xs()
+                        .child(
+                            Icon::new(IconName::MousePointerClick)
+                                .xsmall()
+                                .text_color(cx.theme().warning),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .child("The agent can click and type on pages in this browser."),
+                        )
+                        .child(
+                            Button::new("agent-take-over")
+                                .xsmall()
+                                .label("Take over")
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.set_agent_control(false, cx)),
+                                ),
+                        ),
+                )
+            })
             .child(
                 div()
                     .h(px(2.))

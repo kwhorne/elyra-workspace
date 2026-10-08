@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Agents use the page.** Besides looking at a local page, agents can now
+  click (by selector or visible text), fill in fields (by label too; selects and
+  checkboxes), press keys and wait for something to appear, so they can try the
+  flow they just built. The first time, you're asked (*Allow once* or *Allow for
+  this thread*); **Take over** in the browser withdraws it. Full access threads
+  aren't asked.
 - **Back to the previous version.** Each update keeps the version it replaced.
   If a new version fails to start twice in a row, Elyra Workspace goes back to
   the previous one by itself, says so, and skips the broken version until the

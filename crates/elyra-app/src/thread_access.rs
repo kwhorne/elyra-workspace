@@ -1,8 +1,8 @@
 //! Asking before one agent changes another thread through the gateway.
 //!
 //! Reading other threads is open. The first time an agent's thread sends a
-//! message to, interrupts, renames or archives another thread, or opens or
-//! reloads a page in its browser, the user is asked; "Always" remembers that pair (in the settings table) so it isn't
+//! message to, interrupts, renames or archives another thread, or opens,
+//! reloads or clicks and types on a page in its browser, the user is asked; "Always" remembers that pair (in the settings table) so it isn't
 //! asked again. Threads an agent starts with `create_thread` are remembered
 //! for it right away. Paired external clients are not asked: pairing them was
 //! the permission.
@@ -23,6 +23,9 @@ pub const WRITES: &[&str] = &[
     "archive_thread",
     "browser_open",
     "browser_reload",
+    "browser_click",
+    "browser_fill",
+    "browser_press",
 ];
 
 const KEY: &str = "gateway_thread_pairs";
@@ -95,6 +98,10 @@ fn describe(tool: &str, args: &serde_json::Value) -> String {
             args["url"].as_str().unwrap_or("a page")
         ),
         "browser_reload" => "reload the page in its browser".into(),
+        "browser_click" | "browser_fill" | "browser_press" => format!(
+            "{} in its browser",
+            crate::browser_tools::describe_action(tool, args)
+        ),
         other => format!("use {other} on it"),
     }
 }

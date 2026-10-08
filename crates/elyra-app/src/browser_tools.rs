@@ -1,11 +1,13 @@
 //! Agent gateway tools for the in-app browser: an agent can open the app it
-//! is building in its thread's browser and look at the page — its DOM,
-//! elements and their styles, the console, network calls and a screenshot.
+//! is building in its thread's browser, look at the page — its DOM, elements
+//! and their styles, the console, network calls and a screenshot — and use
+//! it: click, fill in fields, press keys, wait for something to appear.
 //!
 //! Adapted from Litr's agent tools (© Wirelabs AS), used under the MIT
 //! licence with its owner's permission. As there, agents only ever see pages
-//! served from this Mac (localhost, 127.0.0.1, *.test, *.local), and the
-//! tools only read, apart from opening and reloading a page.
+//! served from this Mac (localhost, 127.0.0.1, *.test, *.local). Before an
+//! agent first clicks or types in its thread's browser the user is asked
+//! (not in Full access); "Take over" in the browser withdraws it.
 
 use crate::app_state::AppState;
 use crate::browser_view::BrowserView;
@@ -36,7 +38,14 @@ pub const READ_TOOLS: &[&str] = &[
     "browser_console",
     "browser_network",
     "browser_screenshot",
+    "browser_wait",
 ];
+
+/// Tools that act on the page like a user.
+pub const ACT_TOOLS: &[&str] = &["browser_click", "browser_fill", "browser_press"];
+
+/// Longest `browser_wait` may wait.
+const MAX_WAIT: Duration = Duration::from_secs(60);
 
 pub fn tools() -> Vec<Tool> {
     let tool = |name: &str, description: &str, schema: Value| Tool {
@@ -77,6 +86,45 @@ pub fn tools() -> Vec<Tool> {
             "browser_screenshot",
             "A picture of the page as it looks now. The Browser tab has to be on screen.",
             json!({ "type": "object", "properties": { "thread_id": thread } }),
+        ),
+        tool(
+            "browser_click",
+            "Click an element on the page, like the user would: by CSS selector, by its visible text, or both (the first visible match). Returns what was clicked; look again (browser_snapshot, browser_wait) to see the result. The user is asked the first time.",
+            json!({ "type": "object", "properties": {
+                "selector": { "type": "string", "description": "CSS selector" },
+                "text": { "type": "string", "description": "Visible text the element contains, e.g. a button label" },
+                "thread_id": thread
+            } }),
+        ),
+        tool(
+            "browser_fill",
+            "Fill in a field (input, textarea, select, checkbox, radio, contenteditable) so the page's framework sees it as typed. Find it by CSS selector, or by text: its label, placeholder or current text. For a select, value is an option's value or label; for a checkbox, \"true\" or \"false\".",
+            json!({ "type": "object", "properties": {
+                "selector": { "type": "string" },
+                "text": { "type": "string", "description": "Label, placeholder or text of the field" },
+                "value": { "type": "string" },
+                "thread_id": thread
+            }, "required": ["value"] }),
+        ),
+        tool(
+            "browser_press",
+            "Press a key (Enter, Tab, Escape, ArrowDown, a letter…) in the focused element, or in the element given by selector or text. Enter in a form field submits the form.",
+            json!({ "type": "object", "properties": {
+                "key": { "type": "string" },
+                "selector": { "type": "string" },
+                "text": { "type": "string" },
+                "thread_id": thread
+            }, "required": ["key"] }),
+        ),
+        tool(
+            "browser_wait",
+            "Wait until an element (CSS selector) or a text appears on the page, e.g. after a click or a form submit.",
+            json!({ "type": "object", "properties": {
+                "selector": { "type": "string" },
+                "text": { "type": "string" },
+                "timeout_seconds": { "type": "integer", "description": "Default 10, max 60" },
+                "thread_id": thread
+            } }),
         ),
         tool(
             "browser_reload",
@@ -186,6 +234,16 @@ pub async fn run(
         },
         state.url
     );
+    if ACT_TOOLS.contains(&tool) && caller == Some(thread) {
+        allowed_to_act(app, &browser, thread, tool, args, &state.url, cx).await?;
+    }
+    let target = |args: &Value| {
+        (
+            serde_json::to_string(args["selector"].as_str().unwrap_or("").trim())
+                .unwrap_or_default(),
+            serde_json::to_string(args["text"].as_str().unwrap_or("").trim()).unwrap_or_default(),
+        )
+    };
     let limit = |default: usize| {
         args["limit"]
             .as_u64()
@@ -240,6 +298,68 @@ pub async fn run(
         "browser_console" | "browser_network" => page.agent_captured(move |json| {
             tx.try_send(json).ok();
         }),
+        "browser_click" | "browser_fill" | "browser_press" => {
+            let (selector, text) = target(args);
+            let call = match tool {
+                "browser_click" => {
+                    if args["selector"].as_str().unwrap_or("").trim().is_empty()
+                        && args["text"].as_str().unwrap_or("").trim().is_empty()
+                    {
+                        return Err("Give a selector, a text, or both.".into());
+                    }
+                    format!("click({selector}, {text})")
+                }
+                "browser_fill" => {
+                    let value = args["value"].as_str().unwrap_or("");
+                    let value = serde_json::to_string(value).unwrap_or_default();
+                    format!("fill({selector}, {text}, {value})")
+                }
+                _ => {
+                    let key = args["key"].as_str().unwrap_or("").trim();
+                    if key.is_empty() {
+                        return Err("Give a key, e.g. Enter.".into());
+                    }
+                    let key = serde_json::to_string(key).unwrap_or_default();
+                    format!("press({key}, {selector}, {text})")
+                }
+            };
+            page.agent_act(&call, move |json| {
+                tx.try_send(json).ok();
+            });
+        }
+        "browser_wait" => {
+            let (selector, text) = target(args);
+            if selector == "\"\"" && text == "\"\"" {
+                return Err("Give a selector or a text to wait for.".into());
+            }
+            let timeout =
+                Duration::from_secs(args["timeout_seconds"].as_u64().unwrap_or(10)).min(MAX_WAIT);
+            let started = std::time::Instant::now();
+            let call = format!("present({selector}, {text})");
+            loop {
+                let (found_tx, found_rx) = async_channel::bounded::<Option<String>>(1);
+                page.agent_act(&call, move |json| {
+                    found_tx.try_send(json).ok();
+                });
+                let found = wait(found_rx, cx).await.flatten().unwrap_or_default();
+                if found.contains("\"present\":true") {
+                    return Ok(format!(
+                        "{label}\nFound after {:.1} s: {found}",
+                        started.elapsed().as_secs_f64()
+                    )
+                    .into());
+                }
+                if started.elapsed() >= timeout {
+                    return Err(format!(
+                        "{label}\nStill not on the page after {} s.",
+                        timeout.as_secs()
+                    ));
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(250))
+                    .await;
+            }
+        }
         other => return Err(format!("No tool called {other}.")),
     }
     let answer = wait(rx, cx).await.flatten();
@@ -269,6 +389,145 @@ pub async fn run(
             None => Err(format!("{label} didn't answer; it may still be loading.")),
         },
     }
+}
+
+/// Before an agent clicks or types in its own thread's browser: allowed for
+/// the thread already, Full access, or the user says so now.
+async fn allowed_to_act(
+    app: &Entity<AppState>,
+    browser: &Entity<BrowserView>,
+    thread: ThreadId,
+    tool: &str,
+    args: &Value,
+    url: &str,
+    cx: &mut AsyncApp,
+) -> Result<(), String> {
+    let (granted, full_access, title) = cx.update(|cx| {
+        let thread = app.read(cx).thread(thread);
+        (
+            browser.read(cx).agent_control(),
+            thread.is_some_and(|t| t.permission_mode == elyra_core::PermissionMode::FullAccess),
+            thread.map(|t| t.title.clone()).unwrap_or_default(),
+        )
+    });
+    if granted || full_access {
+        return Ok(());
+    }
+    let (tx, rx) = async_channel::bounded(1);
+    let action = describe_action(tool, args);
+    let url = url.to_string();
+    let asked = cx.update(|cx| ask_to_act(&title, &action, &url, tx, cx));
+    if !asked {
+        return Err(
+            "Elyra Workspace has no window to ask the user whether the agent may use the browser."
+                .into(),
+        );
+    }
+    match rx.recv().await {
+        Ok(crate::thread_access::Answer::Always) => {
+            cx.update(|cx| browser.update(cx, |browser, cx| browser.set_agent_control(true, cx)));
+            Ok(())
+        }
+        Ok(crate::thread_access::Answer::Once) => Ok(()),
+        _ => Err("The user didn't let the agent click or type in the browser. Describe what to try instead, or ask them to do it.".into()),
+    }
+}
+
+/// What a browser action would do, for the question.
+pub fn describe_action(tool: &str, args: &Value) -> String {
+    let field = |key: &str| args[key].as_str().map(str::trim).filter(|v| !v.is_empty());
+    let target = match (field("text"), field("selector")) {
+        (Some(text), _) => format!("\u{201c}{text}\u{201d}"),
+        (None, Some(selector)) => format!("`{selector}`"),
+        (None, None) => "the focused element".to_string(),
+    };
+    match tool {
+        "browser_click" => format!("click {target}"),
+        "browser_fill" => format!(
+            "fill in {target} with \u{201c}{}\u{201d}",
+            field("value")
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect::<String>()
+        ),
+        "browser_press" => format!("press {} in {target}", field("key").unwrap_or("a key")),
+        other => format!("use {other}"),
+    }
+}
+
+/// Ask in the workspace window; the answer arrives on `answer`.
+fn ask_to_act(
+    title: &str,
+    action: &str,
+    url: &str,
+    answer: async_channel::Sender<crate::thread_access::Answer>,
+    cx: &mut App,
+) -> bool {
+    use crate::thread_access::Answer;
+    use gpui_kit::component::button::{Button, ButtonVariants as _};
+    use gpui_kit::component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
+    use gpui_kit::{ClickEvent, ParentElement as _, Styled as _, Window, div, px};
+
+    let Some(window) = cx.try_global::<BrowserHub>().map(|hub| hub.window) else {
+        return false;
+    };
+    let text = format!("The agent in \u{201c}{title}\u{201d} wants to {action} on {url}.");
+    window
+        .update(cx, move |_, window, cx| {
+            window.open_dialog(cx, move |dialog, _, cx| {
+                let reply = |value: Answer| {
+                    let answer = answer.clone();
+                    move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                        answer.try_send(value).ok();
+                        window.close_dialog(cx);
+                    }
+                };
+                dialog
+                    .title("Let the agent use the browser?")
+                    .w(px(500.))
+                    .close_button(false)
+                    .overlay_closable(false)
+                    .keyboard(false)
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .text_sm()
+                            .child(div().whitespace_normal().child(text.clone()))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Allow for this thread lets it click and type on local pages in this thread's browser until you press Take over there. In Full access it isn't asked."),
+                            ),
+                    )
+                    .footer(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("act-deny")
+                                    .small()
+                                    .label("Don't allow")
+                                    .on_click(reply(Answer::Deny)),
+                            )
+                            .child(
+                                Button::new("act-once")
+                                    .small()
+                                    .label("Allow once")
+                                    .on_click(reply(Answer::Once)),
+                            )
+                            .child(
+                                Button::new("act-thread")
+                                    .small()
+                                    .primary()
+                                    .label("Allow for this thread")
+                                    .on_click(reply(Answer::Always)),
+                            ),
+                    )
+            });
+        })
+        .is_ok()
 }
 
 async fn wait<T>(rx: async_channel::Receiver<T>, cx: &mut AsyncApp) -> Option<T> {

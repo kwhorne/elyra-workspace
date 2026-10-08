@@ -29,6 +29,10 @@ token, and every call is written to an audit log. The address is shown in
 | `browser_network` | The page's fetch and XHR calls (status, timing, start of the body) and the files it loaded | ✓ |
 | `browser_screenshot` | A picture of the page (the Browser tab must be on screen) | ✓ |
 | `browser_reload` | Reload the page | |
+| `browser_click` | Click an element by CSS selector or visible text (asked the first time) | |
+| `browser_fill` | Fill in a field by selector, label or placeholder; selects and checkboxes too (asked the first time) | |
+| `browser_press` | Press a key; Enter in a form field submits it (asked the first time) | |
+| `browser_wait` | Wait until an element or a text appears (at most 60 seconds) | ✓ |
 
 Projects can be named by id, name or path. A thread can't wait for, interrupt or
 archive itself.
@@ -52,8 +56,8 @@ appear as `mcp__elyra__…`.
 - Tool calls follow the thread's permission mode like any other tool. In *Ask for
   approval* mode you approve each one.
 - An agent may read any thread, but the first time it messages, stops, renames
-  or archives *another* thread, or opens or reloads a page in its browser, Elyra
-  asks you: **Don't allow**, **Allow once** or
+  or archives *another* thread, or opens, reloads or clicks and types on a page
+  in its browser, Elyra asks you: **Don't allow**, **Allow once** or
   **Always allow**. *Always* remembers that pair of threads; **Settings → Agents &
   MCP → Agents changing other threads** shows how many are remembered and forgets
   them. Threads an agent started with `create_thread` are its own, so it isn't
