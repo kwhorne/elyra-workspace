@@ -31,8 +31,24 @@ cargo test --workspace
 
 For UI changes, also run the app with an isolated data directory and look at it.
 
-GitHub Actions runs the same checks ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml))
-on every push to `main` and every pull request; clippy runs with `-D warnings`.
+### Scenarios
+
+```console
+cargo build -p elyra-app && scripts/scenarios/run.py [scenario …]
+```
+
+End-to-end tests of the real app: it runs headless (`ELYRA_HEADLESS=1`, no
+window, Dock icon or update checks) in a throwaway `ELYRA_HOME`, and
+[`scripts/scenarios/run.py`](../scripts/scenarios/run.py) drives it through the
+agent gateway. The agent is [`agent.py`](../scripts/scenarios/agent.py), an ACP
+agent whose behaviour a tag in the prompt picks: change a file, change nothing,
+crash mid-turn, fail the turn, or wait to be stopped. Scenarios cover the turn
+lifecycle, checks after each turn and stopping. Add one when you change how
+sessions, providers or the gateway behave.
+
+GitHub Actions runs the same checks and the scenarios
+([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) on every push to
+`main` and every pull request; clippy runs with `-D warnings`.
 
 ## Environment variables
 
@@ -40,6 +56,7 @@ on every push to `main` and every pull request; clippy runs with `-D warnings`.
 | --- | --- |
 | `ELYRA_HOME=<dir>` | Use `<dir>` instead of `~/.elyra` (isolated instances; never test against your real data) |
 | `ELYRA_NO_ACTIVATE=1` | Open the window in the background without taking focus |
+| `ELYRA_HEADLESS=1` | No window, Dock icon or update checks; for the scenarios, driven through the gateway |
 | `ELYRA_OPEN_PANEL=tasks\|automations\|stats\|review\|files[:<path>]` | Open that panel (or the large file editor, with a file) at launch (screenshots without input) |
 | `ELYRA_BROWSER_URL=<url>` | Open `<url>` in the active thread's browser at launch |
 | `ELYRA_UPDATE_RESTART_WHEN_READY=1` | Restart into a staged update as soon as it is ready (end-to-end update tests) |

@@ -5,6 +5,8 @@
 - **Checks see every change.** Whether a turn changed files is now judged
   against the snapshot taken before the message reached the agent, so a quick
   agent can no longer slip a change past the checks.
+- End-to-end scenarios run on every push: the app headless, driven through the
+  agent gateway by a scripted agent that crashes, fails and stalls on cue.
 
 ## 0.10.1
 

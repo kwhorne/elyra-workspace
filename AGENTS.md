@@ -39,4 +39,6 @@ See docs/development.md for the crate map, checks and the release process.
 ## Verify
 
 `cargo fmt --all`, `cargo clippy --workspace` (zero warnings), `cargo test --workspace`.
+For sessions, providers or the gateway: `cargo build -p elyra-app && scripts/scenarios/run.py`
+(headless app + scripted agent; add a scenario for new behaviour).
 For UI changes, run the app with an isolated `ELYRA_HOME` and check it visually.

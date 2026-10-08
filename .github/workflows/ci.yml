@@ -37,3 +37,10 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      # The real app, headless, driven through the agent gateway with a
+      # scripted agent: turns, checks, crashes, errors, stopping.
+      - name: Scenarios
+        run: |
+          cargo build -p elyra-app
+          python3 scripts/scenarios/run.py

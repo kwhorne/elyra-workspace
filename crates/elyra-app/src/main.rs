@@ -92,7 +92,14 @@ fn main() {
         actions::bind_keys(cx);
         terminal_view::bind_keys(cx);
         themes::register(cx);
-        app_icon::install_dock_icon();
+        // Tests: no window, Dock icon or update checks; drive it through the
+        // agent gateway (scripts/scenarios).
+        let headless = std::env::var_os("ELYRA_HEADLESS").is_some();
+        if headless {
+            app_icon::hide_from_dock();
+        } else {
+            app_icon::install_dock_icon();
+        }
 
         let app = cx.new(|_| state);
         preferences::init(&app, cx);
@@ -106,11 +113,15 @@ fn main() {
         cx.set_menus(menus());
 
         // Development: open in the background without taking focus.
-        let background = std::env::var_os("ELYRA_NO_ACTIVATE").is_some();
-        open_main_window(app.clone(), !background, cx);
+        let background = headless || std::env::var_os("ELYRA_NO_ACTIVATE").is_some();
+        if !headless {
+            open_main_window(app.clone(), !background, cx);
+        }
 
         quitting::init(app.clone(), cx);
-        quitting::offer_resume(cx);
+        if !headless {
+            quitting::offer_resume(cx);
+        }
         cx.on_action(|_: &actions::Quit, cx| quitting::request(cx));
         cx.on_action(|_: &actions::OpenSettings, cx| settings_window::open(cx));
         cx.on_action(|_: &actions::CheckForUpdates, cx| updater::check(true, cx));
@@ -126,7 +137,9 @@ fn main() {
         if !background {
             cx.activate(true);
         }
-        updater::init(app.clone(), cx);
+        if !headless {
+            updater::init(app.clone(), cx);
+        }
     });
 }
 

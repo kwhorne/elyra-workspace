@@ -46,6 +46,21 @@ pub fn set_badge(count: usize) {
         .setBadgeLabel(label.as_deref());
 }
 
+/// No Dock icon or menu bar: for headless test runs.
+#[cfg(target_os = "macos")]
+pub fn hide_from_dock() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+
+    if let Some(mtm) = MainThreadMarker::new() {
+        NSApplication::sharedApplication(mtm)
+            .setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn hide_from_dock() {}
+
 #[cfg(not(target_os = "macos"))]
 pub fn set_badge(_count: usize) {}
 
