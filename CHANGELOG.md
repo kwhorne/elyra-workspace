@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **One setup for every agent.** A project's `.mcp.json` servers and its skills
+  (`.claude/skills`, `.agents/skills`, also in your home folder) now reach Codex,
+  Elyra, Pi and ACP agents too, not only Claude Code. `.mcp.json` runs commands
+  from the repository, so it's shared only after you allow it in the Context tab
+  (and again when it changes).
 - **Agents propose automations.** Ask for something on a schedule (*"check our
   dependencies every weekday night"*) and the agent proposes it as a card in the
   thread: schedule and next run, agent, project and prompt, with **Create**,

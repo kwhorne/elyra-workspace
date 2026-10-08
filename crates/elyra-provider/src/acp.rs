@@ -111,12 +111,18 @@ impl State {
             self.mcp_servers
                 .iter()
                 .filter_map(|server| {
+                    let named = |pairs: &[(String, String)]| -> Vec<Value> {
+                        pairs
+                            .iter()
+                            .map(|(name, value)| json!({ "name": name, "value": value }))
+                            .collect()
+                    };
                     if let Some((command, args)) = &server.stdio {
                         return Some(json!({
                             "name": server.name,
                             "command": command.display().to_string(),
                             "args": args,
-                            "env": []
+                            "env": named(&server.env)
                         }));
                     }
                     if self.mcp_http {
@@ -124,7 +130,7 @@ impl State {
                             "type": "http",
                             "name": server.name,
                             "url": server.url,
-                            "headers": [{ "name": "Authorization", "value": format!("Bearer {}", server.token) }]
+                            "headers": named(&server.http_headers())
                         }));
                     }
                     let (command, args) = server.bridge.as_ref()?;

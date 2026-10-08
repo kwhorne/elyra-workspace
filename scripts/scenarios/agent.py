@@ -8,6 +8,7 @@ What it does depends on a tag in the prompt:
   [wait]   keep the turn open until the client cancels it
   [call TOOL {json}]  call an Elyra Workspace gateway tool as this thread's
            agent and reply with the result
+  [mcp]    reply with the names of the MCP servers Elyra gave it
   anything else (also Elyra's follow-ups): add 1 to value.txt
 Every prompt is appended to prompts.log in the working directory.
 """
@@ -17,7 +18,7 @@ import re
 import sys
 import urllib.request
 
-state = {"cwd": ".", "waiting": None, "gateway": None}
+state = {"cwd": ".", "waiting": None, "gateway": None, "servers": []}
 
 
 def gateway_of(servers):
@@ -68,6 +69,9 @@ def prompt(rid, params):
     text = "".join(block.get("text", "") for block in params["prompt"])
     with open(os.path.join(state["cwd"], "prompts.log"), "a") as log:
         log.write(text.replace("\n", " ")[:400] + "\n")
+    if "[mcp]" in text:
+        say(sid, "MCP servers: " + ", ".join(sorted(state["servers"])))
+        return end(rid)
     if "[talk]" in text:
         say(sid, "Nothing to change.")
         return end(rid)
@@ -106,6 +110,7 @@ for line in sys.stdin:
     elif method in ("session/new", "session/load"):
         state["cwd"] = params["cwd"]
         state["gateway"] = gateway_of(params.get("mcpServers", []))
+        state["servers"] = [server.get("name", "") for server in params.get("mcpServers", [])]
         send({"id": rid, "result": {"sessionId": params.get("sessionId", "scenario-1")}})
     elif method == "session/prompt":
         prompt(rid, params)

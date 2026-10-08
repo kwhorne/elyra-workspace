@@ -354,11 +354,11 @@ pub fn server_for_thread(thread: ThreadId, cx: &App) -> Option<McpServer> {
         .ok()?
         .insert(token.clone(), Caller::Thread(thread).principal());
     Some(McpServer {
-        stdio: None,
         name: "elyra".into(),
         bridge: Some(bridge_command(&url, &token)),
         url,
         token,
+        ..McpServer::default()
     })
 }
 

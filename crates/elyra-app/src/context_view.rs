@@ -119,6 +119,9 @@ pub struct ContextView {
     check: Entity<InputState>,
     /// A check command guessed from the project's files.
     check_suggestion: Option<String>,
+    /// The project's .mcp.json and skills, shared with every agent.
+    mcp_json: Option<crate::shared_setup::McpJson>,
+    skills: Vec<crate::shared_setup::Skill>,
     goal: Entity<TextareaState>,
     budget: Entity<InputState>,
     servers: Vec<Server>,
@@ -218,6 +221,8 @@ impl ContextView {
             instructions,
             check,
             check_suggestion,
+            mcp_json: None,
+            skills: Vec::new(),
             goal,
             budget,
             servers: Vec::new(),
@@ -229,7 +234,145 @@ impl ContextView {
             _subscriptions: subscriptions,
         };
         this.scan_servers(cx);
+        this.load_shared(cx);
         this
+    }
+
+    fn load_shared(&mut self, cx: &mut Context<Self>) {
+        let path = self.session.read(cx).project.path.clone();
+        self.mcp_json = crate::shared_setup::mcp_json(&path);
+        self.skills = crate::shared_setup::skills(&path);
+        cx.notify();
+    }
+
+    /// Give the project's .mcp.json servers to every agent, or stop.
+    fn share_mcp_json(&mut self, share: bool, cx: &mut Context<Self>) {
+        let project = self.session.read(cx).project.id;
+        let fingerprint = self.mcp_json.as_ref().map(|f| f.fingerprint.clone());
+        self.app.update(cx, |app, cx| {
+            match (share, fingerprint) {
+                (true, Some(fingerprint)) => {
+                    crate::shared_setup::allow(&app.store, project, &fingerprint)
+                }
+                _ => crate::shared_setup::revoke(&app.store, project),
+            }
+            app.restart_agents_in(project, cx);
+        });
+        self.load_shared(cx);
+    }
+
+    fn render_shared(&self, cx: &Context<Self>) -> AnyElement {
+        let muted = |text: String| {
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .whitespace_normal()
+                .child(text)
+        };
+        let project = self.session.read(cx).project.id;
+        let allowed = crate::shared_setup::allowed(&self.app.read(cx).store, project)
+            .filter(|f| !f.is_empty());
+        let mut section = v_flex()
+            .gap_2()
+            .child(
+                Self::section("Shared with every agent", cx).child(
+                    Button::new("shared-refresh")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::RefreshCw)
+                        .tooltip("Read again")
+                        .on_click(cx.listener(|this, _, _, cx| this.load_shared(cx))),
+                ),
+            )
+            .child(muted(
+                "Claude Code reads the project's .mcp.json and skills itself. Elyra gives them to Codex, Elyra, Pi and ACP agents too.".into(),
+            ));
+        match &self.mcp_json {
+            None => {
+                section = section.child(muted("No .mcp.json in the project.".into()));
+            }
+            Some(file) => match &file.servers {
+                Err(error) => section = section.child(muted(error.clone())),
+                Ok(servers) => {
+                    let shared = allowed.as_deref() == Some(file.fingerprint.as_str());
+                    let changed = allowed.is_some() && !shared;
+                    section = section.child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(format!("MCP servers in .mcp.json ({})", servers.len())),
+                    );
+                    for server in servers {
+                        section = section.child(
+                            h_flex()
+                                .gap_2()
+                                .text_xs()
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(server.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
+                                        .font_family(cx.theme().mono_font_family.clone())
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(server.summary.clone()),
+                                ),
+                        );
+                    }
+                    section = section.child(if shared {
+                        h_flex()
+                            .gap_2()
+                            .child(muted("Given to every agent.".into()))
+                            .child(
+                                Button::new("mcp-json-stop")
+                                    .ghost()
+                                    .xsmall()
+                                    .label("Stop sharing")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.share_mcp_json(false, cx)
+                                    })),
+                            )
+                            .into_any_element()
+                    } else {
+                        v_flex()
+                            .gap_1()
+                            .child(muted(if changed {
+                                "The file changed since you allowed it. Allow it again to keep sharing it.".into()
+                            } else {
+                                "These commands come with the repository and run on this Mac. Allow them only if you trust it.".into()
+                            }))
+                            .child(
+                                h_flex().child(
+                                    Button::new("mcp-json-allow")
+                                        .small()
+                                        .label("Allow for every agent")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.share_mcp_json(true, cx)
+                                        })),
+                                ),
+                            )
+                            .into_any_element()
+                    });
+                }
+            },
+        }
+        let names: Vec<String> = self.skills.iter().map(|s| s.name.clone()).collect();
+        section = section.child(muted(if names.is_empty() {
+            "No skills in .claude/skills or .agents/skills (project or home).".into()
+        } else {
+            format!(
+                "Skills listed for the other agents ({}): {}",
+                names.len(),
+                names.join(", ")
+            )
+        }));
+        section.into_any_element()
     }
 
     fn save_notes(&mut self, cx: &mut Context<Self>) {
@@ -802,6 +945,7 @@ impl Render for ContextView {
                             }),
                     )
                     .child(self.render_checks(&project_name, cx))
+                    .child(self.render_shared(cx))
                     .child(
                         v_flex()
                             .gap_2()

@@ -576,10 +576,29 @@ impl ThreadSession {
             // A side chat's first launch branches from its parent's session.
             fork: self.fork_pending,
             append_system_prompt: self.system_prompt(),
-            mcp_servers: crate::gateway::server_for_thread(self.thread.id, cx)
-                .into_iter()
-                .chain(self.grove_mcp(cx))
-                .collect(),
+            mcp_servers: {
+                let mut servers: Vec<elyra_provider::McpServer> =
+                    crate::gateway::server_for_thread(self.thread.id, cx)
+                        .into_iter()
+                        .chain(self.grove_mcp(cx))
+                        .collect();
+                // The project's .mcp.json, for agents that don't read it
+                // themselves (once the user allowed it).
+                if self.thread.provider != ProviderKind::Claude
+                    && let Some(app) = self.app.upgrade()
+                {
+                    for server in crate::shared_setup::servers_for(
+                        &app.read(cx).store,
+                        self.project.id,
+                        &self.project.path,
+                    ) {
+                        if !servers.iter().any(|s| s.name == server.name) {
+                            servers.push(server);
+                        }
+                    }
+                }
+                servers
+            },
         };
         let (session, events) = elyra_provider::start_session(self.thread.provider, config)?;
         self.provider = Some(session);
@@ -1828,12 +1847,19 @@ impl ThreadSession {
     }
 
     fn system_prompt(&self) -> Option<String> {
-        let mut parts: Vec<&str> = Vec::new();
+        let mut parts: Vec<String> = Vec::new();
         if let Some(instructions) = self.project.instructions.as_deref() {
-            parts.push(instructions);
+            parts.push(instructions.to_string());
         }
         if self.thread.debug_mode {
-            parts.push(DEBUG_INSTRUCTIONS);
+            parts.push(DEBUG_INSTRUCTIONS.to_string());
+        }
+        // Claude Code finds skills itself; the others get a list.
+        if self.thread.provider != ProviderKind::Claude
+            && let Some(skills) =
+                crate::shared_setup::skills_prompt(&crate::shared_setup::skills(&self.project.path))
+        {
+            parts.push(skills);
         }
         (!parts.is_empty()).then(|| parts.join("\n\n"))
     }

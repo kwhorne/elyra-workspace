@@ -85,6 +85,23 @@ tries it.
 
 The command applies to every thread in the project. Empty turns it off.
 
+## Shared with every agent
+
+*One setup for every agent.* Claude Code reads a project's `.mcp.json` and its
+skills itself; Elyra gives them to the other agents (Codex, Elyra, Pi and ACP
+agents) too, so switching agents keeps the same tools.
+
+- **MCP servers in `.mcp.json`** (Claude Code's format: `command`, `args`, `env`,
+  or `url` and `headers`; `${VAR}` and `${VAR:-default}` are filled in from the
+  environment). The file comes with the repository and its commands run on your
+  Mac, so they're only passed on after **Allow for every agent**. If the file
+  changes, allow it again. **Stop sharing** takes it back. Agents get the change
+  from their next message.
+- **Skills** in `.claude/skills/<name>/SKILL.md` and `.agents/skills/…`, in the
+  project and in your home folder. The other agents get a list of them (name,
+  description, path) and read a skill's SKILL.md when a task matches it. ACP
+  agents don't take extra instructions, so they don't get the list.
+
 ## Local servers
 
 Development servers running from the thread's folder, for example `npm run dev`

@@ -513,6 +513,19 @@ impl AppState {
         Ok(())
     }
 
+    /// The agents in `project` start again with their next message (their
+    /// tools or system prompt changed).
+    pub fn restart_agents_in(&mut self, project: elyra_core::ProjectId, cx: &mut Context<Self>) {
+        for session in self.sessions.values() {
+            session.update(cx, |session, cx| {
+                if session.project.id == project {
+                    session.needs_restart = true;
+                    cx.notify();
+                }
+            });
+        }
+    }
+
     pub fn update_project(&mut self, project: Project, cx: &mut Context<Self>) {
         if let Err(err) = self.store.update_project(&project) {
             log::error!("saving project {}: {err:#}", project.id);

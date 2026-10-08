@@ -43,7 +43,7 @@ pub struct SessionConfig {
 /// An MCP server reachable over HTTP, with a stdio bridge command for
 /// agents that only launch local servers; or, with `stdio` set, a local
 /// server the agent starts itself (such as `grove mcp`).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct McpServer {
     pub name: String,
     pub url: String,
@@ -52,6 +52,10 @@ pub struct McpServer {
     pub bridge: Option<(PathBuf, Vec<String>)>,
     /// A server spoken to over the command's stdio; `url` and `token` unused.
     pub stdio: Option<(PathBuf, Vec<String>)>,
+    /// Environment for a stdio server.
+    pub env: Vec<(String, String)>,
+    /// Headers for an HTTP server other than the gateway (which uses `token`).
+    pub headers: Vec<(String, String)>,
 }
 
 impl McpServer {
@@ -63,8 +67,38 @@ impl McpServer {
             token: String::new(),
             bridge: None,
             stdio: Some((command, args)),
+            ..Self::default()
         }
     }
+
+    /// An HTTP server at `url`, sent `headers` with every request.
+    pub fn http(name: &str, url: String, headers: Vec<(String, String)>) -> Self {
+        Self {
+            name: name.into(),
+            url,
+            headers,
+            ..Self::default()
+        }
+    }
+
+    /// The headers to send: the gateway's bearer token, or the server's own.
+    pub fn http_headers(&self) -> Vec<(String, String)> {
+        if self.token.is_empty() {
+            self.headers.clone()
+        } else {
+            vec![("Authorization".into(), format!("Bearer {}", self.token))]
+        }
+    }
+}
+
+/// `pairs` as a JSON object.
+pub(crate) fn json_map(pairs: &[(String, String)]) -> serde_json::Value {
+    serde_json::Value::Object(
+        pairs
+            .iter()
+            .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
+            .collect(),
+    )
 }
 
 /// What a provider supports, so the UI only offers what works.

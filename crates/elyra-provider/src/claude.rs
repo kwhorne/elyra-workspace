@@ -121,11 +121,12 @@ impl ClaudeSession {
                             "type": "stdio",
                             "command": command.display().to_string(),
                             "args": args,
+                            "env": crate::json_map(&server.env),
                         }),
                         None => json!({
                             "type": "http",
                             "url": server.url,
-                            "headers": { "Authorization": format!("Bearer {}", server.token) }
+                            "headers": crate::json_map(&server.http_headers()),
                         }),
                     };
                     (server.name.clone(), entry)

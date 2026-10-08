@@ -178,6 +178,7 @@ impl CodexSession {
         // token travels in the environment, not on the command line.
         for server in &config.mcp_servers {
             let name = &server.name;
+            let name = toml_key(name);
             if let Some((command, command_args)) = &server.stdio {
                 args.extend([
                     "-c".into(),
@@ -191,9 +192,32 @@ impl CodexSession {
                         serde_json::to_string(command_args).unwrap_or_else(|_| "[]".into())
                     ),
                 ]);
+                if !server.env.is_empty() {
+                    args.extend([
+                        "-c".into(),
+                        format!("mcp_servers.{name}.env={}", toml_table(&server.env)),
+                    ]);
+                }
                 continue;
             }
-            // Only the gateway is an HTTP server, so one token variable will do.
+            // Another HTTP server: its own headers, not the gateway token.
+            if server.token.is_empty() {
+                args.extend([
+                    "-c".into(),
+                    format!("mcp_servers.{name}.url={:?}", server.url),
+                ]);
+                if !server.headers.is_empty() {
+                    args.extend([
+                        "-c".into(),
+                        format!(
+                            "mcp_servers.{name}.http_headers={}",
+                            toml_table(&server.headers)
+                        ),
+                    ]);
+                }
+                continue;
+            }
+            // Only the gateway uses a token, so one variable will do.
             args.extend([
                 "-c".into(),
                 format!("mcp_servers.{name}.url={:?}", server.url),
@@ -997,6 +1021,34 @@ fn handle_request(
     }
 }
 
+/// A TOML key: bare when it may be, else quoted.
+fn toml_key(key: &str) -> String {
+    if !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        key.to_string()
+    } else {
+        serde_json::to_string(key).unwrap_or_default()
+    }
+}
+
+/// `pairs` as a TOML inline table (JSON strings are valid TOML strings).
+fn toml_table(pairs: &[(String, String)]) -> String {
+    let fields: Vec<String> = pairs
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{} = {}",
+                toml_key(key),
+                serde_json::to_string(value).unwrap_or_default()
+            )
+        })
+        .collect();
+    format!("{{{}}}", fields.join(", "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1056,11 +1108,10 @@ mod tests {
             fork: false,
             append_system_prompt: Some("Be brief.".into()),
             mcp_servers: vec![crate::McpServer {
-                stdio: None,
                 name: "elyra".into(),
                 url: "http://127.0.0.1:1/mcp".into(),
                 token: "secret".into(),
-                bridge: None,
+                ..Default::default()
             }],
         };
         let (session, rx) = CodexSession::start(config).unwrap();
@@ -1153,5 +1204,15 @@ mod tests {
         assert_eq!(message, (false, None));
         session.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn writes_toml_for_config_overrides() {
+        assert_eq!(super::toml_key("laravel-boost"), "laravel-boost");
+        assert_eq!(super::toml_key("my server"), "\"my server\"");
+        assert_eq!(
+            super::toml_table(&[("APP_ENV".into(), "lo\"cal".into())]),
+            "{APP_ENV = \"lo\\\"cal\"}"
+        );
     }
 }

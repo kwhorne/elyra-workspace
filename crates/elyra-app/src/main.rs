@@ -32,6 +32,7 @@ mod recovery;
 mod review_inbox;
 mod search;
 mod settings_window;
+mod shared_setup;
 mod shortcuts;
 mod sidebar;
 mod stats;

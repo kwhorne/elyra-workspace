@@ -30,12 +30,22 @@ AT_LEAST_TWO = 'test "$(cat value.txt)" -ge 2 || { echo "value is $(cat value.tx
 SCENARIOS = []
 
 
-def scenario(check=None, value=0):
-    """Register a scenario with the project it runs in."""
+def scenario(check=None, value=0, files=None, allow_mcp_json=False):
+    """Register a scenario with the project it runs in: its check command,
+    value.txt, extra files, and whether its .mcp.json is allowed."""
     def register(fn):
-        SCENARIOS.append((fn.__name__, fn, {"check": check, "value": value}))
+        SCENARIOS.append((fn.__name__, fn, {"check": check, "value": value, "files": files or {},
+                                            "allow_mcp_json": allow_mcp_json}))
         return fn
     return register
+
+
+def fnv1a(data):
+    """The fingerprint Elyra keeps for an allowed .mcp.json."""
+    value = 0xcbf29ce484222325
+    for byte in data:
+        value = ((value ^ byte) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return f"{value:016x}"
 
 
 class Failure(Exception):
@@ -65,9 +75,12 @@ class World:
         self.app = None
         self.port = None
 
-    def project(self, name, check, value):
+    def project(self, name, check, value, files=None, allow_mcp_json=False):
         path = os.path.join(self.dir, name)
         os.makedirs(path)
+        for file, text in (files or {}).items():
+            with open(os.path.join(path, file), "w") as f:
+                f.write(text)
         git = lambda *args: subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
         git("init", "-q")
         with open(os.path.join(path, "value.txt"), "w") as f:
@@ -76,7 +89,7 @@ class World:
             f.write("prompts.log\n")
         git("add", ".")
         git("-c", "user.email=s@s", "-c", "user.name=s", "commit", "-qm", "start")
-        self.projects[name] = {"path": path, "check": check}
+        self.projects[name] = {"path": path, "check": check, "allow_mcp_json": allow_mcp_json}
         return path
 
     def start(self):
@@ -117,10 +130,16 @@ class World:
         """Projects, a paired gateway client and the scripted agent."""
         with self.db() as db:
             for name, project in self.projects.items():
+                project_id = str(uuid.uuid4())
                 db.execute(
                     "INSERT INTO projects (id, name, path, created_at, check_command) VALUES (?, ?, ?, ?, ?)",
-                    (str(uuid.uuid4()), name, project["path"], "2026-01-01T00:00:00Z", project["check"]),
+                    (project_id, name, project["path"], "2026-01-01T00:00:00Z", project["check"]),
                 )
+                if project["allow_mcp_json"]:
+                    with open(os.path.join(project["path"], ".mcp.json"), "rb") as f:
+                        fingerprint = fnv1a(f.read())
+                    db.execute("INSERT INTO settings (key, value) VALUES (?, ?)",
+                               (f"mcp_json_allowed:{project_id}", fingerprint))
             client = str(uuid.uuid4())
             db.execute("INSERT INTO mcp_clients (id, data) VALUES (?, ?)", (client, json.dumps({
                 "id": client, "name": "Scenarios", "token": TOKEN, "scope": "full",
@@ -308,6 +327,23 @@ def agents_propose_automations_for_the_user_to_accept(world, project):
         expect("Only an agent" in str(err), str(err))
 
 
+MCP_JSON = '{"mcpServers": {"probe": {"command": "/bin/cat", "env": {"MODE": "${MISSING:-test}"}}}}'
+
+
+@scenario(files={".mcp.json": MCP_JSON}, allow_mcp_json=True)
+def an_allowed_mcp_json_reaches_other_agents(world, project):
+    thread = world.new_thread(project, "[mcp] Which servers?")
+    reply = world.wait(thread, 30)
+    expect("probe" in reply and "elyra" in reply, reply[-200:])
+
+
+@scenario(files={".mcp.json": MCP_JSON})
+def an_mcp_json_nobody_allowed_is_not_passed_on(world, project):
+    thread = world.new_thread(project, "[mcp] Which servers?")
+    reply = world.wait(thread, 30)
+    expect("probe" not in reply and "elyra" in reply, reply[-200:])
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]
@@ -320,7 +356,8 @@ def main():
         world.start()
         world.stop()
         for name, _, project in chosen:
-            world.project(name, project["check"], project["value"])
+            world.project(name, project["check"], project["value"], project["files"],
+                          project["allow_mcp_json"])
         world.seed()
         world.start()
         for name, fn, _ in chosen:

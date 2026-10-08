@@ -39,11 +39,10 @@ fn main() -> anyhow::Result<()> {
                 std::env::var("ELYRA_MCP_TOKEN"),
             ) {
                 (Ok(url), Ok(token)) => vec![elyra_provider::McpServer {
-                    stdio: None,
                     name: "elyra".into(),
                     url,
                     token,
-                    bridge: None,
+                    ..Default::default()
                 }],
                 _ => Vec::new(),
             },

@@ -66,6 +66,17 @@ fn mcp_servers_env(servers: &[crate::McpServer]) -> Option<String> {
                 let entry = json!({
                     "command": command.display().to_string(),
                     "args": args,
+                    "env": crate::json_map(&server.env),
+                    "directTools": true,
+                });
+                return (server.name.clone(), entry);
+            }
+            // Another HTTP server: its own headers.
+            if server.token.is_empty() {
+                let entry = json!({
+                    "type": "http",
+                    "url": server.url,
+                    "headers": crate::json_map(&server.headers),
                     "directTools": true,
                 });
                 return (server.name.clone(), entry);
@@ -101,7 +112,11 @@ impl ElyraSession {
         if let Some(servers) = mcp_servers_env(&config.mcp_servers) {
             config.env.push((MCP_SERVERS_ENV.into(), servers));
         }
-        if let Some(server) = config.mcp_servers.iter().find(|s| s.stdio.is_none()) {
+        if let Some(server) = config
+            .mcp_servers
+            .iter()
+            .find(|s| s.stdio.is_none() && !s.token.is_empty())
+        {
             config
                 .env
                 .push((MCP_TOKEN_ENV.into(), server.token.clone()));
@@ -602,11 +617,10 @@ mod tests {
     fn passes_gateway_servers_as_json() {
         assert_eq!(mcp_servers_env(&[]), None);
         let json = mcp_servers_env(&[crate::McpServer {
-            stdio: None,
             name: "elyra".into(),
             url: "http://127.0.0.1:1/mcp".into(),
             token: "secret".into(),
-            bridge: None,
+            ..Default::default()
         }])
         .unwrap();
         let value: Value = serde_json::from_str(&json).unwrap();
@@ -622,17 +636,21 @@ mod tests {
 
     #[test]
     fn passes_stdio_servers_as_commands() {
-        let json = mcp_servers_env(&[crate::McpServer::stdio(
-            "grove",
-            "/bin/grove".into(),
-            vec!["mcp".into()],
-        )])
-        .unwrap();
+        let mut grove = crate::McpServer::stdio("grove", "/bin/grove".into(), vec!["mcp".into()]);
+        grove.env = vec![("APP_ENV".into(), "local".into())];
+        let docs = crate::McpServer::http(
+            "docs",
+            "https://docs.example/mcp".into(),
+            vec![("X-Key".into(), "abc".into())],
+        );
+        let json = mcp_servers_env(&[grove, docs]).unwrap();
         let value: Value = serde_json::from_str(&json).unwrap();
         let server = &value["mcpServers"]["grove"];
         assert_eq!(server["command"], "/bin/grove");
         assert_eq!(server["args"], json!(["mcp"]));
+        assert_eq!(server["env"]["APP_ENV"], "local");
         assert!(server.get("url").is_none());
+        assert_eq!(value["mcpServers"]["docs"]["headers"]["X-Key"], "abc");
     }
 
     fn feed(parser: &mut RpcParser, line: &str) -> Vec<ProviderEvent> {
