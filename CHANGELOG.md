@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Narrow windows.** The conversation keeps at least 400 points: the tools
+  panel gives way first. Notices wrap instead of running into the tools panel,
+  long tab titles end in "…", and the tools panel's tabs scroll with a **▾** list
+  when they don't fit. Automations explains its empty detail column.
 - **One setup for every agent.** A project's `.mcp.json` servers and its skills
   (`.claude/skills`, `.agents/skills`, also in your home folder) now reach Codex,
   Elyra, Pi and ACP agents too, not only Claude Code. `.mcp.json` runs commands

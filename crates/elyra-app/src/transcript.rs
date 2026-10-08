@@ -601,6 +601,8 @@ fn render_item(
                 .into_any_element()
         }
         ItemContent::Notice { text, is_error } => h_flex()
+            .w_full()
+            .items_start()
             .gap_2()
             .text_sm()
             .text_color(if *is_error {
@@ -616,7 +618,13 @@ fn render_item(
                 })
                 .small(),
             )
-            .child(div().flex_1().child(text.clone()))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .child(text.clone()),
+            )
             .into_any_element(),
     })
 }

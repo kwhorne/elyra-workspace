@@ -1904,7 +1904,11 @@ impl Workspace {
                 ))
             })
             .map(|(id, title, project)| {
-                let short: String = title.chars().take(28).collect();
+                let short: String = if title.chars().count() > 28 {
+                    format!("{}…", title.chars().take(27).collect::<String>().trim_end())
+                } else {
+                    title
+                };
                 // Which project the thread is in, with its colour: tabs from
                 // several projects otherwise look alike.
                 let prefix = project.map(|project| {
@@ -2238,15 +2242,21 @@ impl Workspace {
             .border_l_1()
             .border_color(cx.theme().border)
             .child(
-                TabBar::new("right-tabs")
-                    .underline()
-                    .small()
-                    .selected_index(index)
-                    .children(tab_items)
-                    .on_click(cx.listener(move |this, index: &usize, window, cx| {
-                        let tab = tabs.get(*index).copied().unwrap_or(RightTab::Changes);
-                        this.show_right_tab(tab, window, cx);
-                    })),
+                // A narrow panel scrolls its tabs and lists them all in ▾.
+                div().w_full().min_w_0().overflow_hidden().child(
+                    TabBar::new("right-tabs")
+                        .underline()
+                        .small()
+                        .w_full()
+                        .min_w_0()
+                        .menu(true)
+                        .selected_index(index)
+                        .children(tab_items)
+                        .on_click(cx.listener(move |this, index: &usize, window, cx| {
+                            let tab = tabs.get(*index).copied().unwrap_or(RightTab::Changes);
+                            this.show_right_tab(tab, window, cx);
+                        })),
+                ),
             )
             .children(side_bar)
             .child(div().flex_1().min_h_0().child(content))
@@ -2266,6 +2276,9 @@ pub(crate) fn format_age(age: chrono::Duration) -> String {
         format!("{}d", minutes / (60 * 24))
     }
 }
+
+/// The narrowest the conversation gets while the tools panel can still shrink.
+const MIN_CONVERSATION: Pixels = px(400.);
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2313,13 +2326,23 @@ impl Render for Workspace {
             (self.right_open && self.active.is_some() && !panel_open && !self.terminal_full)
                 .then(|| self.render_right(cx));
 
+        // The conversation keeps room to read: in a narrow window the tools
+        // panel gives way (down to its own minimum) before it does.
+        let room = window.viewport_size().width - if self.sidebar_open { px(272.) } else { px(0.) };
+        let right_max = (room - MIN_CONVERSATION).clamp(px(320.), px(1100.));
         let main: AnyElement = match right {
             Some(right) => h_resizable("workspace-split")
-                .child(resizable_panel().child(center))
                 .child(
                     resizable_panel()
-                        .size(px(520.))
-                        .size_range(px(320.)..px(1100.))
+                        .size_range(
+                            MIN_CONVERSATION.min(room - px(320.)).max(px(200.))..Pixels::MAX,
+                        )
+                        .child(center),
+                )
+                .child(
+                    resizable_panel()
+                        .size(px(520.).min(right_max))
+                        .size_range(px(320.)..right_max)
                         .child(right),
                 )
                 .into_any_element(),

@@ -239,8 +239,9 @@ impl ThreadView {
             .text_xs()
             .text_color(cx.theme().muted_foreground)
             .child(match project.icon.as_deref().filter(|i| !i.is_empty()) {
-                Some(icon) => div().child(icon.to_string()).into_any_element(),
+                Some(icon) => div().flex_none().child(icon.to_string()).into_any_element(),
                 None => div()
+                    .flex_none()
                     .size(px(8.))
                     .rounded_full()
                     .bg(color)

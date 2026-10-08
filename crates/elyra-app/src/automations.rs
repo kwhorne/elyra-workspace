@@ -706,7 +706,11 @@ impl Render for AutomationsView {
                     .p_4()
                     .child(match selected {
                         Some(automation) => self.detail(&automation, cx),
-                        None => div().into_any_element(),
+                        None => div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Its schedule, runs and history show here once there is one. Create it with New, or ask an agent in a thread to propose one.")
+                            .into_any_element(),
                     }),
             )
     }
