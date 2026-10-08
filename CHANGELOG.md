@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 1.1.0
+
+Agents that test what they built: a flow they walk through in the browser
+becomes a journey that is replayed after later changes, a second fix gets a
+stronger model, and best of N recommends the candidate whose checks pass. Away
+from the desk, a summary waits for you when you come back, and your phone can
+approve and answer. Corrections become rules every agent follows.
 
 - **While you were away.** Back at the window after a while, a summary shows what
   the threads did meanwhile: what needs you, what failed, what finished and what
