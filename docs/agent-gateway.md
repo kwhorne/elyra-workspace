@@ -22,6 +22,7 @@ token, and every call is written to an audit log. The address is shown in
 | `interrupt_thread` | Stop a thread's running turn | |
 | `set_thread_title` | Rename a thread | |
 | `archive_thread` | Archive a thread | |
+| `propose_automation` | Propose an [automation](automations-and-tasks.md#automations) as a card in the agent's own thread; it is created only if you accept it (agents in threads only) | |
 | `browser_open` | Open a local development page in a thread's [browser](browser.md) | |
 | `browser_snapshot` | The page's structure as an outline of its elements and text | ✓ |
 | `browser_query` | Elements matching a CSS selector, with position, size and computed styles | ✓ |

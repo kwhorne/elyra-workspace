@@ -161,6 +161,21 @@ fn tools() -> Vec<Tool> {
                     "required": ["thread_id", "title"] }),
         ),
         tool(
+            "propose_automation",
+            "Propose an automation (a prompt an agent runs on a schedule, e.g. nightly dependency checks) to the user. It appears as a card in this thread with Create, Edit and Dismiss; nothing is scheduled unless the user accepts. Only agents working in a thread can propose.",
+            json!({ "type": "object", "properties": {
+                "name": { "type": "string" },
+                "prompt": { "type": "string", "description": "What the agent does on each run" },
+                "schedule": {
+                    "type": "object",
+                    "description": "One of: {\"kind\":\"daily\",\"time\":\"02:00\"}, {\"kind\":\"weekdays\",\"time\":\"08:30\"}, {\"kind\":\"weekly\",\"weekday\":0,\"time\":\"09:00\"} (0 = Monday), {\"kind\":\"interval\",\"minutes\":60}, {\"kind\":\"cron\",\"expr\":\"0 3 * * 1-5\"}, {\"kind\":\"once\",\"at\":\"2026-01-31T09:00:00Z\"}. Times are local unless \"tz\" (IANA) is given."
+                },
+                "project": { "type": "string", "description": "Project id, name or path; default: this thread's" },
+                "provider": { "type": "string", "enum": ProviderKind::ALL.map(|k| k.as_str()) },
+                "model": { "type": "string" }
+            }, "required": ["name", "prompt", "schedule"] }),
+        ),
+        tool(
             "archive_thread",
             "Archive a finished thread.",
             json!({ "type": "object", "properties": { "thread_id": id }, "required": ["thread_id"] }),
@@ -453,6 +468,69 @@ fn summarize(args: &Value) -> String {
     }
 }
 
+/// A schedule as the agent wrote it; wall-clock times default to local time.
+fn parse_schedule(value: &Value) -> Result<elyra_core::Schedule, String> {
+    let mut value = value.clone();
+    let Some(fields) = value.as_object_mut() else {
+        return Err(
+            "`schedule` must be an object such as {\"kind\":\"daily\",\"time\":\"02:00\"}".into(),
+        );
+    };
+    let kind = fields.get("kind").and_then(Value::as_str).unwrap_or("");
+    if matches!(kind, "daily" | "weekdays" | "weekly" | "cron") && !fields.contains_key("tz") {
+        fields.insert("tz".into(), json!(elyra_core::local_tz_name()));
+    }
+    serde_json::from_value(value).map_err(|err| format!("`schedule`: {err}"))
+}
+
+fn propose_automation(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String, String> {
+    let Caller::Thread(thread_id) = call.caller else {
+        return Err("Only an agent working in a thread can propose an automation; the user creates them in the Automations panel.".into());
+    };
+    let args = &call.args;
+    let name = arg(args, "name")?.trim().to_string();
+    let prompt = arg(args, "prompt")?.trim().to_string();
+    let schedule = parse_schedule(&args["schedule"])?;
+    let state = app.read(cx);
+    let thread = state.thread(thread_id).cloned().ok_or("no such thread")?;
+    let project = match args["project"].as_str().map(str::to_lowercase) {
+        Some(query) => state
+            .projects
+            .iter()
+            .find(|p| {
+                p.id.to_string() == query
+                    || p.name.to_lowercase() == query
+                    || p.path.display().to_string().to_lowercase() == query
+            })
+            .map(|p| p.id)
+            .ok_or_else(|| format!("no project matches “{query}” (see list_projects)"))?,
+        None => thread.project_id,
+    };
+    let provider = args["provider"]
+        .as_str()
+        .and_then(ProviderKind::parse)
+        .unwrap_or(thread.provider);
+    let mut automation = elyra_core::Automation::new(name, project, provider, prompt, schedule);
+    automation.model = match args["model"].as_str() {
+        Some(model) => Some(model.to_string()),
+        None if provider == thread.provider => thread.model.clone(),
+        None => None,
+    };
+    if automation.next_run_at.is_none() {
+        return Err("That schedule never runs (is the time in the past?).".into());
+    }
+    let summary = format!(
+        "Proposed “{}” ({}) to the user as a card in this thread; it is scheduled only if they accept it. Don't create it some other way.",
+        automation.name,
+        automation.schedule.describe()
+    );
+    let session = app
+        .update(cx, |app, cx| app.session(thread_id, cx))
+        .ok_or("could not open the thread")?;
+    session.update(cx, |session, cx| session.propose_automation(automation, cx));
+    Ok(summary)
+}
+
 fn arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
     args[key]
         .as_str()
@@ -547,6 +625,7 @@ fn run_tool(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String,
                 transcript_text(&items, budget)
             ))
         }
+        "propose_automation" => propose_automation(app, call, cx),
         "create_thread" => {
             let project_query = arg(args, "project")?.to_lowercase();
             let prompt = arg(args, "prompt")?.to_string();

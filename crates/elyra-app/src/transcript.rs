@@ -534,6 +534,10 @@ fn render_item(
                 .child(div().h(px(1.)).flex_1().bg(cx.theme().border))
                 .into_any_element()
         }
+        ItemContent::AutomationProposal {
+            automation,
+            outcome,
+        } => proposal_card(id, automation, *outcome, session, cx),
         ItemContent::Check {
             command,
             passed,
@@ -633,6 +637,122 @@ fn status_icon(result: Option<(&str, bool)>, running: bool, cx: &App) -> AnyElem
             .text_color(cx.theme().success)
             .into_any_element(),
     }
+}
+
+/// An automation the agent proposed: what, when and where, with Create,
+/// Edit and Dismiss until the user decides.
+fn proposal_card(
+    id: ItemId,
+    automation: &elyra_core::Automation,
+    outcome: Option<elyra_core::ProposalOutcome>,
+    session: &ThreadSession,
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    use elyra_core::ProposalOutcome;
+    let pending = outcome.is_none();
+    let title = match outcome {
+        None => "Proposed automation",
+        Some(ProposalOutcome::Created) => "Automation created",
+        Some(ProposalOutcome::Dismissed) => "Automation proposal dismissed",
+    };
+    let next = automation
+        .next_run_at
+        .map(|t| {
+            format!(
+                " · next {}",
+                t.with_timezone(&chrono::Local).format("%a %d.%m %H:%M")
+            )
+        })
+        .unwrap_or_default();
+    let project = if automation.project_id == session.project.id {
+        session.project.name.clone()
+    } else {
+        "another project".to_string()
+    };
+    let mut runs = format!(
+        "{} in {project} · {}",
+        automation.provider.label(),
+        automation.permission_mode.label()
+    );
+    if let Some(model) = &automation.model {
+        runs.push_str(&format!(" · {model}"));
+    }
+    let mut card = v_flex()
+        .w_full()
+        .p_3()
+        .gap_2()
+        .rounded_lg()
+        .border_1()
+        .border_color(if pending {
+            cx.theme().info
+        } else {
+            cx.theme().border
+        })
+        .when(pending, |this| this.bg(cx.theme().info.opacity(0.06)))
+        .child(
+            h_flex()
+                .gap_2()
+                .child(
+                    Icon::new(IconName::CalendarClock)
+                        .small()
+                        .text_color(cx.theme().info),
+                )
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(title)),
+        )
+        .child(
+            v_flex()
+                .gap_1()
+                .text_sm()
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(automation.name.clone()),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{}{next}", automation.schedule.describe())),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(runs),
+                ),
+        )
+        .child(mono_block(truncate(&automation.prompt, 1200), cx));
+    if pending {
+        card = card.child(
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new(SharedString::from(format!("proposal-create-{id}")))
+                        .primary()
+                        .small()
+                        .label("Create")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.create_proposal(id, window, cx)
+                        })),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("proposal-edit-{id}")))
+                        .small()
+                        .label("Edit…")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.edit_proposal(id, window, cx)
+                        })),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("proposal-dismiss-{id}")))
+                        .ghost()
+                        .small()
+                        .label("Dismiss")
+                        .on_click(cx.listener(move |this, _, _, cx| this.dismiss_proposal(id, cx))),
+                ),
+        );
+    }
+    card.into_any_element()
 }
 
 /// The project's checks after a turn: passed or failed, with the output

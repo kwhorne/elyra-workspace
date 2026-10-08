@@ -278,6 +278,36 @@ def agents_reach_the_gateway_as_themselves(world, project):
     expect(thread in reply, f"the agent saw its own thread: {reply[:300]}")
 
 
+@scenario()
+def agents_propose_automations_for_the_user_to_accept(world, project):
+    schedule = '{"kind": "daily", "time": "02:00"}'
+    thread = world.new_thread(
+        project,
+        '[call propose_automation {"name": "Nightly deps", "prompt": "Check for outdated dependencies", "schedule": %s}]'
+        % schedule,
+    )
+    reply = world.wait(thread, 30)
+    expect("as a card in this thread" in reply, reply[-300:])
+    proposals = [i for i in world.items(thread) if i["kind"] == "automation_proposal"]
+    expect(len(proposals) == 1, f"one card: {proposals}")
+    expect(proposals[0]["automation"]["name"] == "Nightly deps", "the proposed automation")
+    expect("outcome" not in proposals[0], "the user hasn't decided")
+    with world.db() as db:
+        expect(db.execute("SELECT COUNT(*) FROM automations").fetchone()[0] == 0, "nothing scheduled yet")
+    # A schedule that never runs is refused.
+    thread = world.new_thread(
+        project,
+        '[call propose_automation {"name": "Past", "prompt": "x", "schedule": {"kind": "once", "at": "2020-01-01T00:00:00Z"}}]',
+    )
+    expect("never runs" in world.wait(thread, 30), "refused")
+    # Only agents in a thread can propose.
+    try:
+        world.tool("propose_automation", name="x", prompt="x", schedule={"kind": "interval", "minutes": 5})
+        raise Failure("a client could propose")
+    except Failure as err:
+        expect("Only an agent" in str(err), str(err))
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

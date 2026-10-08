@@ -652,6 +652,19 @@ pub fn transcript_text(items: &[elyra_core::TranscriptItem], budget: usize) -> S
                 "[tool] {name}: {}",
                 crate::transcript::tool_summary(name, input)
             )),
+            ItemContent::AutomationProposal {
+                automation,
+                outcome,
+            } => Some(format!(
+                "[proposed automation] {} ({}): {}",
+                automation.name,
+                automation.schedule.describe(),
+                match outcome {
+                    None => "waiting for the user",
+                    Some(elyra_core::ProposalOutcome::Created) => "created",
+                    Some(elyra_core::ProposalOutcome::Dismissed) => "dismissed",
+                }
+            )),
             ItemContent::Check {
                 command, passed, ..
             } => Some(format!(

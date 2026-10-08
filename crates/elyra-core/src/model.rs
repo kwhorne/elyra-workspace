@@ -263,6 +263,14 @@ impl Thread {
     }
 }
 
+/// What became of a proposal in the transcript.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalOutcome {
+    Created,
+    Dismissed,
+}
+
 /// One durable entry in a thread transcript.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -325,6 +333,13 @@ pub enum ItemContent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         before: Option<String>,
         after: String,
+    },
+    /// An automation the agent proposed; the user creates it (perhaps after
+    /// editing) or dismisses it.
+    AutomationProposal {
+        automation: Box<crate::orchestration::Automation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<ProposalOutcome>,
     },
     /// The project's checks, run after a turn that changed files.
     Check {

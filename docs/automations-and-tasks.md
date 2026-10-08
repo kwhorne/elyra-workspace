@@ -11,6 +11,15 @@ dependency updates, a weekly summary of open issues. Open **Automations** with
 
 ### Creating one
 
+**An agent can propose one.** Ask in a thread, for example *"check our
+dependencies every weekday night"*: with the [agent gateway](agent-gateway.md)
+on, the agent proposes an automation, and a card in the thread shows its name,
+schedule and next run, the agent, project and permission mode, and the prompt.
+**Create** schedules it as it is, **Edit…** opens it in the editor first (saving
+creates it), **Dismiss** drops it. Nothing runs unless you accept.
+
+By hand:
+
 Press **New** and fill in:
 
 | Field | Meaning |

@@ -655,6 +655,57 @@ impl ThreadView {
             .update(cx, |session, cx| session.respond(request_id, decision, cx));
     }
 
+    /// Create the automation the agent proposed, as it is.
+    pub fn create_proposal(&mut self, item: ItemId, window: &mut Window, cx: &mut Context<Self>) {
+        let (automation, app) = {
+            let session = self.session.read(cx);
+            (session.proposal(item), session.app_entity())
+        };
+        let (Some(automation), Some(app)) = (automation, app) else {
+            return;
+        };
+        crate::automations::create(&app, &automation, cx);
+        self.session.update(cx, |session, cx| {
+            session.set_proposal_outcome(item, elyra_core::ProposalOutcome::Created, cx)
+        });
+        window.push_notification(
+            gpui_kit::component::notification::Notification::success(format!(
+                "\u{201c}{}\u{201d} created; it is in Automations.",
+                automation.name
+            )),
+            cx,
+        );
+    }
+
+    /// Open the proposed automation in the editor; saving creates it.
+    pub fn edit_proposal(&mut self, item: ItemId, window: &mut Window, cx: &mut Context<Self>) {
+        let (automation, app) = {
+            let session = self.session.read(cx);
+            (session.proposal(item), session.app_entity())
+        };
+        let (Some(automation), Some(app)) = (automation, app) else {
+            return;
+        };
+        let session = self.session.downgrade();
+        crate::automations::edit_proposal(
+            app,
+            automation,
+            move |cx| {
+                let _ = session.update(cx, |session, cx| {
+                    session.set_proposal_outcome(item, elyra_core::ProposalOutcome::Created, cx)
+                });
+            },
+            window,
+            cx,
+        );
+    }
+
+    pub fn dismiss_proposal(&mut self, item: ItemId, cx: &mut Context<Self>) {
+        self.session.update(cx, |session, cx| {
+            session.set_proposal_outcome(item, elyra_core::ProposalOutcome::Dismissed, cx)
+        });
+    }
+
     pub fn approve_plan(
         &mut self,
         request_id: &str,

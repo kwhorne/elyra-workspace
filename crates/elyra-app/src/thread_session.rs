@@ -1518,6 +1518,58 @@ impl ThreadSession {
         .detach();
     }
 
+    // ---- proposals -----------------------------------------------------------
+
+    /// Show an automation the agent proposed, for the user to decide on.
+    pub fn propose_automation(
+        &mut self,
+        automation: elyra_core::Automation,
+        cx: &mut Context<Self>,
+    ) {
+        self.append(
+            ItemContent::AutomationProposal {
+                automation: Box::new(automation),
+                outcome: None,
+            },
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// The automation a proposal item holds.
+    pub fn proposal(&self, item: ItemId) -> Option<elyra_core::Automation> {
+        self.items
+            .iter()
+            .find(|i| i.id == item)
+            .and_then(|i| match &i.content {
+                ItemContent::AutomationProposal { automation, .. } => Some((**automation).clone()),
+                _ => None,
+            })
+    }
+
+    pub fn set_proposal_outcome(
+        &mut self,
+        item: ItemId,
+        outcome: elyra_core::ProposalOutcome,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.items.iter().position(|i| i.id == item) else {
+            return;
+        };
+        if let ItemContent::AutomationProposal {
+            outcome: current, ..
+        } = &mut self.items[index].content
+        {
+            *current = Some(outcome);
+            self.persist_item(index, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn app_entity(&self) -> Option<gpui_kit::Entity<AppState>> {
+        self.app.upgrade()
+    }
+
     /// Whether the thread's last checks failed (and nothing came after them).
     pub fn checks_failed(&self) -> bool {
         self.items

@@ -23,6 +23,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::Duration;
 
 const TICK: Duration = Duration::from_secs(20);
@@ -1164,6 +1165,9 @@ impl Render for AutomationForm {
     }
 }
 
+/// Runs after the editor saved (a proposal becomes created).
+type OnSaved = Rc<dyn Fn(&mut App)>;
+
 /// Open the automation editor (new when `existing` is None).
 pub fn edit(
     app: Entity<AppState>,
@@ -1176,9 +1180,45 @@ pub fn edit(
     } else {
         "New automation"
     };
+    open_editor(app, existing, title, None, window, cx);
+}
+
+/// Open the editor on an automation an agent proposed; `on_saved` runs once
+/// the user saves it.
+pub fn edit_proposal(
+    app: Entity<AppState>,
+    automation: Automation,
+    on_saved: impl Fn(&mut App) + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let on_saved: OnSaved = Rc::new(on_saved);
+    open_editor(
+        app,
+        Some(automation),
+        "New automation",
+        Some(on_saved),
+        window,
+        cx,
+    );
+}
+
+/// Save a proposed automation as it is.
+pub fn create(app: &Entity<AppState>, automation: &Automation, cx: &mut App) {
+    save(app, automation, cx);
+}
+
+fn open_editor(
+    app: Entity<AppState>,
+    existing: Option<Automation>,
+    title: &'static str,
+    on_saved: Option<OnSaved>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let form = cx.new(|cx| AutomationForm::new(&app, existing, window, cx));
     window.open_dialog(cx, move |dialog, _, _| {
-        let (form, app) = (form.clone(), app.clone());
+        let (form, app, on_saved) = (form.clone(), app.clone(), on_saved.clone());
         dialog.title(title).w(px(620.)).child(form.clone()).footer(
             h_flex().justify_end().child(
                 Button::new("automation-save")
@@ -1188,6 +1228,9 @@ pub fn edit(
                     .on_click(move |_, window, cx| match form.read(cx).build(cx) {
                         Ok(automation) => {
                             save(&app, &automation, cx);
+                            if let Some(on_saved) = &on_saved {
+                                on_saved(cx);
+                            }
                             window.close_dialog(cx);
                             window.push_notification(
                                 Notification::success(format!(

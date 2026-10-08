@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Agents propose automations.** Ask for something on a schedule (*"check our
+  dependencies every weekday night"*) and the agent proposes it as a card in the
+  thread: schedule and next run, agent, project and prompt, with **Create**,
+  **Edit…** and **Dismiss**. Nothing is scheduled unless you accept.
 - **Agents use the page.** Besides looking at a local page, agents can now
   click (by selector or visible text), fill in fields (by label too; selects and
   checkboxes), press keys and wait for something to appear, so they can try the
