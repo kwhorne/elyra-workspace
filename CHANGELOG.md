@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.2.0
+
+After you review a pull request, Elyra keeps an eye on it: when the author
+pushes changes or asks again, you hear about it, and one click has the agent
+check only what changed against what you asked for.
 
 - **Following up a review.** After a thread reviewed a pull request, Elyra
   follows it: new commits since your review, or a review asked for again, bring a
