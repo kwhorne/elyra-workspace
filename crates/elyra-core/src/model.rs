@@ -361,6 +361,25 @@ pub enum ItemContent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         outcome: Option<RuleOutcome>,
     },
+    /// A pull request the thread reviewed changed: new commits since the
+    /// review, or a review asked for again.
+    PrUpdate {
+        /// `owner/name`.
+        repo: String,
+        number: u64,
+        title: String,
+        url: String,
+        /// Commits pushed since the reviewed one.
+        commits: usize,
+        /// A review is asked for again.
+        requested: bool,
+        /// The reviewed commit and the new head.
+        from: String,
+        to: String,
+        /// The user acted on it (reviewed the changes or stopped following).
+        #[serde(default)]
+        handled: bool,
+    },
     /// A saved browser journey, replayed (after a turn, or on request).
     Journey {
         name: String,

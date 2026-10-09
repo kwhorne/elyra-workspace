@@ -94,7 +94,14 @@ class World:
 
     def start(self):
         log = open(os.path.join(self.dir, "app.log"), "a")
-        env = dict(os.environ, ELYRA_HOME=self.home, ELYRA_HEADLESS="1", RUST_LOG="info")
+        env = dict(
+            os.environ, ELYRA_HOME=self.home, ELYRA_HEADLESS="1", RUST_LOG="info",
+            # Fake tools (gh) first on the PATH the app takes from its login shell.
+            SHELL=os.path.join(HERE, "login-shell"),
+            SCENARIO_PATH=os.path.join(HERE, "bin") + os.pathsep + os.environ.get("PATH", ""),
+            FAKE_GH_STATE=os.path.join(self.dir, "gh.json"),
+            ELYRA_REVIEW_POLL_SECS="2",
+        )
         self.app = subprocess.Popen([BIN], env=env, stdout=log, stderr=log)
         deadline = time.time() + 60
         while time.time() < deadline:
@@ -386,6 +393,48 @@ def agents_propose_rules_for_the_user_to_keep(world, project):
     expect(len(cards) == 1 and cards[0]["rule"] == "Validate requests with Form Requests.", cards)
     expect("outcome" not in cards[0], "the user hasn't decided")
     expect(not os.path.exists(os.path.join(world.projects[project]["path"], "AGENTS.md")), "no file written yet")
+
+
+def github(world, **state):
+    with open(os.path.join(world.dir, "gh.json"), "w") as f:
+        json.dump(state, f)
+
+
+def pull_request(head, commits, state="OPEN", reviewed="c1", requested=False):
+    return {
+        "title": "Fix totals", "url": "https://github.com/acme/shop/pull/7", "state": state,
+        "headRefOid": head, "commits": [{"oid": c} for c in commits],
+        "reviews": [{"author": {"login": "kh"}, "state": "COMMENTED", "commit": {"oid": reviewed}}],
+        "reviewRequests": [{"login": "kh"}] if requested else [],
+    }
+
+
+@scenario()
+def a_reviewed_pull_request_comes_back_when_it_changes(world, project):
+    github(world, login="kh", pr=pull_request("c1", ["c1"]))
+    thread = world.new_thread(project, "[say] Posted the review: https://github.com/acme/shop/pull/7#pullrequestreview-1")
+    world.wait(thread, 30)
+    time.sleep(3)  # followed now
+    github(world, login="kh", pr=pull_request("c3", ["c1", "c2", "c3"], requested=True))
+    deadline = time.time() + 20
+    cards = []
+    while time.time() < deadline and not cards:
+        cards = [i for i in world.items(thread) if i["kind"] == "pr_update"]
+        time.sleep(0.5)
+    expect(len(cards) == 1, f"one card: {cards}")
+    card = cards[0]
+    expect((card["number"], card["commits"], card["requested"], card["from"], card["to"]) == (7, 2, True, "c1", "c3"), card)
+    time.sleep(5)
+    expect(len([i for i in world.items(thread) if i["kind"] == "pr_update"]) == 1, "told once")
+    # Merged: no longer followed.
+    github(world, login="kh", pr=pull_request("c3", ["c1", "c2", "c3"], state="MERGED"))
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if any(i["kind"] == "notice" and "merged" in i["text"] for i in world.items(thread)):
+            break
+        time.sleep(0.5)
+    else:
+        raise Failure("no word about the merge")
 
 
 def main():

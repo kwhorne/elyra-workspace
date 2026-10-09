@@ -151,7 +151,8 @@ impl ReviewInbox {
 
     fn visible(&self, cx: &App) -> Vec<usize> {
         let query = self.search.read(cx).value().to_lowercase();
-        self.rows
+        let mut visible = self
+            .rows
             .iter()
             .enumerate()
             .filter(|(_, row)| {
@@ -168,7 +169,17 @@ impl ReviewInbox {
                             .any(|l| l.to_lowercase().contains(&query)))
             })
             .map(|(index, _)| index)
-            .collect()
+            .collect::<Vec<_>>();
+        // Pull requests that changed since your review come first.
+        let changed_prs = crate::review_follow::changed_since_review(self.app.read(cx));
+        let changed = |index: &usize| {
+            let row = &self.rows[*index];
+            row.item.kind == ItemKind::PullRequest
+                && changed_prs
+                    .contains(&(self.repos[row.repo].slug.to_lowercase(), row.item.number))
+        };
+        visible.sort_by_key(|index| !changed(index));
+        visible
     }
 
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -374,8 +385,12 @@ impl Render for ReviewInbox {
                 .when(on, |b| b.primary())
                 .when(!on, |b| b.ghost())
         };
+        let changed_prs = crate::review_follow::changed_since_review(self.app.read(cx));
         let list = visible.iter().map(|&index| {
             let row = &self.rows[index];
+            let changed = row.item.kind == ItemKind::PullRequest
+                && changed_prs
+                    .contains(&(self.repos[row.repo].slug.to_lowercase(), row.item.number));
             let selected = self.selected == Some(index);
             let item = &row.item;
             let icon = match (item.kind, item.state.as_str(), item.is_draft) {
@@ -411,6 +426,14 @@ impl Render for ReviewInbox {
                                 .text_ellipsis()
                                 .child(item.title.clone()),
                         )
+                        .when(changed, |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().warning)
+                                    .child("Changed since your review"),
+                            )
+                        })
                         .child(
                             div()
                                 .text_xs()

@@ -10,6 +10,7 @@ What it does depends on a tag in the prompt:
            agent and reply with the result
   [mcp]    reply with the names of the MCP servers Elyra gave it
   [ask]    ask permission to run a command, and say what the answer was
+  [say] X  reply X, changing nothing
   anything else (also Elyra's follow-ups): add 1 to value.txt
 Every prompt is appended to prompts.log in the working directory, and every
 model Elyra switches to (session/set_model) to models.log.
@@ -83,6 +84,9 @@ def prompt(rid, params):
     text = "".join(block.get("text", "") for block in params["prompt"])
     with open(os.path.join(state["cwd"], "prompts.log"), "a") as log:
         log.write(text.replace("\n", " ")[:400] + "\n")
+    if "[say]" in text:
+        say(sid, text.split("[say]", 1)[1].strip())
+        return end(rid)
     if "[ask]" in text:
         answer = request("session/request_permission", {
             "sessionId": sid,

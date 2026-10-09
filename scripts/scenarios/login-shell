@@ -1,0 +1,7 @@
+#!/bin/sh
+# The scenarios' login shell: Elyra asks it for PATH at launch (it gets one
+# with the scenario's fake tools first); anything else runs in /bin/sh.
+case "$*" in
+  *__ELYRA_PATH__*) printf '__ELYRA_PATH__%s' "$SCENARIO_PATH" ;;
+  *) exec /bin/sh "$@" ;;
+esac

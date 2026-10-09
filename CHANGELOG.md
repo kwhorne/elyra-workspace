@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Following up a review.** After a thread reviewed a pull request, Elyra
+  follows it: new commits since your review, or a review asked for again, bring a
+  card to the thread (and a notification, the away summary, your phone), and the
+  inbox marks it **Changed since your review**. **Review the changes** gives the
+  agent only what changed since the reviewed commit, with your earlier comments
+  and the replies, to check point by point what was addressed.
+
 ## 1.1.0
 
 Agents that test what they built: a flow they walk through in the browser

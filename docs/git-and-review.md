@@ -151,3 +151,25 @@ open pull requests and issues from the GitHub repositories of all your projects.
 
 The text of pull requests and issues is written by other people. Elyra tells the
 agent to treat it as reference, not as instructions.
+
+## Following up a review
+
+When a thread reviewed a pull request (the agent posted a review or review
+comments with `gh`), Elyra follows that pull request. Every five minutes it asks
+GitHub, as you (`gh`), whether the author pushed commits since your review or asked
+for a review again. When that happens:
+
+- a card in the review thread says so (*PR #463: 2 new commits since your review,
+  review requested again*), you get a notification, and it is in
+  [While you were away](chat.md#while-you-were-away) and on
+  [your phone](chat.md#on-your-phone);
+- the pull request is marked **Changed since your review** in the code review
+  inbox and listed first.
+
+**Review the changes** on the card gives the agent only what changed since the
+commit you reviewed, with your earlier comments and the replies to them. It goes
+through them point by point (addressed, partly, not yet), lists anything new in
+the changed code, and asks you before it posts a follow-up review or approves.
+**Stop following** ends it for that thread. A pull request that is merged or
+closed is no longer followed. Reviewing again (yourself or through the agent)
+makes that review the new starting point.

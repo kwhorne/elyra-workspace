@@ -194,6 +194,191 @@ pub fn review_comments(repo: &Path, number: u64) -> Result<Vec<Comment>> {
         .collect())
 }
 
+/// Who `gh` is signed in as.
+pub fn signed_in_as() -> Result<String> {
+    let login = gh(&std::env::temp_dir(), &["api", "user", "--jq", ".login"])?;
+    let login = login.trim();
+    if login.is_empty() {
+        bail!("`gh` is not signed in");
+    }
+    Ok(login.to_string())
+}
+
+/// Where a pull request stands, for following up a review.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PrProgress {
+    pub title: String,
+    pub url: String,
+    /// OPEN, MERGED or CLOSED.
+    pub state: String,
+    pub head: String,
+    /// Its commits, oldest first.
+    pub commits: Vec<String>,
+    /// The commit `me` last reviewed, if they did.
+    pub my_review: Option<String>,
+    /// `me` is asked to review (again).
+    pub requested: bool,
+}
+
+impl PrProgress {
+    /// Commits pushed after `since` (all of them when it isn't in the PR any
+    /// more, after a rebase).
+    pub fn commits_after(&self, since: &str) -> usize {
+        match self.commits.iter().position(|c| c == since) {
+            Some(at) => self.commits.len() - at - 1,
+            None => self.commits.len(),
+        }
+    }
+}
+
+/// `slug` is `owner/name`.
+pub fn pr_progress(slug: &str, number: u64, me: &str) -> Result<PrProgress> {
+    let text = gh(
+        &std::env::temp_dir(),
+        &[
+            "pr",
+            "view",
+            &number.to_string(),
+            "--repo",
+            slug,
+            "--json",
+            "title,url,state,headRefOid,commits,reviews,reviewRequests",
+        ],
+    )?;
+    Ok(parse_progress(&serde_json::from_str(&text)?, me))
+}
+
+pub(crate) fn parse_progress(json: &Value, me: &str) -> PrProgress {
+    let mine = |author: &Value| {
+        author["login"]
+            .as_str()
+            .is_some_and(|l| l.eq_ignore_ascii_case(me))
+    };
+    PrProgress {
+        title: json["title"].as_str().unwrap_or("").into(),
+        url: json["url"].as_str().unwrap_or("").into(),
+        state: json["state"].as_str().unwrap_or("").into(),
+        head: json["headRefOid"].as_str().unwrap_or("").into(),
+        commits: json["commits"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c["oid"].as_str().map(str::to_string))
+            .collect(),
+        my_review: json["reviews"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|r| mine(&r["author"]) && r["state"] != "PENDING")
+            .filter_map(|r| r["commit"]["oid"].as_str().map(str::to_string))
+            .next_back(),
+        requested: json["reviewRequests"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|r| {
+                r["login"]
+                    .as_str()
+                    .is_some_and(|l| l.eq_ignore_ascii_case(me))
+            }),
+    }
+}
+
+/// One of `me`'s comments on a pull request, with the answers to it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReviewPoint {
+    pub path: Option<String>,
+    pub line: Option<u64>,
+    pub body: String,
+    /// (author, reply).
+    pub replies: Vec<(String, String)>,
+}
+
+/// `me`'s inline comments and review summaries on a pull request, with the
+/// replies to the inline ones.
+pub fn review_points(slug: &str, number: u64, me: &str) -> Result<Vec<ReviewPoint>> {
+    let dir = std::env::temp_dir();
+    let comments = gh(
+        &dir,
+        &[
+            "api",
+            "--paginate",
+            &format!("repos/{slug}/pulls/{number}/comments"),
+        ],
+    )?;
+    let reviews = gh(
+        &dir,
+        &[
+            "api",
+            "--paginate",
+            &format!("repos/{slug}/pulls/{number}/reviews"),
+        ],
+    )?;
+    Ok(parse_points(
+        &concat_pages(&comments),
+        &concat_pages(&reviews),
+        me,
+    ))
+}
+
+/// `gh api --paginate` prints one JSON array per page.
+fn concat_pages(text: &str) -> Value {
+    let mut all = Vec::new();
+    let stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
+    for page in stream.flatten() {
+        if let Value::Array(items) = page {
+            all.extend(items);
+        }
+    }
+    Value::Array(all)
+}
+
+pub(crate) fn parse_points(comments: &Value, reviews: &Value, me: &str) -> Vec<ReviewPoint> {
+    let mine = |c: &Value| {
+        c["user"]["login"]
+            .as_str()
+            .is_some_and(|l| l.eq_ignore_ascii_case(me))
+    };
+    let empty = Vec::new();
+    let comments = comments.as_array().unwrap_or(&empty);
+    let mut points: Vec<ReviewPoint> = reviews
+        .as_array()
+        .unwrap_or(&empty)
+        .iter()
+        .filter(|r| mine(r) && !r["body"].as_str().unwrap_or("").trim().is_empty())
+        .map(|r| ReviewPoint {
+            path: None,
+            line: None,
+            body: r["body"].as_str().unwrap_or("").trim().to_string(),
+            replies: Vec::new(),
+        })
+        .collect();
+    for comment in comments
+        .iter()
+        .filter(|c| mine(c) && c["in_reply_to_id"].is_null())
+    {
+        let id = comment["id"].as_u64();
+        points.push(ReviewPoint {
+            path: comment["path"].as_str().map(str::to_string),
+            line: comment["line"]
+                .as_u64()
+                .or(comment["original_line"].as_u64()),
+            body: comment["body"].as_str().unwrap_or("").trim().to_string(),
+            replies: comments
+                .iter()
+                .filter(|r| r["in_reply_to_id"].as_u64() == id && id.is_some())
+                .map(|r| {
+                    (
+                        r["user"]["login"].as_str().unwrap_or("ghost").to_string(),
+                        r["body"].as_str().unwrap_or("").trim().to_string(),
+                    )
+                })
+                .collect(),
+        });
+    }
+    points
+}
+
 /// Create a PR for the current branch; returns its URL.
 pub fn create_pr(
     repo: &Path,
@@ -373,5 +558,51 @@ mod tests {
             &json!([{"number": 3, "title": "Bug", "author": {"login": "c"}, "state": "OPEN", "updatedAt": "t", "url": "u", "labels": [{"name": "bug"}]}]),
         );
         assert_eq!((items[0].number, items[0].labels[0].as_str()), (3, "bug"));
+    }
+
+    #[test]
+    fn follows_a_pull_request_after_a_review() {
+        let json = serde_json::json!({
+            "title": "Fix totals", "url": "https://github.com/o/r/pull/7", "state": "OPEN",
+            "headRefOid": "c3",
+            "commits": [{"oid": "c1"}, {"oid": "c2"}, {"oid": "c3"}],
+            "reviews": [
+                {"author": {"login": "KH"}, "state": "CHANGES_REQUESTED", "commit": {"oid": "c1"}},
+                {"author": {"login": "dev"}, "state": "COMMENTED", "commit": {"oid": "c2"}},
+                {"author": {"login": "kh"}, "state": "PENDING", "commit": {"oid": "c3"}}
+            ],
+            "reviewRequests": [{"login": "kh"}]
+        });
+        let progress = super::parse_progress(&json, "kh");
+        assert_eq!(
+            progress.my_review.as_deref(),
+            Some("c1"),
+            "the last submitted one"
+        );
+        assert!(progress.requested);
+        assert_eq!(progress.commits_after("c1"), 2);
+        assert_eq!(progress.commits_after("gone"), 3, "after a rebase");
+
+        let comments = serde_json::json!([
+            {"id": 1, "user": {"login": "kh"}, "path": "a.php", "line": 4, "body": "Null check?", "in_reply_to_id": null},
+            {"id": 2, "user": {"login": "dev"}, "body": "Added.", "in_reply_to_id": 1},
+            {"id": 3, "user": {"login": "dev"}, "path": "b.php", "line": 9, "body": "Not mine", "in_reply_to_id": null}
+        ]);
+        let reviews = serde_json::json!([
+            {"user": {"login": "kh"}, "body": "Please fix 1-3 before merge."},
+            {"user": {"login": "kh"}, "body": ""}
+        ]);
+        let points = super::parse_points(&comments, &reviews, "kh");
+        assert_eq!(points.len(), 2);
+        assert_eq!(points[0].body, "Please fix 1-3 before merge.");
+        assert_eq!(points[1].path.as_deref(), Some("a.php"));
+        assert_eq!(
+            points[1].replies,
+            [("dev".to_string(), "Added.".to_string())]
+        );
+        assert_eq!(
+            super::concat_pages("[1,2]\n[3]"),
+            serde_json::json!([1, 2, 3])
+        );
     }
 }

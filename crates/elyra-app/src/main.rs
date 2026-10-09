@@ -32,6 +32,7 @@ mod preferences;
 mod quitting;
 mod race;
 mod recovery;
+mod review_follow;
 mod review_inbox;
 mod rules;
 mod search;
@@ -116,6 +117,7 @@ fn main() {
         gateway::init(app.clone(), cx);
         felagi_runtime::init(app.clone(), cx);
         phone::init(app.clone(), cx);
+        review_follow::init(app.clone(), cx);
         // Learn Grove's sites early, so agents can be given its tools.
         cx.background_executor()
             .spawn(async { grove::sites() })

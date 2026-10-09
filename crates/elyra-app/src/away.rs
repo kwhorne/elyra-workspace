@@ -100,6 +100,13 @@ pub fn summarize(
                 outcome: None,
                 ..
             } => waiting = Some(format!("Proposes a rule: {rule}")),
+            ItemContent::PrUpdate {
+                number,
+                commits,
+                requested,
+                handled: false,
+                ..
+            } => waiting = Some(crate::review_follow::summary(*number, *commits, *requested)),
             _ => {}
         }
     }

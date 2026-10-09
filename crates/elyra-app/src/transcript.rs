@@ -538,6 +538,83 @@ fn render_item(
             automation,
             outcome,
         } => proposal_card(id, automation, *outcome, session, cx),
+        ItemContent::PrUpdate {
+            number,
+            title,
+            url,
+            commits,
+            requested,
+            handled,
+            ..
+        } => {
+            let pending = !handled;
+            let open = url.clone();
+            v_flex()
+                .w_full()
+                .p_3()
+                .gap_2()
+                .rounded_lg()
+                .border_1()
+                .border_color(if pending {
+                    cx.theme().warning
+                } else {
+                    cx.theme().border
+                })
+                .when(pending, |this| this.bg(cx.theme().warning.opacity(0.06)))
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Icon::new(IconName::GitPullRequest)
+                                .small()
+                                .text_color(cx.theme().warning),
+                        )
+                        .child(
+                            div().font_weight(FontWeight::SEMIBOLD).child(
+                                crate::review_follow::summary(*number, *commits, *requested),
+                            ),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(title.clone()),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .when(pending, |this| {
+                            this.child(
+                                Button::new(SharedString::from(format!("pr-review-{id}")))
+                                    .primary()
+                                    .small()
+                                    .label("Review the changes")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.review_pr_changes(id, cx)
+                                    })),
+                            )
+                        })
+                        .child(
+                            Button::new(SharedString::from(format!("pr-open-{id}")))
+                                .small()
+                                .label("Open on GitHub")
+                                .on_click(move |_, _, cx| cx.open_url(&open)),
+                        )
+                        .when(pending, |this| {
+                            this.child(
+                                Button::new(SharedString::from(format!("pr-stop-{id}")))
+                                    .ghost()
+                                    .small()
+                                    .label("Stop following")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.stop_following_pr(id, cx)
+                                    })),
+                            )
+                        }),
+                )
+                .into_any_element()
+        }
         ItemContent::RuleProposal {
             rule,
             reason,

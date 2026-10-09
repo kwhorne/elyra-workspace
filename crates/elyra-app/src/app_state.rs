@@ -652,7 +652,13 @@ impl AppState {
                     _ => None,
                 };
                 if let Some(needs_you) = event {
-                    cx.defer(move |cx| crate::phone::on_session_event(&app, id, needs_you, cx));
+                    cx.defer(move |cx| {
+                        crate::phone::on_session_event(&app, id, needs_you, cx);
+                        // A turn may have reviewed a pull request: follow it.
+                        if !needs_you {
+                            crate::review_follow::after_turn(&app, id, cx);
+                        }
+                    });
                 }
             },
         )
@@ -694,6 +700,15 @@ pub fn transcript_text(items: &[elyra_core::TranscriptItem], budget: usize) -> S
                     Some(elyra_core::ProposalOutcome::Created) => "created",
                     Some(elyra_core::ProposalOutcome::Dismissed) => "dismissed",
                 }
+            )),
+            ItemContent::PrUpdate {
+                number,
+                commits,
+                requested,
+                ..
+            } => Some(format!(
+                "[pull request] {}",
+                crate::review_follow::summary(*number, *commits, *requested)
             )),
             ItemContent::RuleProposal { rule, outcome, .. } => Some(format!(
                 "[proposed rule] {rule}: {}",

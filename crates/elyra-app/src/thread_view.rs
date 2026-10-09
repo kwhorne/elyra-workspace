@@ -656,6 +656,29 @@ impl ThreadView {
             .update(cx, |session, cx| session.respond(request_id, decision, cx));
     }
 
+    /// "Review the changes" on a pull request card.
+    pub fn review_pr_changes(&mut self, item: ItemId, cx: &mut Context<Self>) {
+        let (app, thread) = {
+            let session = self.session.read(cx);
+            (session.app_entity(), session.thread.id)
+        };
+        if let Some(app) = app {
+            crate::review_follow::review_changes(&app, thread, item, cx);
+        }
+    }
+
+    pub fn stop_following_pr(&mut self, item: ItemId, cx: &mut Context<Self>) {
+        let (app, thread) = {
+            let session = self.session.read(cx);
+            (session.app_entity(), session.thread.id)
+        };
+        if let Some(app) = app {
+            crate::review_follow::stop(app.read(cx), thread);
+        }
+        self.session
+            .update(cx, |session, cx| session.set_pr_update_handled(item, cx));
+    }
+
     /// Keep a proposed rule: in the repository's AGENTS.md (or CLAUDE.md), or
     /// in the project's instructions in Elyra.
     pub fn keep_rule(

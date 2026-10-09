@@ -42,7 +42,10 @@ window, Dock icon or update checks) in a throwaway `ELYRA_HOME`, and
 [`scripts/scenarios/run.py`](../scripts/scenarios/run.py) drives it through the
 agent gateway. The agent is [`agent.py`](../scripts/scenarios/agent.py), an ACP
 agent whose behaviour a tag in the prompt picks: change a file, change nothing,
-crash mid-turn, fail the turn, or wait to be stopped. Scenarios cover the turn
+crash mid-turn, fail the turn, or wait to be stopped. The app's login shell
+during the scenarios is `scripts/scenarios/login-shell`, which puts fake tools
+from `scripts/scenarios/bin` (such as a `gh` answering from a JSON file) first on
+its PATH. Scenarios cover the turn
 lifecycle, checks after each turn and stopping. Add one when you change how
 sessions, providers or the gateway behave.
 

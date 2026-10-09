@@ -323,6 +323,32 @@ pub fn notify(app: &Entity<AppState>, thread: ThreadId, event: Event, cx: &mut A
     publish(server, payload);
 }
 
+/// Send a push with a message of its own about `thread` (when sending to
+/// the phone is on and Elyra Workspace isn't the active app).
+pub fn notify_message(app: &Entity<AppState>, thread: ThreadId, message: &str, cx: &mut App) {
+    if cx.active_window().is_some() {
+        return;
+    }
+    let Some((server, topic)) = target(cx) else {
+        return;
+    };
+    let Some(title) = app.read(cx).thread(thread).map(|t| {
+        let project = app
+            .read(cx)
+            .project(t.project_id)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        format!("{project}: {}", t.title)
+    }) else {
+        return;
+    };
+    cx.global_mut::<Phone>().last_thread = Some(thread);
+    publish(
+        server,
+        json!({ "topic": topic, "title": title, "message": message, "tags": ["eyes"], "priority": 4 }),
+    );
+}
+
 /// Send a test push.
 pub fn send_test(cx: &mut App) -> Result<(), String> {
     let (server, topic) = target(cx).ok_or("Turn it on and set a topic first.")?;

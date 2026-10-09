@@ -1773,6 +1773,23 @@ impl ThreadSession {
         cx.notify();
     }
 
+    /// A pull request the thread reviewed changed (see `review_follow`).
+    pub fn add_pr_update(&mut self, card: ItemContent, cx: &mut Context<Self>) {
+        self.append(card, cx);
+        cx.notify();
+    }
+
+    pub fn set_pr_update_handled(&mut self, item: ItemId, cx: &mut Context<Self>) {
+        let Some(index) = self.items.iter().position(|i| i.id == item) else {
+            return;
+        };
+        if let ItemContent::PrUpdate { handled, .. } = &mut self.items[index].content {
+            *handled = true;
+            self.persist_item(index, cx);
+            cx.notify();
+        }
+    }
+
     /// Show a rule the agent learned, for the user to keep or dismiss.
     pub fn propose_rule(&mut self, rule: String, reason: String, cx: &mut Context<Self>) {
         self.append(
