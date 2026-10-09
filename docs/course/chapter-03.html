@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 3: Talking to an Agent &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#sending">Sending, queueing and stopping</a>
+                <a href="#attachments">Attachments</a>
+                <a href="#mentions-and-commands">@ and /</a>
+                <a href="#the-row">The row under the box</a>
+                <a href="#permission-modes">Permission modes: the decision that matters</a>
+                <a href="#debug-and-context">Debug mode, and the context meter</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-02.html">&larr; 2. The First Launch</a>
+                    <a href="chapter-04.html">4. Reading What the Agent Did &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 3: Talking to an Agent</h1>
+                <p class="lead">
+                    
+            Freddy's first question went well. Now he wants the agent to fix the
+            export bug, and he realises he is about to make four decisions
+            without noticing: which agent, which model, how hard it thinks, and
+            whether it may touch a file without asking.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Starting a task with an agent is mostly typing, and a little
+                    bit of deciding. The deciding is the part people skip. They
+                    use whatever the agent defaulted to, and find out what that
+                    meant when it has already edited eleven files. The typing has
+                    its own friction: you think of something while the agent is
+                    working, you have a screenshot of the bug, you want to point at
+                    <code>src/export/csv.ts</code> without spelling the path.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    In a terminal, a new thought while the agent works means
+                    interrupting it, and an interrupted agent often loses the
+                    thread of what it was doing. A screenshot means saving a file,
+                    finding its path and describing it. A path means typing it, or
+                    letting the agent search for it. None of that is hard, and all
+                    of it is friction at exactly the moment you are trying to
+                    explain something.
+                </p>
+
+                <h2 id="sending">Sending, queueing and stopping</h2>
+                <p>
+                    Type in the message box at the bottom of a thread and press
+                    <code>Enter</code> to send. <code>Shift+Enter</code> starts a
+                    new line. <code>&#8984;L</code> puts the cursor in the message
+                    box from anywhere.
+                </p>
+                <ul>
+                    <li>
+                        <code>&uarr;</code> in an empty message box brings back the
+                        messages you sent earlier, newest first;
+                        <code>&darr;</code> goes forward again.
+                    </li>
+                    <li>
+                        What you type is kept per thread. Switching threads does
+                        not lose a draft.
+                    </li>
+                    <li>
+                        While the agent is working, the send button turns into
+                        <strong>Queue</strong>. Your message waits and is sent when
+                        the turn ends. Queued messages are shown above the message
+                        box. You can remove them, or press <strong>Send now</strong>
+                        to deliver one into the running turn (Claude Code, Codex,
+                        Elyra and Pi).
+                    </li>
+                    <li>
+                        <strong>Stop</strong> (or <code>&#8963;C</code> in the
+                        message box) interrupts the agent.
+                    </li>
+                </ul>
+                <p>
+                    Queue is the answer to the problem above. Freddy thinks of a
+                    second thing while the agent works on the first. He types it,
+                    presses Enter, and it waits above the box. Nothing is
+                    interrupted, and nothing is forgotten.
+                </p>
+
+                <h2 id="attachments">Attachments</h2>
+                <ul>
+                    <li>
+                        <strong>Images:</strong> paste them (<code>&#8984;V</code>),
+                        drop them on the window, or use the paperclip button. They
+                        are sent to the agent with your message. Supported: PNG,
+                        JPEG, GIF and WebP.
+                    </li>
+                    <li>
+                        <strong>Other files</strong> dropped or picked are added as
+                        <code>@path</code> mentions, so the agent reads them itself.
+                    </li>
+                    <li>
+                        <strong>Long pasted text</strong> (over 4,000 characters or
+                        60 lines) becomes a <em>Pasted text</em> chip instead of
+                        filling the message box. It is sent with the message.
+                    </li>
+                </ul>
+                <p>
+                    Remove an attachment with the <strong>&times;</strong> on its
+                    chip. A pasted stack trace is the classic use of the third
+                    one: it stays out of your way, and the agent gets all of it.
+                </p>
+
+                <h2 id="mentions-and-commands">@ and /</h2>
+                <p>
+                    Type <code>@</code> to get a list of the files and folders in
+                    the project. Choose one with <code>&uarr;</code>/<code>&darr;</code>
+                    and <code>Enter</code> or <code>Tab</code>, and the path is
+                    inserted. The list respects <code>.gitignore</code> and matches
+                    loosely: <code>@thrview</code> finds
+                    <code>src/thread_view.rs</code>. With Claude Code, the list
+                    also shows its subagents as <code>@agent-&lt;name&gt;</code>,
+                    for example <code>@agent-Explore</code>, to ask for a specific
+                    subagent.
+                </p>
+                <p>
+                    Type <code>/</code> at the start of the message to see the
+                    commands:
+                </p>
+                <table>
+                    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>/clear</code></td><td>Start a fresh conversation in this thread (the agent forgets the earlier messages)</td></tr>
+                        <tr><td><code>/compact</code></td><td>Ask the agent to summarize the conversation to free up context</td></tr>
+                        <tr><td><code>/rename &lt;title&gt;</code></td><td>Rename the thread</td></tr>
+                        <tr><td><code>/plan</code></td><td>Switch to <em>Plan only</em></td></tr>
+                        <tr><td><code>/default</code></td><td>Switch back to <em>Ask for approval</em></td></tr>
+                        <tr><td><code>/status</code></td><td>Show the model, context use and cost</td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    The agent's own commands are listed after these. For Claude
+                    Code that includes your custom commands and skills. Choosing
+                    one inserts it, and you can add arguments before sending.
+                </p>
+
+                <h2 id="the-row">The row under the box</h2>
+                <p>
+                    This row controls the thread, and it is where the four
+                    decisions from the start of the chapter live.
+                </p>
+                <ul>
+                    <li>
+                        <strong>Agent:</strong> Claude Code, Codex, Elyra, Pi,
+                        Gemini CLI, Cursor Agent, OpenCode or your custom agent.
+                        You can change it only before the first message. To switch
+                        later, use <em>Continue with</em> (chapter 6). Agents you
+                        switched off in Settings are not listed.
+                    </li>
+                    <li>
+                        <strong>Model:</strong> the models the agent offers.
+                        Workspace learns the list from the agent after its first
+                        start and remembers it. At the bottom of the menu,
+                        <strong>Star this model</strong> saves the agent and model
+                        as a <em>preset</em>. Starred presets are listed at the top
+                        of the menu for every thread. Before the first message,
+                        picking one also switches the agent.
+                    </li>
+                    <li>
+                        <strong>Account:</strong> only shown when you set up
+                        accounts for the agent in Settings. Like the agent, it can
+                        be chosen only before the first message.
+                    </li>
+                    <li>
+                        <strong>Effort:</strong> how hard the model thinks (Claude
+                        Code: low to max; Codex: minimal to extra high; Elyra and
+                        Pi: off to extra high). Not every agent supports it.
+                    </li>
+                    <li>
+                        <strong>Permission mode</strong>, below.
+                    </li>
+                    <li>
+                        <strong>Local / New worktree:</strong> where the thread
+                        works. Chapter 7 is about this.
+                    </li>
+                </ul>
+                <p>New threads start with the agent, model, effort and permission mode you used last.</p>
+
+                <h2 id="permission-modes">Permission modes: the decision that matters</h2>
+                <table>
+                    <thead><tr><th>Mode</th><th>The agent&hellip;</th></tr></thead>
+                    <tbody>
+                        <tr><td>Ask for approval</td><td>asks before editing files or running commands</td></tr>
+                        <tr><td>Accept edits</td><td>edits files freely, asks before anything else</td></tr>
+                        <tr><td>Plan only</td><td>reads and plans, but changes nothing</td></tr>
+                        <tr><td>Full access</td><td>does everything without asking</td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    Choose by what the task can break, not by how much you trust
+                    the agent. A question about the code is a <em>Plan only</em>
+                    task. A change you will review in the diff anyway can be
+                    <em>Accept edits</em>. <em>Full access</em> is for a folder you
+                    can throw away, which chapter 7 makes cheap.
+                </p>
+                <div class="callout">
+                    <strong>Know this before you pick an agent for a task you want
+                    to supervise.</strong> Elyra and Pi do not ask for approvals;
+                    they run tools directly. That is how those two agents work, not
+                    a setting you forgot. If you want an approval card for every
+                    edit, use an agent that asks.
+                </div>
+
+                <h2 id="debug-and-context">Debug mode, and the context meter</h2>
+                <p>
+                    The <strong>Debug</strong> button (the bug icon) turns on
+                    reproduce-first mode. The agent is told to write a failing
+                    test or a minimal reproduction first, explain the root cause,
+                    make the smallest fix and show the reproduction passing. The
+                    button turns yellow while it is on, and the change applies from
+                    the next message. For Freddy's export bug it is the right
+                    default: <em>&ldquo;the export drops the last note&rdquo;</em>
+                    is a failing test waiting to be written.
+                </p>
+                <p>
+                    The <strong>context meter</strong> shows how full the model's
+                    context window is, with the cost so far when the agent reports
+                    it. When it is nearly full, use <code>/compact</code>, which
+                    asks the agent to summarize the conversation and free up
+                    room.
+                </p>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> start a thread in <em>Plan only</em>
+                    and ask the agent how it would fix a small bug. Then press
+                    <code>Enter</code> on a second message while it is still
+                    answering, and watch it appear above the box as a queued
+                    message.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>How to queue a message while the agent works, and when Send now is the better choice</li>
+                    <li>How to attach images, files and long pasted text, and what @ and / do</li>
+                    <li>What the row under the message box controls, and that the agent is fixed after the first message</li>
+                    <li>The four permission modes, and how to choose one by what the task can break</li>
+                    <li>That Elyra and Pi run tools without asking, so approvals are not how you supervise them</li>
+                    <li>What Debug mode and the context meter are for</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-04.html">Chapter 4</a>
+                    you read what the agent did: tool cards, approvals, plans, and how to put the files back to before a message.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

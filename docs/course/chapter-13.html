@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 13: Leaving the Desk &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#quitting">Closing the window, and quitting</a>
+                <a href="#interrupted">When a turn was interrupted</a>
+                <a href="#away">While you were away</a>
+                <a href="#phone">On your phone</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-12.html">&larr; 12. Work That Starts Itself</a>
+                    <a href="chapter-14.html">14. Agents That Run Agents &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 13: Leaving the Desk</h1>
+                <p class="lead">
+                    
+            Freddy's goal is running, the checks are set, and it is five
+            o'clock. He would like to go home. This chapter is the honest answer
+            to what happens when he does, and how to make the agents' need for
+            him reach him instead of waiting in a window.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Everything in the earlier chapters assumes you are at the
+                    machine. A long task is not. You leave, the agent keeps going,
+                    and one of three things is true when you come back: it finished,
+                    it failed, or it stopped half an hour in to ask you something.
+                    The first is a pleasant surprise. The other two are lost time,
+                    and the only difference between them and the first is that
+                    nobody told you.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    Check the machine. Or leave a terminal with the agent running in
+                    a <code>tmux</code> session and a message-to-self for when it is
+                    done. In practice you stay near the window because you cannot
+                    trust that the agent's question will find you.
+                </p>
+
+                <h2 id="quitting">Closing the window, and quitting</h2>
+                <p>
+                    <strong>Agents run inside Elyra Workspace</strong>, so they stop
+                    when it quits. That is the fact the rest of this section is
+                    about.
+                </p>
+                <ul>
+                    <li>
+                        <strong>Closing the window</strong> keeps the agents working.
+                        Click Elyra Workspace in the Dock to bring it back.
+                    </li>
+                    <li>
+                        <code>&#8984;Q</code> asks first when an agent is working:
+                        <ul>
+                            <li>
+                                <strong>Quit when they finish:</strong> the window is
+                                hidden and Workspace quits by itself once no agent is
+                                working. If one needs your input meanwhile, you get a
+                                notification; coming back to the window calls the quit
+                                off. No new F&eacute;lagi tasks or automation runs start
+                                while it waits (missed runs are caught up at the next
+                                launch).
+                            </li>
+                            <li><strong>Quit now</strong> stops them.</li>
+                        </ul>
+                    </li>
+                </ul>
+                <p>
+                    <em>Quit when they finish</em> is the one for going home. The
+                    app quits behind you when the work is done, so you do not leave a
+                    window open all night for the sake of one agent.
+                </p>
+                <div class="callout">
+                    <strong>A closed window is not a stopped app, and a stopped app is
+                    not a paused agent.</strong> If Workspace is not running, nothing
+                    is working, and automations (chapter 12) do not start. Close the
+                    window if you want the agents to carry on; quit only when you mean
+                    it.
+                </div>
+
+                <h2 id="interrupted">When a turn was interrupted</h2>
+                <p>
+                    If Workspace quit while a turn was running, or crashed, the thread
+                    shows <em>The last turn was interrupted when the app quit</em> with
+                    <strong>Resume</strong> and <strong>Dismiss</strong>. At launch, a
+                    notification offers to continue every interrupted turn at once.
+                </p>
+                <p>
+                    A resumed turn does not start from the top. It first asks the
+                    agent to check what already happened, so that nothing is done
+                    twice. A half-finished rename is the case it is for: the agent
+                    looks at what the folder is like now before it continues.
+                </p>
+
+                <h2 id="away">While you were away</h2>
+                <p>
+                    Back at the window after ten minutes or more, a summary shows what
+                    the threads did meanwhile:
+                </p>
+                <ul>
+                    <li>what <strong>needs you</strong>: an approval, a question, a proposed rule or automation;</li>
+                    <li>what <strong>failed</strong>: the turn, the checks, a journey;</li>
+                    <li>what <strong>finished</strong>;</li>
+                    <li>what is <strong>still working</strong>;</li>
+                </ul>
+                <p>
+                    each with a line about it and what it cost. Click a row to open
+                    the thread. <strong>While you were away&hellip;</strong> in the
+                    command palette shows it again. This is the page you want in the
+                    morning: one list, sorted by whether it needs you, and the cost of
+                    the night in the same place.
+                </p>
+
+                <h2 id="phone">On your phone</h2>
+                <p>
+                    The summary is for when you are back. The phone is for when you are
+                    not. Turn on <strong>Settings &rarr; General &rarr; Phone</strong>
+                    to get a push through <a href="https://ntfy.sh">ntfy</a> when a
+                    thread needs you or finishes while Workspace is not the active
+                    app, for every thread, also those an automation or F&eacute;lagi
+                    started. Install the ntfy app and subscribe to the topic shown
+                    there; <strong>Send a test push</strong> checks it. It is off by
+                    default.
+                </p>
+                <ul>
+                    <li>
+                        An approval has <strong>Allow</strong>, <strong>Always</strong>
+                        and <strong>Deny</strong> buttons; a yes/no question
+                        <strong>Yes</strong> and <strong>No</strong>; a question with
+                        up to three options a button each. The answer goes straight to
+                        the agent.
+                    </li>
+                    <li>
+                        To answer in your own words, publish to the topic followed by
+                        <code>-reply</code> (in the ntfy app: subscribe to it too, and
+                        publish there). The text answers the open question, or goes to
+                        the last thread as a message.
+                    </li>
+                </ul>
+                <p>
+                    Freddy leaves a goal running and walks home. On the way a push
+                    says the agent has a question with two options; he taps one. A
+                    second says the thread finished, and because of chapter 9, that
+                    means the checks passed.
+                </p>
+                <div class="callout">
+                    <strong>Think about who can read the topic.</strong> Pushes and
+                    answers go through the ntfy server, so the Mac needs no incoming
+                    connection. They pass through that server, though: use your own
+                    for privacy. Anyone who knows the topic can read the pushes and
+                    answer them, so keep it private. Workspace makes it for you when
+                    you turn the feature on, as a long random name, and the ntfy
+                    server and topic are in <strong>Settings &rarr; General &rarr;
+                    Phone</strong>. And remember what a phone answer can do: <em>Allow</em>
+                    and <em>Always</em> on an approval card are the same decision they
+                    are at the desk (chapter 4).
+                </div>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> turn on Phone, press <strong>Send a test
+                    push</strong>, and then start a thread in <em>Ask for approval</em>
+                    mode with a task that needs a command. Switch to another app, and
+                    answer the approval from the phone. Then quit with <em>Quit when
+                    they finish</em> and see that the app goes away by itself.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>That agents run inside the app: closing the window keeps them going, quitting does not</li>
+                    <li>What Quit when they finish does, and what an interrupted turn offers when you come back</li>
+                    <li>That a resumed turn first checks what was already done</li>
+                    <li>What the while-you-were-away summary lists</li>
+                    <li>How to approve and answer from a phone, and why the topic should stay private</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-14.html">Chapter 14</a>
+                    you let agents steer other agents, and connect other tools to the workspace.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

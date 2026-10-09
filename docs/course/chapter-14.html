@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 14: Agents That Run Agents &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#the-gateway">What the gateway is</a>
+                <a href="#turning-it-on">Turning it on</a>
+                <a href="#tools">The tools</a>
+                <a href="#permissions">What an agent may do on its own</a>
+                <a href="#external-clients">Connecting Claude Desktop, Codex or Claude Code</a>
+                <a href="#audit-log">The audit log</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-13.html">&larr; 13. Leaving the Desk</a>
+                    <a href="chapter-15.html">15. Keeping It Healthy &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 14: Agents That Run Agents</h1>
+                <p class="lead">
+                    
+            Freddy has a migration that touches three areas of the app. He
+            could start three threads. He has begun to wonder whether the agent
+            could do that part too: split the job, start the threads, wait for
+            them and tell him what each one did. It can, and this chapter is
+            about doing it without losing control of it.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    You are the coordinator. You read the task, decide it has three
+                    parts, start three threads, remember which is which, come back to
+                    each, and collect the results. It is reasonable work, and it is
+                    mostly bookkeeping. The agent is often better placed to do it,
+                    because it has just read the code and knows where the seams are.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    Copying a plan into three message boxes, with the part-specific
+                    instructions edited by hand, and a note to yourself about which
+                    thread is waiting for which. And if you want another tool, say
+                    Claude Desktop, to look at what your threads are doing, there is
+                    nothing to point it at.
+                </p>
+
+                <h2 id="the-gateway">What the gateway is</h2>
+                <p>
+                    Elyra Workspace includes a small
+                    <a href="https://modelcontextprotocol.io">MCP</a> server. Through
+                    it, agents can work with Workspace's threads. One agent can split
+                    a job into parts, start a thread for each, wait for them and
+                    collect the results. Other apps such as Claude Desktop or Codex
+                    can also control Workspace.
+                </p>
+                <p>
+                    The server listens only on your own machine
+                    (<code>127.0.0.1</code>). Every caller needs a token, and every
+                    call is written to an audit log. The address is shown in
+                    <strong>Settings &rarr; Agents &amp; MCP</strong>.
+                </p>
+
+                <h2 id="turning-it-on">Turning it on</h2>
+                <p>
+                    Turn on <strong>Settings &rarr; Agents &amp; MCP &rarr; Let agents
+                    manage threads</strong>. Agents started afterwards get the tools as
+                    an MCP server named <code>elyra</code>. In Claude Code they appear
+                    as <code>mcp__elyra__&hellip;</code>.
+                </p>
+                <ul>
+                    <li>
+                        Supported by Claude Code, Codex, Elyra (0.9.46 or later) and ACP
+                        agents. Pi can use MCP servers through an extension with its own
+                        configuration, but does not get the gateway from Workspace yet.
+                    </li>
+                    <li>
+                        With Elyra 0.9.47 or later the gateway's tools are there from the
+                        first message of a thread. With 0.9.46 Elyra registers them in
+                        the background, so an agent may have to reach them through
+                        <code>mcp_search</code> and <code>mcp_call</code> first.
+                    </li>
+                    <li>
+                        Each agent gets its own token, which only lasts while Workspace
+                        is running.
+                    </li>
+                </ul>
+                <div class="callout">
+                    <strong>It is off by default, for a reason.</strong> Agents that
+                    start other agents can use a lot of tokens quickly. Turn it on when
+                    you have something worth splitting, and look at the cost lines
+                    (chapters 3 and 9) the first few times.
+                </div>
+
+                <p>An example prompt:</p>
+                <p>
+                    <em>&ldquo;Split the migration into three parts. For each, create a
+                    thread in this project with a worktree, then wait for all three and
+                    summarize what each did.&rdquo;</em>
+                </p>
+                <p>
+                    Chapter 7 is why the <em>with a worktree</em> is there: three
+                    threads editing one folder would collide.
+                </p>
+
+                <h2 id="tools">The tools</h2>
+                <p>
+                    You do not need to memorize them; the agent reads their
+                    descriptions. They fall in groups:
+                </p>
+                <table>
+                    <thead><tr><th>Group</th><th>Tools</th></tr></thead>
+                    <tbody>
+                        <tr><td>Look</td><td><code>list_projects</code>, <code>list_threads</code> (optionally for one project, including archived), <code>read_thread</code> (the most recent part of a conversation)</td></tr>
+                        <tr><td>Wait</td><td><code>wait_for_thread</code>: wait until a thread finishes its turn or needs input, then return its status and last reply (default 10 minutes, at most 1 hour)</td></tr>
+                        <tr><td>Start and steer</td><td><code>create_thread</code> (a first message; optionally provider, model, title and a new worktree), <code>send_message</code> (queued if the thread is busy), <code>interrupt_thread</code>, <code>set_thread_title</code>, <code>archive_thread</code></td></tr>
+                        <tr><td>Propose</td><td><code>propose_automation</code>: a card in the agent's own thread; created only if you accept it (chapter 12)</td></tr>
+                        <tr><td>Browser</td><td><code>browser_open</code>, <code>browser_snapshot</code>, <code>browser_query</code>, <code>browser_console</code>, <code>browser_network</code>, <code>browser_screenshot</code>, <code>browser_reload</code>, <code>browser_click</code>, <code>browser_fill</code>, <code>browser_press</code>, <code>browser_wait</code> and the journey tools <code>browser_save_journey</code>, <code>browser_run_journey</code>, <code>browser_list_journeys</code> (chapter 10)</td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    Projects can be named by id, name or path. A thread cannot wait
+                    for, interrupt or archive itself. The browser tools work on the
+                    caller's own thread; other clients pass a <code>thread_id</code>.
+                </p>
+
+                <h2 id="permissions">What an agent may do on its own</h2>
+                <ul>
+                    <li>
+                        Tool calls follow the thread's permission mode like any other
+                        tool. In <em>Ask for approval</em> mode you approve each one.
+                    </li>
+                    <li>
+                        An agent may read any thread, but the first time it messages,
+                        stops, renames or archives <em>another</em> thread, Workspace
+                        asks you: <strong>Don't allow</strong>, <strong>Allow once</strong>
+                        or <strong>Always allow</strong>. <em>Always</em> remembers that
+                        pair of threads; <strong>Settings &rarr; Agents &amp; MCP &rarr;
+                        Agents changing other threads</strong> shows how many are
+                        remembered and forgets them.
+                    </li>
+                    <li>
+                        Threads an agent started with <code>create_thread</code> are its
+                        own, so it is not asked about those.
+                    </li>
+                    <li>
+                        Paired clients such as Claude Desktop are not asked: pairing
+                        them was the permission.
+                    </li>
+                    <li>
+                        Browser actions in a page are asked about as chapter 10
+                        described, and the browser tools only open and read pages
+                        served from this Mac.
+                    </li>
+                </ul>
+
+                <h2 id="external-clients">Connecting Claude Desktop, Codex or Claude Code</h2>
+                <p>Under <strong>External clients</strong> in Settings:</p>
+                <ol>
+                    <li>
+                        Press <strong>Pair read-only client</strong> or <strong>Pair
+                        full-access client</strong>. Read-only clients can list, read and
+                        wait, but not change anything.
+                    </li>
+                    <li>
+                        Use the copy buttons on the new client: <strong>Copy Claude
+                        Desktop config</strong> (JSON for
+                        <code>claude_desktop_config.json</code>), <strong>Copy Codex
+                        config</strong> (a block for <code>~/.codex/config.toml</code>)
+                        or <strong>Copy Claude Code command</strong> (a
+                        <code>claude mcp add &hellip;</code> command to run in a
+                        terminal).
+                    </li>
+                    <li>Paste it, and restart the client if it needs that.</li>
+                </ol>
+                <p>
+                    Claude Desktop and Codex start Workspace's built-in bridge, which
+                    passes their requests to the running app. Elyra Workspace must be
+                    running for this to work. The server's port is kept between
+                    launches, so pasted configs keep working. <strong>Revoke</strong>
+                    (the trash icon) removes a client, and its token stops working at
+                    once; the list shows when each client was last used.
+                </p>
+                <p>
+                    Start with <em>Pair read-only client</em>. Reading a thread is what
+                    most outside tools need, and it cannot change anything.
+                </p>
+
+                <h2 id="audit-log">The audit log</h2>
+                <p>
+                    <strong>Activity</strong> in the same Settings page lists the latest
+                    calls, newest first: time, caller (a client's name, or <em>agent:
+                    thread title</em>), tool, arguments, and whether it succeeded.
+                    Workspace keeps the latest 5,000 entries. It is the place to look
+                    when a thread did something you did not expect, and the reason the
+                    gateway is acceptable to leave on: nothing an agent does through it
+                    is unrecorded.
+                </p>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> turn on <em>Let agents manage threads</em>.
+                    Start a new thread and ask it to create two threads with worktrees
+                    for two small tasks, wait for both, and summarize. Then open
+                    <strong>Activity</strong> and read the calls it made, in order.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>What the gateway is, where it listens and how it is guarded</li>
+                    <li>Which agents support it, and that Pi does not yet</li>
+                    <li>How an agent splits a job, and why it should ask for worktrees</li>
+                    <li>What an agent is asked about before it changes another thread, and what it is not asked about</li>
+                    <li>How to connect Claude Desktop, Codex or Claude Code, and why to start read-only</li>
+                    <li>How to read the audit log</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-15.html">Chapter 15</a>
+                    you set the app up for the long term: Settings, accounts, updates and how to go back a version, and what to do when something is wrong.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 7: Worktrees and the Parallel Fix &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#worktrees">New worktree</a>
+                <a href="#grove">A worktree with its own running app</a>
+                <a href="#best-of-n">Best of N</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-06.html">&larr; 6. Many Threads, One Project</a>
+                    <a href="chapter-08.html">8. Teaching the Project &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 7: Worktrees and the Parallel Fix</h1>
+                <p class="lead">
+                    
+            Freddy has three threads in one project and he has noticed the
+            problem he was warned about: two of them are editing the same file.
+            This chapter is the fix, and the thing you can build on it:
+            giving one task to several agents and keeping the best result.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    A Git repository has one working folder. Two agents working
+                    in it share the same files: one rewrites a function while the
+                    other is reading it, one runs the tests against half of the
+                    other's change, and the diff in the Changes tab is a mix of
+                    both. Parallel threads are only useful if they do not step on
+                    each other.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    <code>git worktree add</code> by hand, or a second clone. It
+                    works. You choose a folder, name a branch, install dependencies,
+                    remember to delete it, and merge it back. Most people do it for
+                    the big refactor and not for the small task, which is exactly
+                    when two small tasks collide.
+                </p>
+
+                <h2 id="worktrees">New worktree</h2>
+                <p>
+                    When you start a thread in a Git repository, you choose
+                    <strong>Local</strong> or <strong>New worktree</strong> (chapter
+                    2). With <strong>New worktree</strong>, Workspace creates a Git
+                    worktree for the thread under <code>~/.elyra/worktrees</code>, on
+                    a new branch. The thread, its terminal and its Changes tab all
+                    work there. The project folder itself is not touched, so several
+                    threads can work in parallel.
+                </p>
+                <ul>
+                    <li>
+                        <strong>The choice is made before the first message</strong>;
+                        it cannot be changed afterwards. Decide when you start the
+                        thread.
+                    </li>
+                    <li>
+                        <strong>File &rarr; Manage Worktrees&hellip;</strong> lists
+                        the worktrees Workspace created and their threads. Remove ones
+                        you no longer need (their branches are kept).
+                    </li>
+                    <li>
+                        When you delete a thread that has a worktree,
+                        <strong>Delete with worktree</strong> removes both.
+                    </li>
+                </ul>
+                <p>
+                    A good rule: a thread that only <em>reads</em> can be
+                    <strong>Local</strong>. A thread that <em>edits</em>, while
+                    something else might also be editing, gets its own worktree.
+                    And a worktree is the place for the permission mode from chapter
+                    3 that you would otherwise hesitate over: if the folder is a
+                    copy on its own branch, <em>Full access</em> has a much smaller
+                    blast radius.
+                </p>
+
+                <h2 id="grove">A worktree with its own running app</h2>
+                <p>
+                    There is a second problem a plain worktree does not solve. It
+                    is a copy of the files on a new branch, and nothing in it
+                    gives a web app its own data or its own address. Two threads
+                    testing a migration would still be testing it against whatever
+                    database the project is configured to use.
+                </p>
+                <p>
+                    When Elyra Grove runs the project as an app, Grove makes the
+                    worktree instead (<code>grove try --new</code>, under
+                    <code>~/.grove/try</code>): on the same new branch, but with its
+                    <strong>own copy of the database</strong>, migrated, and its
+                    <strong>own address</strong>, such as
+                    <code>shop--elyra-1a2b3c4d.test</code>. The thread says where it
+                    runs, and the address opens in the thread's browser. Each thread
+                    can change data and run migrations without touching yours.
+                </p>
+                <ul>
+                    <li>
+                        Removing such a worktree (deleting its thread with the
+                        worktree, or in Manage Worktrees) takes its site and database
+                        copy down with it; the branch stays.
+                    </li>
+                    <li>
+                        If Grove cannot start the branch, the thread gets a plain
+                        worktree and says why.
+                    </li>
+                    <li>
+                        Turn this off in <strong>Settings &rarr; Agents &amp; MCP
+                        &rarr; Grove runs worktrees</strong>.
+                    </li>
+                </ul>
+
+                <h2 id="best-of-n">Best of N</h2>
+                <p>
+                    Now that threads cannot collide, there is a thing you can do
+                    that is awkward without them: give one task to several agents at
+                    once and keep the best result. Open the command palette
+                    (<code>&#8984;K</code>), choose <strong>Best of N&hellip;</strong>,
+                    write the task, pick at least two agents and press
+                    <strong>Start</strong>. Each agent gets its own thread and its
+                    own Git worktree.
+                </p>
+                <p>
+                    The comparison opens in the middle of the window. For each
+                    candidate it shows its status, whether its checks and journeys
+                    passed (chapters 9 and 10), the files and lines it changed, its
+                    cost and its reply. <strong>Open</strong> shows the thread, with
+                    its diff in the Changes tab.
+                </p>
+                <p>
+                    Workspace <strong>recommends</strong> one of the finished
+                    candidates and says why: green checks and journeys first, then the
+                    smallest change, then the lowest cost. It is advice; you pick.
+                    When one is done and you like it best:
+                </p>
+                <ol>
+                    <li>
+                        <strong>Use this one</strong> commits the candidate's
+                        worktree and brings its changes into the project folder with
+                        <code>git merge --squash</code>. They are staged, not
+                        committed, so you can review them in Changes and commit them
+                        yourself. Uncommitted changes in the project that touch the
+                        same files may conflict.
+                    </li>
+                    <li>
+                        <strong>Delete the other N and their worktrees</strong> cleans
+                        up the rest.
+                    </li>
+                </ol>
+                <p>
+                    The candidates are ordinary threads, so you can also talk to them
+                    before you choose. <strong>Compare best of N</strong> in a
+                    candidate's thread menu reopens the comparison. With Grove, every
+                    candidate runs as its own app you can look at.
+                </p>
+                <div class="callout">
+                    <strong>It is a contest you pay for.</strong> Every candidate is
+                    a full run of an agent, so N candidates cost about N times one
+                    run, and the comparison shows each cost. Use it where the answer
+                    is not obvious and a wrong one is expensive: a design you would
+                    otherwise debate, or a bug the first agent could not fix. For a
+                    rename, one agent is the right number.
+                </div>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> pick a small, well-defined task. Start
+                    it as a best of N with two agents. Compare, read the
+                    recommendation's reason, and press <strong>Use this one</strong>
+                    on the one you prefer. Review the staged result in
+                    <strong>Changes</strong> before you commit anything.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>Why parallel threads need separate folders, and what New worktree does</li>
+                    <li>That the Local or worktree choice is made before the first message</li>
+                    <li>How Manage Worktrees and Delete with worktree keep the disk tidy</li>
+                    <li>How Grove gives each worktree its own database and address</li>
+                    <li>How best of N works, how the recommendation is ordered, and what Use this one really does</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-08.html">Chapter 8</a>
+                    you teach every thread what the project is: the Context tab, recaps, project instructions, MCP servers and skills.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

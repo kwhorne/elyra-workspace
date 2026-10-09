@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 6: Many Threads, One Project &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#projects">Projects</a>
+                <a href="#threads">Threads, and what the sidebar tells you</a>
+                <a href="#tabs">Tabs, and not getting lost</a>
+                <a href="#side-chats">Side chats: the question that would derail</a>
+                <a href="#fork-handoff-second-opinion">Fork, hand off, ask someone else</a>
+                <a href="#import-export">Bringing your history, and taking it out</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-05.html">&larr; 5. Changes, Commits and Pull Requests</a>
+                    <a href="chapter-07.html">7. Worktrees and the Parallel Fix &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 6: Many Threads, One Project</h1>
+                <p class="lead">
+                    
+            This is the chapter Freddy was promised in chapter 1. He starts his
+            three tasks in one project, and the sidebar answers the question he
+            could not answer from four terminal tabs: which of them is waiting
+            for him?
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    Three tasks in flight is not hard to start. It is hard to
+                    <em>keep track of</em>. Which one finished? Which one is
+                    waiting for an answer? Which one failed quietly while you were
+                    reading another? And then the smaller version of the same
+                    problem: a question that has nothing to do with the task, which
+                    you are afraid to ask in the thread because it will derail it.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    A terminal tab per task, named by hand, checked in rotation.
+                    For the stray question you open another tab and explain the
+                    context from scratch, or you ask in the main conversation and
+                    spend the next hour with an agent that is now thinking about
+                    something else.
+                </p>
+
+                <h2 id="projects">Projects</h2>
+                <p>
+                    A project is a folder on your disk. Add one with
+                    <code>&#8679;&#8984;O</code>, the folder button in the sidebar,
+                    or <strong>File &rarr; Add Project&hellip;</strong>. Projects are
+                    listed alphabetically, with pinned projects first. Right-click a
+                    project (or use its <strong>&hellip;</strong> button) to start a
+                    thread, rename it and give it an emoji and an accent color, pin
+                    it, reveal it in Finder, copy its path, point it at a different
+                    folder with <strong>Change folder&hellip;</strong> (its threads
+                    stay with it, but not while one of them is running), or remove it
+                    from Workspace. Removing a project does not touch your files.
+                </p>
+                <p>
+                    <strong>Spaces</strong> group projects, for example <em>Work</em>
+                    and <em>Personal</em>. Set a project's space in
+                    <strong>Rename and appearance&hellip;</strong>. Once at least one
+                    project has a space, chips appear at the top of the sidebar
+                    &mdash; <strong>All</strong> and one per space &mdash; and
+                    Workspace remembers your choice.
+                </p>
+                <p>
+                    And for questions that do not belong to a codebase,
+                    <code>&#8997;&#8984;N</code> starts a thread in a scratch folder,
+                    <code>~/.elyra/chats</code>, listed as the project
+                    <strong>Chats</strong>.
+                </p>
+
+                <h2 id="threads">Threads, and what the sidebar tells you</h2>
+                <p>Under each project the sidebar shows its active threads:</p>
+                <ul>
+                    <li><strong>Pinned</strong> threads at the top.</li>
+                    <li>
+                        A <strong>status</strong> icon: working (a spinner), needs
+                        your approval or input, failed, or interrupted. A dot marks a
+                        thread with a reply you have not seen yet.
+                    </li>
+                    <li>How long ago the thread was last active.</li>
+                    <li>
+                        Threads you marked as done are hidden behind <strong>Show N
+                        done</strong>.
+                    </li>
+                </ul>
+                <p>
+                    The Dock badge counts threads that need you or have unread
+                    replies. That is Freddy's answer: he glances at the sidebar, and
+                    the thread with the question mark is the one to open. A running
+                    agent is not stopped when you switch threads, and new threads
+                    get a title from your first message.
+                </p>
+                <p>Right-click a thread (or use its <strong>&hellip;</strong> button) for its menu:</p>
+                <table>
+                    <thead><tr><th>Item</th><th>What it does</th></tr></thead>
+                    <tbody>
+                        <tr><td>Rename&hellip;, Generate title</td><td>Give the thread a title, or let the agent write one from the conversation</td></tr>
+                        <tr><td>Pin / Unpin</td><td>Show it in the Pinned section</td></tr>
+                        <tr><td>Mark as done</td><td>Hide it under <em>Show N done</em>; if it was open, you move on to the next unfinished thread</td></tr>
+                        <tr><td>Mark as unread</td><td>Show the unread dot again</td></tr>
+                        <tr><td>Fork</td><td>Copy the thread into a new one that continues separately</td></tr>
+                        <tr><td>Continue with</td><td>Start the same task with another provider</td></tr>
+                        <tr><td>Second opinion from</td><td>Let another provider review the last turn's changes</td></tr>
+                        <tr><td>Export&hellip;</td><td>Save the thread as a ZIP file</td></tr>
+                        <tr><td>Open terminal here</td><td>Open the thread's terminal</td></tr>
+                        <tr><td>Archive</td><td>Remove it from the sidebar; restore it from <em>Archived (N)</em> at the bottom</td></tr>
+                        <tr><td>Delete&hellip;</td><td>Delete it for good; with its own worktree, you can remove that too</td></tr>
+                    </tbody>
+                </table>
+
+                <h2 id="tabs">Tabs, and not getting lost</h2>
+                <p>
+                    Open threads are tabs above the conversation, and Workspace
+                    restores them at the next launch. When they do not fit, scroll
+                    the tab bar sideways or pick one from the <strong>&#9662;</strong>
+                    menu at its end, which lists every open tab. When you work on
+                    several projects at once, the window shows where each thread
+                    belongs: the title bar reads <strong>project &mdash;
+                    thread</strong>, each tab starts with the project's icon or
+                    color, and a line above the conversation shows the project, the
+                    folder the agent works in, the branch, and a
+                    <strong>worktree</strong> badge when the thread has its own.
+                </p>
+                <table>
+                    <thead><tr><th>Shortcut</th><th>Action</th></tr></thead>
+                    <tbody>
+                        <tr><td><code>&#8984;1</code> &hellip; <code>&#8984;8</code></td><td>Go to that tab</td></tr>
+                        <tr><td><code>&#8984;9</code></td><td>Go to the last tab</td></tr>
+                        <tr><td><code>&#8679;&#8984;]</code> / <code>&#8679;&#8984;[</code></td><td>Next / previous tab</td></tr>
+                        <tr><td><code>&#8963;Tab</code></td><td>The thread you used most recently before this one</td></tr>
+                        <tr><td><code>&#8984;[</code> / <code>&#8984;]</code></td><td>Back / forward through the threads you visited</td></tr>
+                        <tr><td><code>&#8984;W</code></td><td>Close the tab (the thread keeps running)</td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    <strong>Split chat</strong> (<code>&#8984;\</code>) shows a second
+                    thread next to the active one &mdash; the one you used most
+                    recently, or else another open tab. The arrows button in its
+                    header swaps the two, and the <strong>&times;</strong> closes the
+                    split. Handy while you wait for one thread and want to read
+                    another.
+                </p>
+
+                <h2 id="side-chats">Side chats: the question that would derail</h2>
+                <p>
+                    A side chat (<code>&#8997;&#8984;S</code>) is a quick
+                    conversation that branches from the current thread. Use it to ask
+                    about something without derailing the main thread. It starts
+                    with the same agent, model and folder, and for Claude Code,
+                    Codex, Elyra and Pi it also starts from the main thread's
+                    conversation so far. It opens in the <strong>Side chat</strong>
+                    tab of the tools panel and is not listed in the sidebar. Its
+                    header has buttons to start another, to put the last reply in
+                    the thread's message box (to pass an answer on), to open it as an
+                    ordinary thread with its own tab, or to discard it. Side chats
+                    clean themselves up: at startup, Workspace removes ones that were
+                    never used, whose parent thread is gone, or that have been idle
+                    for a week.
+                </p>
+
+                <h2 id="fork-handoff-second-opinion">Fork, hand off, ask someone else</h2>
+                <ul>
+                    <li>
+                        <strong>Fork</strong> (<code>&#8679;&#8984;K</code>, or the
+                        thread menu) copies a thread into a new one, with its
+                        conversation. The two continue separately. With Claude Code,
+                        Codex, Elyra and Pi, the new thread branches the agent's own
+                        session, so the agent remembers everything; with other
+                        providers, the earlier conversation is sent along with your
+                        first message in the fork. Use it when you want to try a
+                        second approach without losing the first.
+                    </li>
+                    <li>
+                        <strong>Continue with</strong> starts a new thread with
+                        another provider, in the same project and folder (worktree
+                        included). The message box is filled with a summary of where
+                        the task stands: the recap from the Context tab if there is
+                        one, plus the latest messages. Review it, add instructions,
+                        and send. This is how you change agent mid-task, which chapter
+                        3 said you cannot do inside a thread.
+                    </li>
+                    <li>
+                        <strong>Second opinion from</strong> has another provider
+                        review what the thread's last turn changed. The docs put the
+                        reason plainly: agents catch each other's mistakes better
+                        than their own. The review runs as a side chat in plan mode,
+                        so it reads but does not change files. It gets your last
+                        message and the diff of the turn, and lists what it finds as
+                        <code>path:line</code> with what is wrong and how to fix it.
+                        <em>Put the last reply in the thread's composer</em> then
+                        hands the findings to the original agent, with a note to fix
+                        what it agrees with.
+                    </li>
+                </ul>
+
+                <h2 id="import-export">Bringing your history, and taking it out</h2>
+                <p>
+                    <code>&#8984;I</code> (or <strong>File &rarr; Import
+                    Sessions&hellip;</strong>) imports sessions you ran outside
+                    Workspace: your recent Claude Code sessions from
+                    <code>~/.claude/projects</code>, or your recent Codex threads
+                    (Workspace asks Codex for them, so Codex must be installed).
+                    Each session becomes a thread with its conversation, in the
+                    project for its folder (added if needed; sessions whose folder
+                    no longer exists go to <em>Chats</em>). The thread resumes the
+                    same session, so you just continue, and a session cannot be
+                    imported twice. Freddy imports last week's.
+                </p>
+                <p>
+                    <strong>Export&hellip;</strong> in the thread menu saves a ZIP
+                    with <code>transcript.md</code> (the conversation as readable
+                    Markdown), <code>transcript.json</code> (every item as data) and
+                    <code>thread.json</code> (the thread's settings and metadata).
+                </p>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> start three threads in one project and
+                    give each a small task. Pin the one you care about. While they
+                    work, press <code>&#8997;&#8984;S</code> in one of them and ask a
+                    side question. Then use <code>&#8963;Tab</code> to jump between
+                    the threads, and watch the sidebar change as each finishes.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>How the sidebar shows what each thread is doing, and what the Dock badge counts</li>
+                    <li>Tabs, the shortcuts for moving between them, and split chat</li>
+                    <li>What a side chat is for, and that it cleans itself up</li>
+                    <li>The difference between Fork, Continue with and Second opinion from</li>
+                    <li>How to import sessions you ran outside Workspace, and how to export a thread</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-07.html">Chapter 7</a>
+                    you give each thread its own copy of the project, so they can edit the same files at once, and let several agents race on one task.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

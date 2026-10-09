@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 1: Four Terminal Tabs and a Lot of Hope &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#what-workspace-is">What Workspace is</a>
+                <a href="#four-ideas">Four ideas, and then you know the product</a>
+                <a href="#the-window">The shape of the window</a>
+                <a href="#honest-limits">The limits, up front</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-02.html">2. The First Launch &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 1: Four Terminal Tabs and a Lot of Hope</h1>
+                <p class="lead">
+                    
+            Freddy has a notes app and three jobs for it: fix a bug in
+            the export, add a search box, and write the tests nobody wrote.
+            He has started all three, in three terminal tabs, and he can no
+            longer say which one is waiting for him.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    A coding agent in a terminal is a good tool for one task. The
+                    trouble starts at the second. The first agent is halfway
+                    through a refactor in the project folder, so the second one
+                    either waits or edits the same files. The third tab is the dev
+                    server. A fourth holds <code>git status</code>, which you run
+                    more often than you would admit, because the honest answer to
+                    &ldquo;what did it just change?&rdquo; is somewhere above the
+                    scrollback.
+                </p>
+                <p>
+                    And then one of them asks a question. It does so politely, in
+                    plain text, and stops. Nothing in the other tabs tells you.
+                    The cost is not the agent's time; agents are patient. The cost
+                    is yours: every task is a thing you have to remember to go
+                    back and look at.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    People solve this in the same few ways, and each one works for
+                    a while:
+                </p>
+                <ul>
+                    <li>
+                        <strong>Tab discipline.</strong> Name the tabs, keep one
+                        per task. It holds until the fifth task, and it does
+                        nothing about the agent that is waiting.
+                    </li>
+                    <li>
+                        <strong>Several clones of the repository.</strong> One
+                        copy per task, so agents cannot collide. It does work,
+                        and it costs a folder, a branch and a dependency install
+                        every time, and you merge them by hand.
+                    </li>
+                    <li>
+                        <strong>An editor with an agent panel.</strong> You get a
+                        window, and the agent comes with it &mdash; one agent,
+                        one way of talking to it, and the editor's idea of what a
+                        task is.
+                    </li>
+                </ul>
+                <p>
+                    What all three have in common is that the <em>task</em> is
+                    not a thing the computer knows about. It is a tab, a folder
+                    or a habit.
+                </p>
+
+                <h2 id="what-workspace-is">What Workspace is</h2>
+                <p>
+                    Elyra Workspace is a desktop app for working with coding
+                    agents. You add your project folders, start a thread for each
+                    task, and talk to an agent such as Claude Code. The changes
+                    it makes, Git, a terminal and your files are in the same
+                    window. Everything runs on your Mac: conversations are stored
+                    in a local database, and the agents run as the command-line
+                    tools you already have installed.
+                </p>
+                <p>
+                    That last sentence matters, so read it twice. Workspace is not
+                    an agent. It does not ship one and it does not replace the
+                    one you use. It runs the agents you already installed &mdash;
+                    Claude Code, Codex, Elyra, Pi, and other agents that speak
+                    ACP &mdash; and puts a window around them.
+                </p>
+
+                <h2 id="four-ideas">Four ideas, and then you know the product</h2>
+                <p>
+                    Almost everything in the next fourteen chapters hangs on four
+                    words, so here they are once, plainly:
+                </p>
+                <ul>
+                    <li>
+                        <strong>Project.</strong> A folder on your disk, usually a
+                        Git repository. Freddy's is <code>freddy-notes</code>.
+                    </li>
+                    <li>
+                        <strong>Thread.</strong> One task. It has its own
+                        conversation, agent session, model and settings, and it
+                        works either in the project folder itself or in its own
+                        Git worktree. &ldquo;Fix the export bug&rdquo; is a thread.
+                    </li>
+                    <li>
+                        <strong>Provider.</strong> The coding agent that runs the
+                        thread, such as Claude Code. Each thread uses one provider.
+                        You can fork a thread or hand it off to another provider.
+                    </li>
+                    <li>
+                        <strong>Turn.</strong> One message from you and the
+                        agent's work until it stops. Before every turn, Elyra
+                        saves a checkpoint of your files so you can go back. If
+                        the project has a check command, the turn is only done
+                        when it passes.
+                    </li>
+                </ul>
+                <p>
+                    The last of those is the one to underline. A turn is the unit
+                    that Workspace protects: it snapshots before it, and can
+                    judge after it. Chapters 4 and 9 are about those two halves.
+                </p>
+
+                <h2 id="the-window">The shape of the window</h2>
+                <p>
+                    The window has three parts, and you will learn to find things
+                    by which part they live in:
+                </p>
+                <ul>
+                    <li>
+                        The <strong>sidebar</strong> (<code>&#8984;B</code>):
+                        projects and their threads, pinned threads, and buttons
+                        for the task board, automations, code review, a new chat
+                        and adding a project.
+                    </li>
+                    <li>
+                        The <strong>center</strong>: the open threads as tabs. The
+                        task board, automations, the review inbox and usage
+                        statistics open here as well.
+                    </li>
+                    <li>
+                        The <strong>tools panel</strong> (<code>&#8997;&#8984;B</code>):
+                        tools for the active thread &mdash; Changes, PR, Files,
+                        Browser, Context, Terminal and Side chat.
+                    </li>
+                </ul>
+
+                <h2 id="honest-limits">The limits, up front</h2>
+                <ul>
+                    <li>
+                        <strong>Apple Silicon Macs only.</strong> A Mac with M1 or
+                        later, macOS 12 or later. Intel Macs are not supported.
+                    </li>
+                    <li>
+                        <strong>You bring the agents.</strong> At least one has to
+                        be installed and signed in, or there is nothing to talk to.
+                    </li>
+                    <li>
+                        <strong>One thread, one provider.</strong> Mixing agents
+                        happens between threads, by forking or handing off, not
+                        inside one turn.
+                    </li>
+                </ul>
+                <div class="callout">
+                    <strong>One honest note before we start.</strong> Workspace does
+                    not make an agent smarter. It makes the agent's work visible,
+                    parallel, checkable and safe to leave. The agent is still the
+                    agent you installed, with its own strengths and its own bills,
+                    and this course says so wherever it matters.
+                </div>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> before you install anything, write
+                    down the three tasks you would start tomorrow. In chapter 6 you
+                    will start all three, in one window, and know the state of each
+                    at a glance.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>Why a tab, a folder or a habit is a poor way to represent a task</li>
+                    <li>That Workspace runs the agents you already have, and is not an agent itself</li>
+                    <li>The four ideas everything else hangs on: project, thread, provider, turn</li>
+                    <li>The three parts of the window: sidebar, center, tools panel</li>
+                    <li>The limits: Apple Silicon only, and you bring the agents</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-02.html">Chapter 2</a>
+                    you install the app, launch it for the first time, and start a thread.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

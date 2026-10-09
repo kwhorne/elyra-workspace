@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 9: Done Means Green &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#goal">Goals</a>
+                <a href="#budget">Budget</a>
+                <a href="#checks">Checks after each turn</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-08.html">&larr; 8. Teaching the Project</a>
+                    <a href="chapter-10.html">10. The Browser, and Agents That Try What They Built &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 9: Done Means Green</h1>
+                <p class="lead">
+                    
+            Freddy asked an agent to add the search box. It replied that it was
+            done, and the build was red. He has had that reply before. This chapter
+            is how he stops taking it on trust: a goal that says what finished
+            means, a check that proves it, and a limit on what it may cost to try.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    &ldquo;Done&rdquo; is the agent's claim, and agents are
+                    optimistic. They stop when they believe the task is complete,
+                    which is not when it is. The other failure is the opposite: a big
+                    task that needs ten steps, where you sit and say &ldquo;continue&rdquo;
+                    ten times.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    Read the code, run the tests yourself, paste the failures back,
+                    repeat. It works, and you are the check command. For the long
+                    task, you are also the loop. And nothing in between stops an
+                    agent that has been given a hard problem from spending an
+                    afternoon of your budget on it.
+                </p>
+
+                <h2 id="goal">Goals</h2>
+                <p>
+                    A goal keeps the agent working, turn after turn, until a larger
+                    objective is reached. For example: <em>All tests pass and the
+                    checkout flow handles discounts.</em>
+                </p>
+                <ol>
+                    <li>
+                        Write the goal in the Context tab and press <strong>Start
+                        goal</strong>. The agent gets the goal as its next message,
+                        with instructions to take one concrete step at a time and
+                        verify it.
+                    </li>
+                    <li>
+                        After each turn, Workspace sends it on automatically, until
+                        one of three things happens:
+                        <ul>
+                            <li>the agent ends a reply with <strong>GOAL ACHIEVED</strong>: the goal is <em>Achieved</em>;</li>
+                            <li>
+                                the agent ends a reply with <strong>GOAL BLOCKED</strong>
+                                because it needs you, or a turn fails: the goal is
+                                <em>Paused</em>;
+                            </li>
+                            <li>
+                                the turn budget runs out (10 automatic turns by
+                                default, set in <strong>Settings &rarr; Agents &amp;
+                                MCP</strong>): the goal stops.
+                            </li>
+                        </ul>
+                        You get a notification in each case.
+                    </li>
+                    <li>
+                        <strong>Pause</strong> stops after the current turn.
+                        <strong>Resume</strong> continues with a fresh budget.
+                        <strong>Clear</strong> removes the goal.
+                    </li>
+                </ol>
+                <p>
+                    Messages you queue yourself are sent before the goal continues.
+                    And while a goal is active, permission requests still stop and
+                    wait for you, so choose the permission mode with that in mind. A
+                    goal in <em>Ask for approval</em> mode is a goal that will pause
+                    at every edit.
+                </p>
+
+                <h2 id="budget">Budget</h2>
+                <p>
+                    A spending limit for the thread, in US dollars. The
+                    <strong>Budget</strong> section shows what the thread has cost so
+                    far, with a bar when a limit is set. Type an amount and press
+                    <strong>Set</strong> (or <code>Enter</code>); <strong>Remove</strong>
+                    takes the limit away.
+                </p>
+                <ul>
+                    <li>At 80% of the limit, Workspace notes it in the conversation.</li>
+                    <li>
+                        At the limit, a running goal pauses and asks you, and a goal
+                        cannot be started or resumed until you raise the limit.
+                        Messages you send yourself still go.
+                    </li>
+                </ul>
+                <div class="callout">
+                    <strong>A limit that does nothing for some agents.</strong> Costs
+                    are the ones the agent reports with each turn. Claude Code reports
+                    them; agents that do not report costs count as free, so a limit
+                    has no effect on them. If you rely on a budget, check that the
+                    agent in the thread reports a cost at all.
+                </div>
+
+                <h2 id="checks">Checks after each turn</h2>
+                <p>
+                    <em>Done means green.</em> Give the project a check command: tests,
+                    lint, or both, such as <code>cargo test</code> or
+                    <code>vendor/bin/pint --test &amp;&amp; php artisan test</code>.
+                    Workspace suggests one from the project's files;
+                    <strong>Use &hellip;</strong> fills it in, and <strong>Run
+                    now</strong> tries it. Freddy's is <code>npm test</code>.
+                </p>
+                <ul>
+                    <li>
+                        <strong>After every turn that changed files</strong> (whether
+                        a turn changed files is judged against the snapshot taken
+                        before your message reached the agent, so a quick agent cannot
+                        slip a change past the checks), the command runs in the
+                        thread's folder, with your login shell and <code>CI=1</code>. A
+                        turn that changed nothing is not checked.
+                    </li>
+                    <li>
+                        The thread stays busy while the checks run. <strong>Checks
+                        passed</strong> or <strong>Checks failed</strong> appears in
+                        the conversation; click it for the output.
+                    </li>
+                    <li>
+                        <strong>When they fail</strong>, the end of the output goes
+                        back to the agent to fix (<em>Sent the failures to the
+                        agent</em>), and the checks run again. After <strong>Settings
+                        &rarr; Agents &amp; MCP &rarr; Automatic fixes when checks
+                        fail</strong> (2 by default) the thread stops, marked failed,
+                        and you are told. <code>0</code> only reports the failure. No
+                        automatic fix is sent when you have queued a message or the
+                        budget is used up.
+                    </li>
+                    <li>
+                        <strong>A stronger fix.</strong> When a first automatic fix
+                        did not make them pass, the next one gets the agent's
+                        <strong>Escalation model</strong> (Settings &rarr; Providers,
+                        for example <code>opus</code>) and its highest effort; the
+                        thread goes back to its own model afterwards. With no
+                        escalation model set, only the effort goes up.
+                    </li>
+                    <li><strong>Stop</strong> stops the checks too. A check is stopped after 20 minutes.</li>
+                    <li>
+                        Notifications, F&eacute;lagi reports and
+                        <code>wait_for_thread</code> wait for the checks, so
+                        <em>finished</em> means the checks passed.
+                    </li>
+                </ul>
+                <p>
+                    The command applies to every thread in the project. Leave it
+                    empty to turn checks off.
+                </p>
+                <p>
+                    Read the escalation setting as a way to spend money where it
+                    helps: a cheaper model for the easy turns, and the strong one
+                    only when the first fix did not work. And notice what the last
+                    bullet gives you in practice. Freddy can start a goal, leave, and
+                    the notification that says a thread finished means the tests
+                    passed, not that the agent stopped typing.
+                </p>
+                <div class="callout">
+                    <strong>A check is only as good as its command.</strong> If
+                    <code>npm test</code> covers nothing in the code the agent
+                    changed, green means nothing. Checks do not replace review
+                    (chapter 5); they make sure the review starts at something that
+                    runs.
+                </div>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> set a check command for a project and
+                    <strong>Run now</strong>. Then give a thread a small task that
+                    you know will break a test, and watch <strong>Checks failed</strong>
+                    go back to the agent. Set a budget of a few dollars while you
+                    are there.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>How a goal keeps an agent going, and the three ways it ends</li>
+                    <li>That permission requests still wait for you while a goal runs</li>
+                    <li>How a budget works, and that it has no effect on agents that do not report costs</li>
+                    <li>How the check command runs after each turn, and what happens when it fails</li>
+                    <li>How the stronger second fix uses the escalation model</li>
+                    <li>Why a finished notification means the checks passed</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-10.html">Chapter 10</a>
+                    you give the agent a browser: what it can see, what it can click, and how a flow it tried becomes a journey that is replayed like a test.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>

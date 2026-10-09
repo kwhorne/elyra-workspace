@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Chapter 12: Work That Starts Itself &mdash; Elyra Workspace</title>
+    </head>
+    <body>
+        <nav class="topnav">
+            <div class="topnav__inner">
+                <a href="index.html" class="topnav__logo">Elyra Workspace</a>
+            </div>
+        </nav>
+        <div class="layout">
+            <aside class="sidebar">
+                <a href="#the-problem">The problem</a>
+                <a href="#the-hard-way">The hard way</a>
+                <a href="#automations">Automations</a>
+                <a href="#task-board">The task board</a>
+                <a href="#felagi">If your tasks live in F&eacute;lagi</a>
+                <a href="#what-you-learned">What you learned</a>
+                <div class="sidebar__group">
+                    <div class="sidebar__group-label">Course</div>
+                    <a href="index.html">Overview</a>
+                    <a href="chapter-11.html">&larr; 11. Files, Search and the Terminal</a>
+                    <a href="chapter-13.html">13. Leaving the Desk &rarr;</a>
+                </div>
+            </aside>
+            <main class="main">
+                <h1>Chapter 12: Work That Starts Itself</h1>
+                <p class="lead">
+                    
+            Freddy has three jobs he does every week, by hand, with an agent:
+            check the dependencies, run the full test suite and read the failures,
+            and summarize what changed. He is the schedule. This chapter is how
+            he stops being the schedule, and how a list of things to do turns into
+            threads without him typing the same sentence twice.
+        
+                </p>
+
+
+                <h2 id="the-problem">The problem</h2>
+                <p>
+                    The most useful tasks for an agent are often the most boring
+                    ones: recurring, well defined, and easy to forget. They do not
+                    need you to think; they need you to remember. And the tasks that
+                    do need thinking pile up in a list somewhere else, and starting
+                    each one means typing the title into a thread.
+                </p>
+
+                <h2 id="the-hard-way">The hard way</h2>
+                <p>
+                    A calendar reminder that says &ldquo;run the agent on Friday,&rdquo;
+                    a shell script in <code>cron</code> that starts a command-line
+                    agent, and a to-do list in a text file that you copy from. The cron
+                    job runs without any of the structure you spent chapters 4 to 9
+                    building: no thread to look at afterwards, no approvals, no
+                    checks, no history of which run did what.
+                </p>
+
+                <h2 id="automations">Automations</h2>
+                <p>
+                    An automation sends a prompt to an agent on a schedule: nightly
+                    test runs, dependency updates, a weekly summary of open issues.
+                    Open <strong>Automations</strong> with <code>&#8997;&#8984;A</code>
+                    or the calendar button at the top of the sidebar.
+                </p>
+                <div class="callout">
+                    <strong>Automations run while Elyra Workspace is open.</strong> A
+                    run that was due while the app was closed starts shortly after you
+                    open it again. It is not a server. If you need something to run
+                    at three in the morning, the app has to be running at three in the
+                    morning.
+                </div>
+
+                <h3 id="creating">Creating one</h3>
+                <p>
+                    <strong>An agent can propose one.</strong> Ask in a thread, for
+                    example <em>&ldquo;check our dependencies every weekday
+                    night&rdquo;</em>: with the agent gateway on, the agent proposes an
+                    automation, and a card in the thread shows its name, schedule and
+                    next run, the agent, project and permission mode, and the prompt.
+                    <strong>Create</strong> schedules it as it is,
+                    <strong>Edit&hellip;</strong> opens it in the editor first (saving
+                    creates it), and <strong>Dismiss</strong> drops it. Nothing runs
+                    unless you accept.
+                </p>
+                <p>Or by hand: press <strong>New</strong> and fill in:</p>
+                <table>
+                    <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+                    <tbody>
+                        <tr><td>Name</td><td>Shown in the list, and as the title of each run's thread</td></tr>
+                        <tr><td>Prompt</td><td>What the agent should do each time</td></tr>
+                        <tr><td>Project</td><td>Where it runs</td></tr>
+                        <tr><td>Agent</td><td>Which provider runs it</td></tr>
+                        <tr><td>Permissions</td><td>The permission mode for its threads. Nobody may be around to approve, so <em>Accept edits</em> or <em>Full access</em> is usual.</td></tr>
+                        <tr><td>Schedule</td><td>See below</td></tr>
+                        <tr><td>Each run</td><td><strong>New thread</strong> for every run, or <strong>Same thread</strong> to continue one conversation</td></tr>
+                        <tr><td>If a run fails</td><td><strong>Pause</strong> the automation, <strong>Keep going</strong>, or <strong>Retry once</strong> right away</td></tr>
+                        <tr><td>Stop when the reply contains</td><td>Optional. When the agent's reply contains this text, the automation switches itself off. Example: ask the agent to reply <em>ALL GREEN</em> when done, and stop on that.</td></tr>
+                        <tr><td>Max runs</td><td>Optional. Switch off after this many runs.</td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    The permissions row is the one to think about. Unattended means
+                    no one to press <strong>Allow</strong>, so <em>Ask for approval</em>
+                    would stall at the first edit. That is why you want the automation
+                    to run in a project where an unattended edit is safe. Review what
+                    it did in the thread afterwards, in the Changes tab (chapter 5).
+                </p>
+
+                <h3 id="schedules">Schedules</h3>
+                <table>
+                    <thead><tr><th>Schedule</th><th>Example</th></tr></thead>
+                    <tbody>
+                        <tr><td>Daily</td><td>every day at 09:00</td></tr>
+                        <tr><td>Weekdays</td><td>Monday to Friday at 07:30</td></tr>
+                        <tr><td>Weekly</td><td>Fridays at 16:00</td></tr>
+                        <tr><td>Every N minutes</td><td>every 30 minutes</td></tr>
+                        <tr><td>Once</td><td>2026-12-24 08:00</td></tr>
+                        <tr><td>Cron</td><td><code>0 9 * * 1-5</code>: standard five fields (minute, hour, day of month, month, day of week; 0 or 7 = Sunday)</td></tr>
+                    </tbody>
+                </table>
+                <p>
+                    Times are in your Mac's time zone, which is saved with the
+                    automation, so daylight-saving changes are handled.
+                </p>
+
+                <h3 id="running">Running and history</h3>
+                <ul>
+                    <li>
+                        The switch on each row turns an automation on or off. Turning
+                        it on schedules the next run from now. <strong>Run now</strong>
+                        runs it immediately without changing the schedule.
+                    </li>
+                    <li>
+                        Select an automation to see its prompt, its rules and its
+                        <strong>run history</strong>: when each run started, how long it
+                        took, and its result &mdash; <em>Succeeded</em>,
+                        <em>Failed</em>, <em>Stopped</em> (the stop phrase appeared) or
+                        <em>Skipped</em> (the previous run or the thread was still
+                        busy).
+                    </li>
+                    <li>
+                        <strong>Open thread</strong> opens the thread where a run
+                        happened. If a run waits for an approval, its history entry
+                        says so.
+                    </li>
+                </ul>
+                <p>
+                    Freddy's three jobs become three automations. The dependency check
+                    runs on weekdays at 07:30, in a new thread each time, with
+                    <em>Accept edits</em>. Because each run is an ordinary thread, the
+                    result is waiting in the sidebar like anything else he started.
+                </p>
+
+                <h2 id="task-board">The task board</h2>
+                <p>
+                    The task board (<code>&#8997;&#8984;T</code>, or the board button in
+                    the sidebar) is a simple Kanban board with three columns:
+                    <strong>Draft</strong>, <strong>In progress</strong> and
+                    <strong>Done</strong>.
+                </p>
+                <ul>
+                    <li>
+                        Type in <strong>Add a task&hellip;</strong> at the top of
+                        <em>Draft</em> and press <code>Enter</code>. The task belongs to
+                        the project selected in the top-right menu, or the first project
+                        when <em>All projects</em> is selected.
+                    </li>
+                    <li>
+                        <strong>Start</strong> hands a task to an agent. Workspace
+                        creates a thread in the task's project, named after the task,
+                        and sends the title and notes as the first message. The card
+                        moves to <em>In progress</em>. Dragging a draft card to
+                        <em>In progress</em> starts it the same way.
+                    </li>
+                    <li>
+                        Once a card has a thread, it shows the thread's state:
+                        <em>Working</em>, <em>Needs you</em>, <em>Replied</em>,
+                        <em>Failed</em> and so on. <strong>Open</strong> jumps to the
+                        thread. When you mark the thread as done or archive it, the
+                        card moves to <em>Done</em> automatically.
+                    </li>
+                    <li>
+                        The <strong>&#8943;</strong> menu on a card: <strong>Edit&hellip;</strong>
+                        (title and notes), <strong>Move to&hellip;</strong>,
+                        <strong>Delete</strong>. The menu in the top-right corner filters
+                        the board by project.
+                    </li>
+                </ul>
+
+                <h2 id="felagi">If your tasks live in F&eacute;lagi</h2>
+                <p>
+                    <a href="/felagi">Elyra F&eacute;lagi</a> is a project portal with
+                    issues, time tracking and agents. If you use it, Workspace connects:
+                    the task board gets a <strong>F&eacute;lagi</strong> tab next to
+                    <strong>Local</strong>, with the issues assigned to you in the
+                    columns <em>To do</em>, <em>In progress</em>, <em>In review</em> and
+                    <em>Done</em>, each with its identifier (such as <code>ACM-231</code>),
+                    priority, and time spent against its estimate. If you do not use
+                    it, skip this section; nothing else in the course depends on it.
+                </p>
+                <ul>
+                    <li>
+                        <strong>Connect.</strong> In F&eacute;lagi, make a personal token
+                        under <strong>Settings &rarr; API tokens</strong>, with <em>Read
+                        and write</em> so work can be reported back. In Workspace, open
+                        <strong>Settings &rarr; F&eacute;lagi &rarr; Connect&hellip;</strong>,
+                        give F&eacute;lagi's address and the token, and press
+                        <strong>Connect</strong>. The token is kept in the macOS
+                        Keychain, not in Workspace's own database.
+                    </li>
+                    <li>
+                        <strong>Start an issue.</strong> <strong>Start</strong> on a
+                        card opens a thread named after the issue and sends the
+                        issue's text and acceptance criteria as the first message. The
+                        issue moves to <em>In progress</em> and F&eacute;lagi's timer
+                        starts on it. A banner above the message box shows the issue, its
+                        status and, while it runs, the timer.
+                    </li>
+                    <li>
+                        <strong>Report back.</strong> <strong>Report&hellip;</strong> on
+                        the banner writes back: a comment the thread's agent drafts from
+                        the conversation and the uncommitted changes (edit it as you
+                        like), a status (suggested as <em>In review</em>), the time to
+                        log (from F&eacute;lagi's timer), and the latest before and
+                        after pictures of the page (chapter 10), which you can untick.
+                        <strong>Send to F&eacute;lagi</strong> logs the hours, posts the
+                        comment and sets the status. A read-only token can show issues
+                        but not report.
+                    </li>
+                    <li>
+                        <strong>Today's work</strong> in the command palette shows the
+                        day at a glance: the F&eacute;lagi issues you worked on, with the
+                        agents' time in their threads against the hours you have logged,
+                        and <strong>Log</strong> for what is left; other threads you
+                        worked in; and today's commits by you. <strong>Copy
+                        summary</strong> puts it on the clipboard, ready for a standup.
+                    </li>
+                </ul>
+                <p>
+                    There is also a way for Workspace to be F&eacute;lagi's runtime, so
+                    that work F&eacute;lagi gives one of its agents runs as a thread on
+                    your Mac, where you can watch it, answer its questions and step in.
+                    That is set up under <strong>Settings &rarr; F&eacute;lagi &rarr;
+                    Run F&eacute;lagi's agents on this Mac</strong>, is off by default,
+                    and is described in the
+                    <a href="../automations-and-tasks.html">docs</a>.
+                    Know this before you turn it on: what the agent does in those
+                    runs, its replies, tool calls and your own messages, is sent to
+                    F&eacute;lagi as it happens.
+                </p>
+                <div class="callout callout--success">
+                    <strong>Try it:</strong> create an automation that runs your check
+                    command once, in <em>Accept edits</em>, and press <strong>Run
+                    now</strong>. Then open its thread from the history. When that
+                    works, ask an agent in a thread to propose a weekday one and look
+                    at the card before you press <strong>Create</strong>.
+                </div>
+
+                <h2 id="what-you-learned">What you learned</h2>
+                <ul>
+                    <li>How an automation is defined, and why its permission mode is the setting to think about</li>
+                    <li>That automations run while the app is open, and what happens to a run that was due while it was closed</li>
+                    <li>How to read the run history, and the stop phrase</li>
+                    <li>How the task board turns a card into a thread, and how the card follows it</li>
+                    <li>What the Félagi integration adds, and that none of it is needed to use the rest of the course</li>
+                </ul>
+
+                <div class="callout callout--success">
+                    <strong>Next:</strong> in
+                    <a href="chapter-13.html">Chapter 13</a>
+                    you leave the desk: closing the lid, picking up where you left off, and answering from your phone.
+                </div>
+            </main>
+        </div>
+    </body>
+</html>
