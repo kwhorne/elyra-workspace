@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.3.0
+
+Agents understand the code they work in: every agent can look up where a symbol
+is defined and who calls it, and why a line exists, back to the thread and the
+message that had an agent write it.
 
 - **Where code came from.** Every turn now records the lines it added, so a line
   leads back to the thread and the message that had an agent write it, for every
