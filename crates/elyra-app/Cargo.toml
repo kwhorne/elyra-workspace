@@ -15,6 +15,7 @@ elyra-provider.workspace = true
 elyra-git.workspace = true
 elyra-terminal.workspace = true
 elyra-mcp.workspace = true
+elyra-index.workspace = true
 uuid.workspace = true
 zip.workspace = true
 gpui-kit.workspace = true

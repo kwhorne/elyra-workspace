@@ -13,6 +13,9 @@ token, and every call is written to an audit log. The address is shown in
 
 | Tool | What it does | Read-only clients |
 | --- | --- | --- |
+| `symbols` | Where a function, method, class or type is defined and who calls it, from a tree-sitter index of the project (Rust, TypeScript, JavaScript, Python, Go, PHP, C); in the agent's own folder, or a named project or thread | ✓ |
+| `why` | Why a line is there: the thread and message that had an agent write it, when, and what the agent said afterwards, plus git blame | ✓ |
+| `history` | The turns that wrote a file or a symbol (thread, message, agent, date), newest first, plus the file's git log | ✓ |
 | `list_projects` | Projects with id, name and path | ✓ |
 | `list_threads` | Threads with status, optionally for one project and including archived ones | ✓ |
 | `read_thread` | The conversation of a thread (most recent part) | ✓ |
@@ -40,6 +43,20 @@ token, and every call is written to an audit log. The address is shown in
 
 Projects can be named by id, name or path. A thread can't wait for, interrupt or
 archive itself.
+
+`why` and `history` work from what Elyra Workspace records after every turn:
+the lines the turn added, with its thread and message. That covers every agent,
+also when it committed on its own; lines written by hand or before the record
+started have git's blame and log only. The record stays on this Mac (in Elyra
+Workspace's database), nothing is added to commits.
+
+`symbols` gives every agent (Claude Code, Codex, Elyra, Pi, ACP agents) a
+tree-sitter index of the project: definitions with their signatures and
+references with the function they're in, as `file:line`, so an agent reads only
+the lines it needs instead of grepping. The index is built the first time
+(about three seconds for a few thousand files), follows `.gitignore`, is
+refreshed incrementally afterwards, and is kept in `~/.elyra/index`, not in the
+project.
 
 The browser tools work on the caller's own thread; other clients pass
 `thread_id`. They only open and read pages served from this Mac (`localhost`,

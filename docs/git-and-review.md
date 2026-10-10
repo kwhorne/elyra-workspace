@@ -40,7 +40,9 @@ diff.
 - Very large diffs are cut off with a notice. Binary files are only listed.
 
 Click a line in a diff to see **who last changed it** (Git blame: commit, author,
-date and message). Lines that aren't committed yet have no blame. You can also write a comment about the line and press **Add to
+date and message). Lines that aren't committed yet have no blame. When an agent in Elyra
+Workspace wrote the line, a second line says which thread (*Written by the agent in
+“Fix totals” · Claude Code · 2026-10-09 14:02*); click it to open the thread. You can also write a comment about the line and press **Add to
 chat**. The comment and the line's location are added to the thread's message
 box, so you can collect several and send them to the agent together.
 

@@ -73,6 +73,9 @@ pub struct ChangesView {
     comment_input: Entity<InputState>,
     selected_line: Option<SelectedLine>,
     blame: Option<String>,
+    /// The turn that wrote the selected line (when an agent did): a line
+    /// about it and its thread.
+    origin: Option<(String, elyra_core::ThreadId)>,
     diff_scroll: ScrollHandle,
     change_rows: Vec<usize>,
     change_cursor: usize,
@@ -147,6 +150,7 @@ impl ChangesView {
             comment_input,
             selected_line: None,
             blame: None,
+            origin: None,
             diff_scroll: ScrollHandle::new(),
             change_rows: Vec::new(),
             change_cursor: 0,
@@ -278,6 +282,7 @@ impl ChangesView {
         self.selected = Some(selected);
         self.selected_line = None;
         self.blame = None;
+        self.origin = None;
         self.load_diff(cx);
     }
 
@@ -689,6 +694,24 @@ impl ChangesView {
 
     // ---- line comments and blame ----------------------------------------------
 
+    /// The turn that wrote a line with this content in the selected file.
+    fn line_origin(&self, text: &str, cx: &App) -> Option<(String, elyra_core::ThreadId)> {
+        let hash = elyra_core::line_hash(text)?;
+        let app = self.session.as_ref()?.upgrade()?.read(cx).app_entity()?;
+        let state = app.read(cx);
+        let root = self.root.as_ref()?;
+        let project = crate::provenance::project_of(state, root)?;
+        let path = &self.selected.as_ref()?.change.path;
+        let origin = state
+            .store
+            .line_origins(project, path, hash)
+            .ok()?
+            .into_iter()
+            .next()?;
+        let turn = crate::provenance::turn(state, &origin);
+        Some((crate::provenance::short(&turn), turn.thread))
+    }
+
     fn select_line(&mut self, hunk: usize, line: usize, cx: &mut Context<Self>) {
         let Some(diff) = &self.diff else {
             return;
@@ -704,10 +727,12 @@ impl ChangesView {
         };
         if self.selected_line.as_ref() == Some(&selection) {
             self.selected_line = None;
+            self.origin = None;
             cx.notify();
             return;
         }
         self.blame = None;
+        self.origin = self.line_origin(&diff_line.text, cx);
         // Blame only lines that exist in the working tree.
         if let (Some(root), Some(number), Some(selected)) =
             (self.root.clone(), diff_line.new_line, &self.selected)
@@ -1305,6 +1330,25 @@ impl ChangesView {
                         .text_color(cx.theme().muted_foreground)
                         .child(Icon::new(IconName::GitCommitHorizontal).xsmall())
                         .child(blame),
+                )
+            })
+            .when_some(self.origin.clone(), |this, (origin, thread)| {
+                this.child(
+                    h_flex()
+                        .id("line-origin")
+                        .gap_1()
+                        .text_xs()
+                        .text_color(cx.theme().link)
+                        .cursor_pointer()
+                        .child(Icon::new(IconName::MessageSquare).xsmall())
+                        .child(format!("Written by the agent in {origin}"))
+                        .on_click(move |_, window, cx| {
+                            if let Some(hub) = cx.try_global::<crate::browser_tools::BrowserHub>() {
+                                let workspace = hub.workspace.clone();
+                                let _ = workspace
+                                    .update(cx, |this, cx| this.activate(thread, window, cx));
+                            }
+                        }),
                 )
             })
             .child(

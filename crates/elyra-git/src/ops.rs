@@ -409,6 +409,25 @@ pub fn recent_commits(repo: &Path, limit: usize) -> Result<Vec<Commit>> {
 }
 
 /// Who last changed a line (1-based), or `None` for uncommitted lines.
+/// The last commits that touched `path` (following renames), one line each:
+/// short hash, date, author, subject.
+pub fn file_log(repo: &Path, path: &str, limit: usize) -> Result<Vec<String>> {
+    let limit = format!("-n{limit}");
+    let output = run_ok(
+        repo,
+        &[
+            "log",
+            &limit,
+            "--follow",
+            "--date=short",
+            "--format=%h %ad %an: %s",
+            "--",
+            path,
+        ],
+    )?;
+    Ok(output.lines().map(str::to_string).collect())
+}
+
 pub fn blame_line(repo: &Path, path: &str, line: u32) -> Result<Option<Commit>> {
     let range = format!("{line},{line}");
     let output = run_ok(repo, &["blame", "--porcelain", "-L", &range, "--", path])?;

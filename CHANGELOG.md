@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Where code came from.** Every turn now records the lines it added, so a line
+  leads back to the thread and the message that had an agent write it, for every
+  agent, also when it committed itself. Agents ask with the gateway's `why` (this
+  line) and `history` (this file or symbol); click a line in Changes and the
+  thread behind it is one click away.
+- **Symbol lookup for every agent.** The gateway's new `symbols` tool answers
+  "where is this defined, who calls it" from a tree-sitter index of the project
+  (Rust, TypeScript, JavaScript, Python, Go, PHP, C): `file:line` with
+  signatures and the calling function, so agents read only what they need.
+  Claude Code, Codex, Elyra, Pi and ACP agents all get it. The index comes from
+  Elyra Desktop.
+
 ## 1.2.0
 
 After you review a pull request, Elyra keeps an eye on it: when the author

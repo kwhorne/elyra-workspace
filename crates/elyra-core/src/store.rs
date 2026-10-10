@@ -99,6 +99,17 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE projects ADD COLUMN check_command TEXT;
 "#,
+    r#"
+    CREATE TABLE line_origins (
+        project_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        hash INTEGER NOT NULL,
+        thread_id TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        at TEXT NOT NULL
+    );
+    CREATE INDEX line_origins_lookup ON line_origins (project_id, path, hash);
+"#,
 ];
 
 const PROJECT_COLUMNS: &str =
@@ -652,6 +663,82 @@ impl Store {
         Ok(())
     }
 
+    // ---- line origins ---------------------------------------------------
+
+    /// Lines a turn added (repository-relative path, [`line_hash`]): the turn
+    /// is the user message `item` in `thread`.
+    pub fn record_line_origins(
+        &self,
+        project: ProjectId,
+        thread: ThreadId,
+        item: ItemId,
+        at: DateTime<Utc>,
+        lines: &[(String, i64)],
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO line_origins (project_id, path, hash, thread_id, item_id, at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )?;
+            for (path, hash) in lines {
+                insert.execute(params![
+                    project.to_string(),
+                    path,
+                    hash,
+                    thread.to_string(),
+                    item.to_string(),
+                    at.to_rfc3339()
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The turns that wrote a line with this content in this file, newest first.
+    pub fn line_origins(
+        &self,
+        project: ProjectId,
+        path: &str,
+        hash: i64,
+    ) -> Result<Vec<LineOrigin>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT thread_id, item_id, at, COUNT(*) FROM line_origins
+             WHERE project_id = ?1 AND path = ?2 AND hash = ?3
+             GROUP BY thread_id, item_id ORDER BY at DESC",
+        )?;
+        let rows = stmt.query_map(params![project.to_string(), path, hash], origin_from_row)?;
+        Ok(rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
+    /// The turns that wrote lines in this file, newest first, with how many.
+    pub fn file_origins(
+        &self,
+        project: ProjectId,
+        path: &str,
+        limit: usize,
+    ) -> Result<Vec<LineOrigin>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT thread_id, item_id, MAX(at), COUNT(*) FROM line_origins
+             WHERE project_id = ?1 AND path = ?2
+             GROUP BY thread_id, item_id ORDER BY MAX(at) DESC LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(
+            params![project.to_string(), path, limit as i64],
+            origin_from_row,
+        )?;
+        Ok(rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect())
+    }
+
     /// Record a gateway call; keeps the newest 5000 entries.
     pub fn audit(&self, entry: &AuditEntry) -> Result<()> {
         self.conn.execute(
@@ -805,6 +892,21 @@ fn thread_from_row(row: &Row) -> rusqlite::Result<Thread> {
     })
 }
 
+fn origin_from_row(row: &Row) -> rusqlite::Result<Option<LineOrigin>> {
+    let thread: String = row.get(0)?;
+    let item: String = row.get(1)?;
+    let at: String = row.get(2)?;
+    let lines: i64 = row.get(3)?;
+    Ok((|| {
+        Some(LineOrigin {
+            thread: Uuid::parse_str(&thread).ok()?,
+            item: Uuid::parse_str(&item).ok()?,
+            at: DateTime::parse_from_rfc3339(&at).ok()?.with_timezone(&Utc),
+            lines: lines as usize,
+        })
+    })())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -829,6 +931,7 @@ mod tests {
         0x534f_4e32_21e0_c19d,
         0xf69a_d7c2_003d_7105,
         0x3228_ebaa_3834_b92a,
+        0x42f8_ac9c_0227_c9c2,
     ];
 
     #[test]
@@ -1220,5 +1323,45 @@ mod tests {
             ("claude", Some(1200), Some(0.5))
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn remembers_which_turn_wrote_a_line() {
+        let store = Store::open_in_memory().unwrap();
+        let (project, thread) = (new_id(), new_id());
+        let (first, second) = (new_id(), new_id());
+        let hash = line_hash("    return $customer->address?->street;").unwrap();
+        let earlier = Utc::now() - chrono::Duration::hours(1);
+        store
+            .record_line_origins(
+                project,
+                thread,
+                first,
+                earlier,
+                &[("app/Order.php".into(), hash)],
+            )
+            .unwrap();
+        store
+            .record_line_origins(
+                project,
+                thread,
+                second,
+                Utc::now(),
+                &[("app/Order.php".into(), hash), ("app/Order.php".into(), 7)],
+            )
+            .unwrap();
+        let origins = store.line_origins(project, "app/Order.php", hash).unwrap();
+        assert_eq!(origins.len(), 2);
+        assert_eq!(origins[0].item, second, "newest first");
+        assert!(
+            store
+                .line_origins(project, "other.php", hash)
+                .unwrap()
+                .is_empty()
+        );
+        let file = store.file_origins(project, "app/Order.php", 10).unwrap();
+        assert_eq!((file[0].item, file[0].lines), (second, 2));
+        assert_eq!(line_hash("  }  "), None, "too common to track");
+        assert_eq!(line_hash("return x;"), line_hash("\treturn x;  "));
     }
 }

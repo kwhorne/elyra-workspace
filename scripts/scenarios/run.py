@@ -437,6 +437,44 @@ def a_reviewed_pull_request_comes_back_when_it_changes(world, project):
         raise Failure("no word about the merge")
 
 
+RUST = """pub struct Cart { total: u32 }
+
+impl Cart {
+    pub fn total(&self) -> u32 { discount(self.total) }
+}
+
+fn discount(amount: u32) -> u32 { amount * 9 / 10 }
+"""
+
+
+@scenario(files={"lib.rs": RUST})
+def agents_look_up_symbols(world, project):
+    thread = world.new_thread(project, '[call symbols {"name": "discount"}]')
+    reply = world.wait(thread, 60)
+    expect("Definitions (1):" in reply and "lib.rs:7" in reply, reply[-400:])
+    expect("References (1):" in reply and "in total" in reply, "the caller: " + reply[-400:])
+    # A client names the project.
+    text = world.tool("symbols", name="Cart", mode="definitions", project=project)
+    expect("struct Cart" in text, text)
+
+
+@scenario(files={"lib.rs": "// written by hand before any agent\n"})
+def lines_lead_back_to_the_message_that_wrote_them(world, project):
+    thread = world.new_thread(project, "[write lib.rs] fn discount(amount: u32) -> u32 { amount * 9 / 10 }")
+    world.wait(thread, 30)
+    world.tool("set_thread_title", thread_id=thread, title="Add the discount")
+    time.sleep(1.5)  # the turn's lines are recorded after it ends
+    why = world.tool("why", path="lib.rs", line=2, project=project)
+    expect("Written in the thread “Add the discount”" in why, why)
+    expect("[write lib.rs] fn discount" in why and "Wrote lib.rs." in why, "the message and the answer: " + why)
+    by_hand = world.tool("why", path="lib.rs", line=1, project=project)
+    expect("No agent in Elyra Workspace is recorded" in by_hand, by_hand)
+    history = world.tool("history", path="lib.rs", project=project)
+    expect("“Add the discount”" in history and "1 line" in history, history)
+    by_symbol = world.tool("history", symbol="discount", project=project)
+    expect(by_symbol.startswith("discount: lib.rs:2") and "Add the discount" in by_symbol, by_symbol)
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

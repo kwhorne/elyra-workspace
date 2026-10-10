@@ -1357,6 +1357,7 @@ impl ThreadSession {
             cx,
         );
         self.thread.last_activity_at = Some(Utc::now());
+        self.record_line_origins(cx);
         // Done means green: the turn ends when the project's checks and
         // journeys pass.
         let command = self.check_command();
@@ -1526,6 +1527,52 @@ impl ThreadSession {
             );
         }
         self.finish_turn(true, spent_before, cx);
+    }
+
+    /// Remember which lines this turn added, so `why` and `history` (and the
+    /// blame in Changes) can trace them back to its message.
+    fn record_line_origins(&mut self, cx: &mut Context<Self>) {
+        let Some((item, Some(checkpoint))) =
+            self.items
+                .iter()
+                .rev()
+                .find_map(|item| match &item.content {
+                    ItemContent::User { checkpoint, .. } => Some((item.id, checkpoint.clone())),
+                    _ => None,
+                })
+        else {
+            return;
+        };
+        let (dir, project, thread) = (self.working_dir(), self.project.id, self.thread.id);
+        let job = cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&dir).ok()?;
+            let added = elyra_git::checkpoint::added_lines(&root, &checkpoint).ok()?;
+            Some(
+                added
+                    .into_iter()
+                    .filter_map(|(path, text)| Some((path, elyra_core::line_hash(&text)?)))
+                    .collect::<Vec<_>>(),
+            )
+        });
+        cx.spawn(async move |this, cx| {
+            let Some(lines) = job.await.filter(|lines| !lines.is_empty()) else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                if let Some(app) = this.app.upgrade()
+                    && let Err(err) = app.read(cx).store.record_line_origins(
+                        project,
+                        thread,
+                        item,
+                        Utc::now(),
+                        &lines,
+                    )
+                {
+                    log::warn!("recording line origins: {err:#}");
+                }
+            });
+        })
+        .detach();
     }
 
     /// Switch to the escalation model and the highest effort for the next

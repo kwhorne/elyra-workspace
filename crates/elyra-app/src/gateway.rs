@@ -84,6 +84,9 @@ struct GatewayHandler {
 }
 
 const READ_TOOLS: &[&str] = &[
+    "symbols",
+    "why",
+    "history",
     "list_projects",
     "list_threads",
     "read_thread",
@@ -102,6 +105,39 @@ fn tools() -> Vec<Tool> {
     };
     let id = json!({ "type": "string", "description": "Thread id" });
     vec![
+        tool(
+            "symbols",
+            "Look up code symbols in a tree-sitter index of the project: where a function, method, class, interface, type or module is defined, and where it is referenced (calls, implementations, type uses). Rust, TypeScript, TSX, JavaScript, Python, Go, PHP and C. Use it before grep or read when you need a definition or the callers of something: it returns file:line locations with signatures, so you can read only the relevant range. It works in your thread's folder; other callers name a project or thread.",
+            json!({ "type": "object", "properties": {
+                "name": { "type": "string", "description": "Symbol name (function, method, class, type, module); case-insensitive" },
+                "mode": { "type": "string", "enum": ["definitions", "references", "all"], "description": "What to return (default: all)" },
+                "exact": { "type": "boolean", "description": "Whole name only (default: true); false also returns names containing it" },
+                "path": { "type": "string", "description": "Only files under this directory, relative to the project" },
+                "limit": { "type": "integer", "description": "Most rows per section (default: 50)" },
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
+                "thread_id": id
+            }, "required": ["name"] }),
+        ),
+        tool(
+            "why",
+            "Why is this line here? Traces a line back to the thread and the message that had an agent write it (any agent in Elyra Workspace, also when it committed itself), with when and what the agent said afterwards, plus git blame. Use it before changing code you don't understand, instead of guessing at the intent.",
+            json!({ "type": "object", "properties": {
+                "path": { "type": "string", "description": "File, relative to your folder" },
+                "line": { "type": "integer", "description": "1-based line number" },
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
+                "thread_id": id
+            }, "required": ["path", "line"] }),
+        ),
+        tool(
+            "history",
+            "Which earlier turns wrote a file or a symbol (function, class, method): thread, message, agent and date, newest first, plus the file's git log. Use it to learn what was tried before and why.",
+            json!({ "type": "object", "properties": {
+                "path": { "type": "string", "description": "File, relative to your folder" },
+                "symbol": { "type": "string", "description": "A function, method, class or type name instead of a path" },
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
+                "thread_id": id
+            } }),
+        ),
         tool(
             "list_projects",
             "List the projects (folders) in Elyra Workspace.",
@@ -376,6 +412,12 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         Err("This client has read-only access.".to_string())
     } else if let Err(denied) = allowed_to_change(&app, &call, cx).await {
         Err(denied)
+    } else if call.tool == "symbols" {
+        symbols(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "why" {
+        why(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "history" {
+        history(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "wait_for_thread" {
         wait_for_thread(&app, &call, cx).await.map(Output::Text)
     } else if crate::browser_tools::is_browser_tool(&call.tool) {
@@ -544,6 +586,236 @@ fn arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
         .as_str()
         .filter(|v| !v.trim().is_empty())
         .ok_or_else(|| format!("missing `{key}`"))
+}
+
+/// One index at a time: lookups are quick, but two first-time builds of the
+/// same project would race for its database.
+static SYMBOL_LOOKUPS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The folder to look symbols up in: a named thread's or project's, else the
+/// calling agent's own thread's.
+fn symbols_dir(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &App,
+) -> Result<std::path::PathBuf, String> {
+    let state = app.read(cx);
+    let args = &call.args;
+    if args["thread_id"].as_str().is_some() {
+        let id = thread_arg(args, app, cx)?;
+        let thread = state.thread(id).ok_or("no such thread")?;
+        let project = state.project(thread.project_id).ok_or("no such project")?;
+        return Ok(thread.working_dir(project));
+    }
+    if let Some(query) = args["project"].as_str().map(str::to_lowercase) {
+        return state
+            .projects
+            .iter()
+            .find(|p| {
+                p.id.to_string() == query
+                    || p.name.to_lowercase() == query
+                    || p.path.display().to_string().to_lowercase() == query
+            })
+            .map(|p| p.path.clone())
+            .ok_or_else(|| format!("no project matches “{query}” (see list_projects)"));
+    }
+    match call.caller {
+        Caller::Thread(id) => {
+            let thread = state.thread(id).ok_or("no such thread")?;
+            let project = state.project(thread.project_id).ok_or("no such project")?;
+            Ok(thread.working_dir(project))
+        }
+        Caller::Client { .. } => {
+            Err("Name a `project` (or `thread_id`) to look symbols up in.".into())
+        }
+    }
+}
+
+async fn symbols(app: &Entity<AppState>, call: &Call, cx: &mut AsyncApp) -> Result<String, String> {
+    let args = call.args.clone();
+    let name = arg(&args, "name")?.trim().to_string();
+    let mode = elyra_index::Mode::parse(args["mode"].as_str())?;
+    let dir = cx.update(|cx| symbols_dir(app, call, cx))?;
+    let db = elyra_index::default_db_path(&elyra_core::paths::data_dir().join("index"), &dir);
+    cx.background_executor()
+        .spawn(async move {
+            let _one_at_a_time = SYMBOL_LOOKUPS.lock().unwrap_or_else(|e| e.into_inner());
+            elyra_index::lookup(
+                &dir,
+                &db,
+                &name,
+                mode,
+                args["exact"].as_bool().unwrap_or(true),
+                args["path"].as_str(),
+                args["limit"].as_u64().unwrap_or(0) as usize,
+            )
+            .map_err(|err| format!("symbol index: {err}"))
+        })
+        .await
+}
+
+/// The folder and project a `why` or `history` call is about.
+fn provenance_scope(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &App,
+) -> Result<(std::path::PathBuf, elyra_core::ProjectId), String> {
+    let dir = symbols_dir(app, call, cx)?;
+    let project = crate::provenance::project_of(app.read(cx), &dir)
+        .ok_or("That folder isn't in a project of Elyra Workspace.")?;
+    Ok((dir, project))
+}
+
+async fn why(app: &Entity<AppState>, call: &Call, cx: &mut AsyncApp) -> Result<String, String> {
+    let path = arg(&call.args, "path")?.to_string();
+    let line = call.args["line"]
+        .as_u64()
+        .filter(|l| *l > 0)
+        .ok_or("Give the 1-based `line`.")? as u32;
+    let (dir, project) = cx.update(|cx| provenance_scope(app, call, cx))?;
+    let (relative, text, blame) = cx
+        .background_executor()
+        .spawn(async move {
+            let (root, relative) = crate::provenance::repo_relative(&dir, &path)
+                .ok_or_else(|| format!("{path} isn't in a Git repository."))?;
+            let content = std::fs::read_to_string(root.join(&relative))
+                .map_err(|err| format!("{relative}: {err}"))?;
+            let text = content
+                .lines()
+                .nth(line as usize - 1)
+                .ok_or_else(|| format!("{relative} has fewer than {line} lines."))?
+                .to_string();
+            let blame = elyra_git::blame_line(&root, &relative, line)
+                .ok()
+                .flatten()
+                .map(|c| {
+                    let date = chrono::DateTime::from_timestamp(c.time, 0)
+                        .map(|t| t.format("%Y-%m-%d").to_string())
+                        .unwrap_or_default();
+                    format!("{} · {} · {date} · {}", c.sha, c.author, c.summary)
+                });
+            Ok::<_, String>((relative, text, blame))
+        })
+        .await?;
+    Ok(cx.update(|cx| {
+        let state = app.read(cx);
+        let turns: Vec<_> = elyra_core::line_hash(&text)
+            .and_then(|hash| state.store.line_origins(project, &relative, hash).ok())
+            .unwrap_or_default()
+            .iter()
+            .map(|origin| crate::provenance::turn(state, origin))
+            .collect();
+        crate::provenance::why_text(&format!("{relative}:{line}"), &text, &turns, blame)
+    }))
+}
+
+async fn history(app: &Entity<AppState>, call: &Call, cx: &mut AsyncApp) -> Result<String, String> {
+    let path = call.args["path"].as_str().map(str::to_string);
+    let symbol = call.args["symbol"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if path.is_none() && symbol.is_none() {
+        return Err("Give a `path` or a `symbol`.".into());
+    }
+    let (dir, project) = cx.update(|cx| provenance_scope(app, call, cx))?;
+    // (subject, [(repo-relative path, line hashes)], git log)
+    let (subject, files, log) = cx
+        .background_executor()
+        .spawn(async move {
+            if let Some(path) = path {
+                let (root, relative) = crate::provenance::repo_relative(&dir, &path)
+                    .ok_or_else(|| format!("{path} isn't in a Git repository."))?;
+                let log = elyra_git::file_log(&root, &relative, 10).unwrap_or_default();
+                return Ok::<_, String>((relative.clone(), vec![(relative, None)], log));
+            }
+            let symbol = symbol.unwrap_or_default();
+            let db =
+                elyra_index::default_db_path(&elyra_core::paths::data_dir().join("index"), &dir);
+            let hits = {
+                let _one_at_a_time = SYMBOL_LOOKUPS.lock().unwrap_or_else(|e| e.into_inner());
+                let mut index =
+                    elyra_index::SymbolIndex::open(&dir, &db).map_err(|e| e.to_string())?;
+                index
+                    .refresh_if_stale(elyra_index::REFRESH_MAX_AGE)
+                    .map_err(|e| e.to_string())?;
+                index
+                    .definitions(&symbol, true, None, 10)
+                    .map_err(|e| e.to_string())?
+            };
+            if hits.is_empty() {
+                return Err(format!(
+                    "No definition of \u{201c}{symbol}\u{201d} in the symbol index."
+                ));
+            }
+            let mut files = Vec::new();
+            let mut log = Vec::new();
+            for hit in &hits {
+                let Some((root, relative)) = crate::provenance::repo_relative(&dir, &hit.file)
+                else {
+                    continue;
+                };
+                let content = std::fs::read_to_string(root.join(&relative)).unwrap_or_default();
+                let hashes: Vec<i64> = content
+                    .lines()
+                    .skip(hit.line.saturating_sub(1) as usize)
+                    .take((hit.end_line.saturating_sub(hit.line) + 1) as usize)
+                    .filter_map(elyra_core::line_hash)
+                    .collect();
+                if log.is_empty() {
+                    log = elyra_git::file_log(&root, &relative, 10).unwrap_or_default();
+                }
+                files.push((relative, Some(hashes)));
+            }
+            let subject = format!(
+                "{symbol}: {}",
+                hits.iter()
+                    .map(|h| format!("{}:{}", h.file, h.line))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            Ok((subject, files, log))
+        })
+        .await?;
+    Ok(cx.update(|cx| {
+        let state = app.read(cx);
+        let mut counts: Vec<(elyra_core::LineOrigin, usize)> = Vec::new();
+        for (relative, hashes) in &files {
+            let origins: Vec<elyra_core::LineOrigin> = match hashes {
+                None => state
+                    .store
+                    .file_origins(project, relative, 20)
+                    .unwrap_or_default(),
+                Some(hashes) => hashes
+                    .iter()
+                    .flat_map(|hash| {
+                        state
+                            .store
+                            .line_origins(project, relative, *hash)
+                            .unwrap_or_default()
+                    })
+                    .map(|origin| elyra_core::LineOrigin { lines: 1, ..origin })
+                    .collect(),
+            };
+            for origin in origins {
+                match counts.iter_mut().find(|(o, _)| o.item == origin.item) {
+                    Some((_, count)) => *count += origin.lines,
+                    None => {
+                        let lines = origin.lines;
+                        counts.push((origin, lines));
+                    }
+                }
+            }
+        }
+        counts.sort_by_key(|(origin, _)| std::cmp::Reverse(origin.at));
+        let turns: Vec<_> = counts
+            .iter()
+            .take(20)
+            .map(|(origin, lines)| (crate::provenance::turn(state, origin), *lines))
+            .collect();
+        crate::provenance::history_text(&subject, &turns, &log)
+    }))
 }
 
 fn thread_arg(args: &Value, app: &Entity<AppState>, cx: &App) -> Result<ThreadId, String> {

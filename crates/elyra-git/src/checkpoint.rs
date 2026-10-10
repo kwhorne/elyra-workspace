@@ -36,6 +36,40 @@ pub fn snapshot(repo: &Path, message: &str) -> Result<String> {
     })
 }
 
+/// The lines added since a snapshot (`commit`), tracked and untracked files,
+/// as (path relative to the repository, line).
+pub fn added_lines(repo: &Path, commit: &str) -> Result<Vec<(String, String)>> {
+    let now = snapshot(repo, "elyra: after turn")?;
+    let diff = run_ok(
+        repo,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "-U0",
+            "--no-renames",
+            commit,
+            &now,
+        ],
+    )?;
+    Ok(parse_added(&diff))
+}
+
+fn parse_added(diff: &str) -> Vec<(String, String)> {
+    let mut added = Vec::new();
+    let mut path: Option<String> = None;
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            path = rest.strip_prefix("b/").map(str::to_string);
+        } else if line.starts_with("diff --git ") {
+            path = None;
+        } else if let (Some(text), Some(path)) = (line.strip_prefix('+'), &path) {
+            added.push((path.clone(), text.to_string()));
+        }
+    }
+    added
+}
+
 /// Whether the working tree differs from a snapshot (`commit`): files
 /// changed, added or removed since.
 pub fn changed_since(repo: &Path, commit: &str) -> Result<bool> {
@@ -142,6 +176,35 @@ mod tests {
     use super::*;
     use crate::tests::temp_repo;
     use crate::{DiffSource, changed_files, commit_staged, stage_all};
+
+    #[test]
+    fn lists_the_lines_a_turn_added() {
+        let diff = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,0 +2,2 @@\n+fn new() {}\n+let x = 1;\ndiff --git a/gone.rs b/gone.rs\n--- a/gone.rs\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n";
+        assert_eq!(
+            super::parse_added(diff),
+            [
+                ("a.rs".to_string(), "fn new() {}".to_string()),
+                ("a.rs".to_string(), "let x = 1;".to_string())
+            ]
+        );
+        let repo = temp_repo("added-lines");
+        std::fs::write(repo.join("keep.txt"), "one\n").unwrap();
+        stage_all(&repo).unwrap();
+        commit_staged(&repo, "base").unwrap();
+        let before = create(&repo, "refs/elyra/test/added", "turn").unwrap();
+        std::fs::write(repo.join("keep.txt"), "one\ntwo added\n").unwrap();
+        std::fs::write(repo.join("new.rs"), "fn fresh() {}\n").unwrap();
+        let mut added = super::added_lines(&repo, &before).unwrap();
+        added.sort();
+        assert_eq!(
+            added,
+            [
+                ("keep.txt".to_string(), "two added".to_string()),
+                ("new.rs".to_string(), "fn fresh() {}".to_string())
+            ]
+        );
+        std::fs::remove_dir_all(&repo).unwrap();
+    }
 
     #[test]
     fn checkpoint_and_restore_working_tree() {

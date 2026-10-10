@@ -1665,6 +1665,7 @@ dependencies = [
  "dirs 6.0.0",
  "elyra-core",
  "elyra-git",
+ "elyra-index",
  "elyra-mcp",
  "elyra-provider",
  "elyra-terminal",
@@ -1709,6 +1710,29 @@ dependencies = [
  "anyhow",
  "log",
  "serde_json",
+]
+
+[[package]]
+name = "elyra-index"
+version = "1.2.0"
+dependencies = [
+ "ignore",
+ "log",
+ "parking_lot",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "streaming-iterator",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tree-sitter",
+ "tree-sitter-c",
+ "tree-sitter-go",
+ "tree-sitter-javascript",
+ "tree-sitter-php",
+ "tree-sitter-python",
+ "tree-sitter-rust",
+ "tree-sitter-typescript",
 ]
 
 [[package]]

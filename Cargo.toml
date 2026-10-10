@@ -15,6 +15,7 @@ elyra-provider = { path = "crates/elyra-provider" }
 elyra-git = { path = "crates/elyra-git" }
 elyra-terminal = { path = "crates/elyra-terminal" }
 elyra-mcp = { path = "crates/elyra-mcp" }
+elyra-index = { path = "crates/elyra-index" }
 
 gpui-kit = { version = "0.7.0", features = ["tree-sitter-languages"] }
 anyhow = "1"

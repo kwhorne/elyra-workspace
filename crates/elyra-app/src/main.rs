@@ -29,6 +29,7 @@ mod palette;
 mod phone;
 mod pr_view;
 mod preferences;
+mod provenance;
 mod quitting;
 mod race;
 mod recovery;

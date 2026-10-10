@@ -123,6 +123,8 @@ crates/
 ├── elyra-terminal  PTY and VT emulation (alacritty_terminal): snapshots, keys, mouse,
 │                   selection, scrollback search
 ├── elyra-mcp       minimal MCP server (JSON-RPC over local HTTP) and stdio bridge
+├── elyra-index     tree-sitter symbol index (definitions, references) in a SQLite
+│                   cache, from Elyra Desktop; behind the gateway's `symbols` tool
 └── elyra-app       the GPUI application (binary `elyra`)
 ```
 

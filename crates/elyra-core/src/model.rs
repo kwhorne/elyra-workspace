@@ -480,3 +480,27 @@ pub enum QuestionAnswer {
     },
     Cancelled,
 }
+
+/// A turn that wrote lines: the thread and its user message, and when.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LineOrigin {
+    pub thread: ThreadId,
+    pub item: ItemId,
+    pub at: DateTime<Utc>,
+    /// How many of the matched lines it wrote.
+    pub lines: usize,
+}
+
+/// A line's content, for finding where it came from: whitespace around it
+/// doesn't count, and lines with fewer than four visible characters (braces,
+/// blank lines) aren't tracked, as they would match everywhere.
+pub fn line_hash(text: &str) -> Option<i64> {
+    let text = text.trim();
+    if text.chars().filter(|c| !c.is_whitespace()).count() < 4 {
+        return None;
+    }
+    let hash = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    Some(hash as i64)
+}
