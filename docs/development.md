@@ -206,6 +206,19 @@ xcrun notarytool store-credentials elyra-workspace --apple-id <apple id> --team-
 scripts/release-macos.sh       # -> target/release/dist/Elyra-Workspace-<version>-arm64.dmg
 ```
 
+To sign and notarize with Knut Horne's team instead of GETS AS, which is how 1.3.0
+and 1.3.1 were released:
+
+```console
+CODESIGN_IDENTITY="Developer ID Application: Knut Horne (52AT44QFCM)" \
+  NOTARY_PROFILE="Knut Horne" scripts/release-macos.sh
+```
+
+Official copies accept updates signed by either team (`RELEASE_TEAMS` in
+`crates/elyra-app/src/updates.rs`). Then publish the DMG and its `.sha256` with
+`gh release create v<version> … --verify-tag` and the notes the workflow would
+write.
+
 `SKIP_NOTARIZE=1` signs without notarizing. In CI the script takes
 `NOTARY_APPLE_ID`, `NOTARY_PASSWORD` and `NOTARY_TEAM_ID` instead of a keychain
 profile.

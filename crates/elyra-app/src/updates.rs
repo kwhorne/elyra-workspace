@@ -3,7 +3,7 @@
 //! 1. `latest_release` finds the newest release and its DMG + checksum.
 //! 2. `prepare` downloads the DMG, checks the SHA-256, copies the app out of
 //!    the image next to the running one, and verifies the copy: a valid
-//!    signature from the same Developer ID team as the running app, accepted
+//!    signature from a trusted Developer ID team (`trusted_teams`), accepted
 //!    by Gatekeeper (notarized), with the expected version.
 //! 3. `install` swaps the staged app into place with two renames (rolling
 //!    back on failure); `relaunch_after_exit` starts it once we have quit.
@@ -16,6 +16,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const REPO: &str = "kwhorne/elyra-workspace";
+
+/// The Developer ID teams official releases are signed by: GETS AS, and
+/// Knut Horne since 1.3.0. A copy signed by one of them accepts updates from
+/// either, so releases can move between the two.
+const RELEASE_TEAMS: &[&str] = &["7G383N3VY7", "52AT44QFCM"];
 
 pub const RELEASES_API: &str =
     "https://api.github.com/repos/kwhorne/elyra-workspace/releases/latest";
@@ -207,6 +212,22 @@ pub fn self_update_blocker(bundle: Option<&Path>) -> Option<&'static str> {
     }
 }
 
+/// The teams an update to a copy signed by `own` may be signed by: its own,
+/// and the other release teams when it is an official build. A copy someone
+/// signed themselves only takes updates from their own team.
+pub fn trusted_teams(own: &str) -> Vec<String> {
+    let mut teams = vec![own.to_string()];
+    if RELEASE_TEAMS.contains(&own) {
+        teams.extend(
+            RELEASE_TEAMS
+                .iter()
+                .filter(|team| **team != own)
+                .map(|team| team.to_string()),
+        );
+    }
+    teams
+}
+
 /// The Developer ID team that signed a bundle (`None` for ad-hoc builds).
 pub fn team_id(bundle: &Path) -> Option<String> {
     let output = Command::new("codesign")
@@ -266,8 +287,8 @@ pub fn staged_path(bundle: &Path) -> PathBuf {
     bundle.with_file_name(format!(".{name}.update"))
 }
 
-/// Check a staged app: same team, valid signature, notarized, right version.
-pub fn verify(staged: &Path, team: &str, version: &str) -> Result<()> {
+/// Check a staged app: a trusted team, valid signature, notarized, right version.
+pub fn verify(staged: &Path, teams: &[String], version: &str) -> Result<()> {
     run(
         Command::new("codesign")
             .args(["--verify", "--deep", "--strict"])
@@ -275,8 +296,11 @@ pub fn verify(staged: &Path, team: &str, version: &str) -> Result<()> {
         "signature check",
     )?;
     match team_id(staged) {
-        Some(found) if found == team => {}
-        Some(found) => bail!("the update is signed by team {found}, expected {team}"),
+        Some(found) if teams.contains(&found) => {}
+        Some(found) => bail!(
+            "the update is signed by team {found}, expected {}",
+            teams.join(" or ")
+        ),
         None => bail!("the update is not signed with a Developer ID"),
     }
     run(
@@ -296,7 +320,7 @@ pub fn verify(staged: &Path, team: &str, version: &str) -> Result<()> {
 
 /// Download, check and stage `release` next to `bundle`. Returns the staged
 /// app, ready for `install`.
-pub fn prepare(release: &Release, bundle: &Path, team: &str, work: &Path) -> Result<PathBuf> {
+pub fn prepare(release: &Release, bundle: &Path, teams: &[String], work: &Path) -> Result<PathBuf> {
     let dmg_asset = release
         .dmg
         .as_ref()
@@ -370,7 +394,7 @@ pub fn prepare(release: &Release, bundle: &Path, team: &str, work: &Path) -> Res
     );
     let _ = std::fs::remove_file(&dmg);
     result?;
-    if let Err(err) = verify(&staged, team, &release.version) {
+    if let Err(err) = verify(&staged, teams, &release.version) {
         let _ = std::fs::remove_dir_all(&staged);
         return Err(err);
     }
@@ -597,14 +621,23 @@ mod tests {
             return; // not built or ad-hoc signed
         };
         let version = bundle_version(&bundle).unwrap();
-        assert!(verify(&bundle, "WRONGTEAM", &version).is_err());
-        assert!(verify(&bundle, &team, "9.9.9").is_err());
+        let teams = trusted_teams(&team);
+        assert!(verify(&bundle, &["WRONGTEAM".into()], &version).is_err());
+        assert!(verify(&bundle, &teams, "9.9.9").is_err());
         // Only a notarized build passes Gatekeeper.
         let notarized = Command::new("spctl")
             .args(["--assess", "--type", "execute"])
             .arg(&bundle)
             .status()
             .is_ok_and(|s| s.success());
-        assert_eq!(verify(&bundle, &team, &version).is_ok(), notarized);
+        assert_eq!(verify(&bundle, &teams, &version).is_ok(), notarized);
+    }
+
+    #[test]
+    fn official_builds_trust_both_release_teams() {
+        assert_eq!(trusted_teams("7G383N3VY7"), ["7G383N3VY7", "52AT44QFCM"]);
+        assert_eq!(trusted_teams("52AT44QFCM"), ["52AT44QFCM", "7G383N3VY7"]);
+        // Someone else's build stays with their own team.
+        assert_eq!(trusted_teams("ABCDE12345"), ["ABCDE12345"]);
     }
 }

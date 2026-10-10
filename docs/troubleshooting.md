@@ -30,7 +30,9 @@ Elyra Workspace updates itself:
 1. At launch and every six hours, it checks GitHub for a newer release.
 2. It downloads the new version in the background and checks it:
    - the SHA-256 checksum must match
-   - the app must be signed by the same Developer ID team as the copy you run
+   - the app must be signed by one of the Developer ID teams official releases
+     use (GETS AS or Knut Horne); a copy you signed yourself only accepts your
+     own team
    - Gatekeeper must accept its notarization
    - it must report the expected version
 3. A notification says the new version is ready. Click it to restart into the

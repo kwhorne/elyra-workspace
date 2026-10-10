@@ -184,10 +184,10 @@ fn download(release: Release, bundle: PathBuf, manual: bool, cx: &mut App) {
         .join("updates")
         .join(&release.version);
     let job = cx.background_executor().spawn(async move {
-        // Only accept updates signed by the same team as this copy.
+        // Only accept updates signed by a team this copy trusts.
         let team = updates::team_id(&bundle)
             .ok_or_else(|| anyhow::anyhow!("this copy is not signed with a Developer ID"))?;
-        let staged = updates::prepare(&release, &bundle, &team, &work);
+        let staged = updates::prepare(&release, &bundle, &updates::trusted_teams(&team), &work);
         let _ = std::fs::remove_dir_all(&work);
         staged.map(|staged| (release.version, staged, bundle))
     });
