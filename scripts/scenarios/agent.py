@@ -12,6 +12,8 @@ What it does depends on a tag in the prompt:
   [ask]    ask permission to run a command, and say what the answer was
   [say] X  reply X, changing nothing
   [write PATH] TEXT  append TEXT as a line to PATH
+  [edit PATH] TEXT   the same, as an ACP edit tool call (what Elyra sees of
+           a real agent's edit)
   anything else (also Elyra's follow-ups): add 1 to value.txt
 Every prompt is appended to prompts.log in the working directory, and every
 model Elyra switches to (session/set_model) to models.log.
@@ -85,6 +87,21 @@ def prompt(rid, params):
     text = "".join(block.get("text", "") for block in params["prompt"])
     with open(os.path.join(state["cwd"], "prompts.log"), "a") as log:
         log.write(text.replace("\n", " ")[:400] + "\n")
+    edit = re.search(r"\[edit ([^\]]+)\] (.*)", text, re.S)
+    if edit:
+        path = os.path.join(state["cwd"], edit.group(1))
+        new = edit.group(2).strip()
+        tool = {"sessionId": sid, "update": {
+            "sessionUpdate": "tool_call", "toolCallId": "edit-1", "title": "Edit " + edit.group(1),
+            "kind": "edit", "status": "in_progress", "locations": [{"path": path}],
+            "content": [{"type": "diff", "path": path, "oldText": "", "newText": new}]}}
+        send({"method": "session/update", "params": tool})
+        with open(path, "a") as f:
+            f.write(new + "\n")
+        send({"method": "session/update", "params": {"sessionId": sid, "update": {
+            "sessionUpdate": "tool_call_update", "toolCallId": "edit-1", "status": "completed"}}})
+        say(sid, "Edited " + edit.group(1) + ".")
+        return end(rid)
     write = re.search(r"\[write ([^\]]+)\] (.*)", text, re.S)
     if write:
         with open(os.path.join(state["cwd"], write.group(1)), "a") as f:

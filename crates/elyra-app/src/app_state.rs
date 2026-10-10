@@ -17,6 +17,8 @@ pub struct AppState {
     pub projects: Vec<Project>,
     pub threads: Vec<Thread>,
     sessions: HashMap<ThreadId, Entity<ThreadSession>>,
+    /// What agents changed lately, per repository.
+    pub intents: crate::intent_board::IntentBoard,
 }
 
 impl AppState {
@@ -63,6 +65,7 @@ impl AppState {
             projects,
             threads,
             sessions: HashMap::new(),
+            intents: Default::default(),
         })
     }
 
@@ -402,6 +405,7 @@ impl AppState {
         };
         thread.archived = true;
         thread.updated_at = Utc::now();
+        self.intents.forget(id);
         if let Err(err) = self.store.update_thread(&thread) {
             log::error!("archiving thread {id}: {err:#}");
         }
@@ -474,6 +478,7 @@ impl AppState {
             .cloned()
             .or_else(|| self.archived_threads().into_iter().find(|t| t.id == id));
         self.sessions.remove(&id);
+        self.intents.forget(id);
         crate::thread_session::drop_db_snapshots(&self.store, id);
         self.store.delete_thread(id)?;
         let _ = std::fs::remove_dir_all(elyra_core::paths::snapshots_dir().join(id.to_string()));

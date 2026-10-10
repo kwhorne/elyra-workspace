@@ -54,6 +54,18 @@ pub fn repo_root(path: &Path) -> Result<PathBuf> {
     ))
 }
 
+/// The repository's shared git directory: the same for all its worktrees.
+pub fn common_dir(path: &Path) -> Result<PathBuf> {
+    let dir = PathBuf::from(
+        run_ok(
+            path,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?
+        .trim(),
+    );
+    Ok(dir.canonicalize().unwrap_or(dir))
+}
+
 pub fn current_branch(path: &Path) -> Option<String> {
     let branch = run_ok(path, &["branch", "--show-current"]).ok()?;
     let branch = branch.trim();

@@ -1,9 +1,11 @@
 //! The Git panel of a thread: branch and sync, staged and unstaged changes,
 //! diffs of the working tree, of individual agent turns or against another
-//! branch, blame and line comments for the agent, and committing.
+//! branch, blame and line comments for the agent, and committing. Lines an
+//! agent wrote that nobody has marked as read carry a dot until someone does.
 
+use crate::app_state::AppState;
 use crate::thread_session::ThreadSession;
-use elyra_core::ProviderKind;
+use elyra_core::{ProjectId, ProviderKind};
 use elyra_git::{
     Area, AreaChange, Branch, ChangeKind, DiffLine, DiffLineKind, DiffOptions, DiffSource,
     FileChange, FileDiff, SyncState,
@@ -18,6 +20,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 const MAX_DIFF_LINES: usize = 4000;
@@ -76,6 +79,11 @@ pub struct ChangesView {
     /// The turn that wrote the selected line (when an agent did): a line
     /// about it and its thread.
     origin: Option<(String, elyra_core::ThreadId)>,
+    /// Per changed file: the lines agents wrote there that nobody has marked
+    /// as read ([`elyra_core::line_hash`]), and how many of them the file has now.
+    unread: HashMap<String, (HashSet<i64>, usize)>,
+    /// The session's `lines_recorded` when `unread` was counted.
+    lines_recorded: usize,
     diff_scroll: ScrollHandle,
     change_rows: Vec<usize>,
     change_cursor: usize,
@@ -91,6 +99,24 @@ fn kind_color(kind: ChangeKind, cx: &App) -> Hsla {
         ChangeKind::Renamed => cx.theme().info,
         ChangeKind::Modified => cx.theme().warning,
     }
+}
+
+/// The mark of a line an agent wrote that nobody has read.
+fn unread_dot(cx: &App) -> Div {
+    div()
+        .size(px(6.))
+        .flex_none()
+        .rounded_full()
+        .bg(cx.theme().warning)
+}
+
+/// How many lines of `content` are among `lines` ([`elyra_core::line_hash`]).
+fn unread_in(content: &str, lines: &HashSet<i64>) -> usize {
+    content
+        .lines()
+        .filter_map(elyra_core::line_hash)
+        .filter(|hash| lines.contains(hash))
+        .count()
 }
 
 impl ChangesView {
@@ -125,7 +151,15 @@ impl ChangesView {
             ),
         ];
         if let Some(session) = &session {
-            subscriptions.push(cx.observe(session, |_, _, cx| cx.notify()));
+            subscriptions.push(cx.observe(session, |this, session, cx| {
+                // A finished turn's lines are recorded after it ends.
+                let recorded = session.read(cx).lines_recorded;
+                if recorded != this.lines_recorded {
+                    this.lines_recorded = recorded;
+                    this.count_unread(cx);
+                }
+                cx.notify();
+            }));
         }
         let mut this = Self {
             cwd,
@@ -151,6 +185,8 @@ impl ChangesView {
             selected_line: None,
             blame: None,
             origin: None,
+            unread: HashMap::new(),
+            lines_recorded: 0,
             diff_scroll: ScrollHandle::new(),
             change_rows: Vec::new(),
             change_cursor: 0,
@@ -239,10 +275,109 @@ impl ChangesView {
                     Err(err) => this.message = Some((format!("{err:#}"), true)),
                 }
                 this.keep_selection(cx);
+                this.count_unread(cx);
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// The app and the project this view's repository belongs to, for the
+    /// record of which lines agents wrote.
+    fn provenance(&self, cx: &App) -> Option<(Entity<AppState>, ProjectId)> {
+        let app = self.session.as_ref()?.upgrade()?.read(cx).app_entity()?;
+        let project = crate::provenance::project_of(app.read(cx), self.root.as_ref()?)?;
+        Some((app, project))
+    }
+
+    /// How many lines agents wrote in each changed file that nobody has read.
+    fn count_unread(&mut self, cx: &mut Context<Self>) {
+        let (Some((app, project)), Some(root)) = (self.provenance(cx), self.root.clone()) else {
+            self.unread.clear();
+            return;
+        };
+        let mut paths: Vec<String> = self
+            .visible_changes()
+            .into_iter()
+            .map(|selected| selected.change.path)
+            .collect();
+        paths.sort();
+        paths.dedup();
+        let store = &app.read(cx).store;
+        let pending: Vec<(String, HashSet<i64>)> = paths
+            .into_iter()
+            .filter_map(|path| {
+                let lines = store.unreviewed_lines(project, &path).ok()?;
+                (!lines.is_empty()).then_some((path, lines))
+            })
+            .collect();
+        let job = cx.background_executor().spawn(async move {
+            pending
+                .into_iter()
+                .map(|(path, lines)| {
+                    let count = std::fs::read_to_string(root.join(&path))
+                        .map(|content| unread_in(&content, &lines))
+                        .unwrap_or(0);
+                    (path, (lines, count))
+                })
+                .collect::<HashMap<_, _>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let unread = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.unread = unread;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Mark what agents wrote in `path` as read.
+    fn mark_read(&mut self, path: &str, cx: &mut Context<Self>) {
+        let Some((app, project)) = self.provenance(cx) else {
+            return;
+        };
+        let Some((lines, _)) = self.unread.remove(path) else {
+            return;
+        };
+        let lines: Vec<i64> = lines.into_iter().collect();
+        if let Err(err) =
+            app.read(cx)
+                .store
+                .mark_lines_reviewed(project, path, &lines, chrono::Utc::now())
+        {
+            self.message = Some((format!("{err:#}"), true));
+        }
+        cx.notify();
+    }
+
+    /// Unread agent lines in what a commit would take now.
+    fn unread_to_commit(&self) -> usize {
+        let staged = self.areas.iter().any(|a| a.area == Area::Staged);
+        let mut paths: Vec<&str> = self
+            .areas
+            .iter()
+            .filter(|a| !staged || a.area == Area::Staged)
+            .map(|a| a.change.path.as_str())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        paths
+            .into_iter()
+            .filter_map(|path| self.unread.get(path))
+            .map(|(_, count)| count)
+            .sum()
+    }
+
+    /// Whether this diff line is one an agent wrote that nobody has read.
+    fn is_unread(&self, line: &DiffLine) -> bool {
+        line.kind != DiffLineKind::Removed
+            && self
+                .selected
+                .as_ref()
+                .and_then(|s| self.unread.get(&s.change.path))
+                .zip(elyra_core::line_hash(&line.text))
+                .is_some_and(|((lines, _), hash)| lines.contains(&hash))
     }
 
     fn visible_changes(&self) -> Vec<Selected> {
@@ -1042,6 +1177,23 @@ impl ChangesView {
                     .text_color(cx.theme().muted_foreground)
                     .child(dir),
             )
+            .when_some(
+                self.unread
+                    .get(&change.path)
+                    .map(|(_, count)| *count)
+                    .filter(|count| *count > 0),
+                |this, count| {
+                    this.child(
+                        h_flex()
+                            .flex_none()
+                            .gap_1()
+                            .text_xs()
+                            .text_color(cx.theme().warning)
+                            .child(unread_dot(cx))
+                            .child(format!("{count} unread")),
+                    )
+                },
+            )
             .when(in_tree, |this| {
                 this.child(
                     h_flex()
@@ -1219,6 +1371,7 @@ impl ChangesView {
                         let side = |line: Option<&DiffLine>, offset: usize| {
                             let (bg, _) =
                                 line.map(|l| self.line_cells(l, cx)).unwrap_or((None, " "));
+                            let unread = line.is_some_and(|l| self.is_unread(l));
                             let index = offset + pair;
                             h_flex()
                                 .id(SharedString::from(format!(
@@ -1239,6 +1392,12 @@ impl ChangesView {
                                             line.map(|l| number(l.new_line.or(l.old_line)))
                                                 .unwrap_or_default(),
                                         ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .w(px(10.))
+                                        .flex_none()
+                                        .when(unread, |this| this.child(unread_dot(cx))),
                                 )
                                 .child(self.code(line.map(|l| l.text.as_str()).unwrap_or("")))
                                 .when(line.is_some(), |this| {
@@ -1261,6 +1420,7 @@ impl ChangesView {
                 }
                 let line = &hunk.lines[i];
                 let (bg, sign) = self.line_cells(line, cx);
+                let unread = self.is_unread(line);
                 let index = i;
                 let is_selected = selected_line
                     .as_ref()
@@ -1293,7 +1453,13 @@ impl ChangesView {
                                 .text_color(gutter)
                                 .child(number(line.new_line)),
                         )
-                        .child(div().w(px(14.)).flex_none().child(sign))
+                        .child(
+                            h_flex()
+                                .w(px(14.))
+                                .flex_none()
+                                .when(unread, |this| this.child(unread_dot(cx)))
+                                .when(!unread, |this| this.child(sign)),
+                        )
                         .child(self.code(&line.text))
                         .on_click(cx.listener(move |this, _, _, cx| this.select_line(h, index, cx)))
                         .into_any_element(),
@@ -1397,6 +1563,13 @@ impl ChangesView {
         self.change_rows = change_rows;
         let changes = self.change_rows.len();
         let path = diff.path.clone();
+        let unread = self
+            .selected
+            .as_ref()
+            .and_then(|s| self.unread.get(&s.change.path))
+            .map(|(_, count)| *count)
+            .filter(|count| *count > 0)
+            .zip(self.selected.as_ref().map(|s| s.change.path.clone()));
         let copy_text = diff
             .hunks
             .iter()
@@ -1431,6 +1604,24 @@ impl ChangesView {
                             .text_ellipsis()
                             .child(path),
                     )
+                    .when_some(unread, |this, (count, path)| {
+                        this.child(
+                            Button::new("mark-read")
+                                .ghost()
+                                .xsmall()
+                                .text_color(cx.theme().warning)
+                                .icon(IconName::Eye)
+                                .label(format!("{count} unread · Mark as read"))
+                                .tooltip(
+                                    "The dotted lines were written by an agent and nobody has \
+                                     marked them as read. Mark everything agents wrote in \
+                                     this file as read.",
+                                )
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.mark_read(&path, cx)),
+                                ),
+                        )
+                    })
                     .child(
                         div()
                             .text_color(cx.theme().success)
@@ -1499,6 +1690,7 @@ impl ChangesView {
     fn render_commit(&self, cx: &Context<Self>) -> AnyElement {
         let has_changes = !self.areas.is_empty();
         let staged = self.areas.iter().any(|a| a.area == Area::Staged);
+        let unread = self.unread_to_commit();
         v_flex()
             .p_2()
             .gap_2()
@@ -1514,6 +1706,20 @@ impl ChangesView {
                             cx.theme().muted_foreground
                         })
                         .child(message),
+                )
+            })
+            .when(self.scope == Scope::WorkingTree && unread > 0, |this| {
+                this.child(
+                    h_flex()
+                        .gap_1()
+                        .text_xs()
+                        .text_color(cx.theme().warning)
+                        .child(unread_dot(cx))
+                        .child(if unread == 1 {
+                            "1 line an agent wrote in this commit hasn't been read.".to_string()
+                        } else {
+                            format!("{unread} lines agents wrote in this commit haven't been read.")
+                        }),
                 )
             })
             .when(self.scope == Scope::WorkingTree, |this| {
@@ -1605,5 +1811,24 @@ impl Render for ChangesView {
             .child(diff)
             .child(commit)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unread_in;
+    use std::collections::HashSet;
+
+    #[test]
+    fn counts_the_unread_lines_a_file_still_has() {
+        let hash = |line| elyra_core::line_hash(line).unwrap();
+        let unread = HashSet::from([hash("let total = sum(items);"), hash("gone();")]);
+        let content = "fn total() {\n    let total = sum(items);\n    total\n}\n";
+        assert_eq!(
+            unread_in(content, &unread),
+            1,
+            "only lines still in the file"
+        );
+        assert_eq!(unread_in(content, &HashSet::new()), 0);
     }
 }

@@ -14,8 +14,9 @@ token, and every call is written to an audit log. The address is shown in
 | Tool | What it does | Read-only clients |
 | --- | --- | --- |
 | `symbols` | Where a function, method, class or type is defined and who calls it, from a tree-sitter index of the project (Rust, TypeScript, JavaScript, Python, Go, PHP, C); in the agent's own folder, or a named project or thread | ✓ |
-| `why` | Why a line is there: the thread and message that had an agent write it, when, and what the agent said afterwards, plus git blame | ✓ |
+| `why` | Why a line is there: the thread and message that had an agent write it, when, what the agent said afterwards, and whether a person has read it, plus git blame | ✓ |
 | `history` | The turns that wrote a file or a symbol (thread, message, agent, date), newest first, plus the file's git log | ✓ |
+| `intent_board` | What other agents changed in the same repository during the last hour: thread, agent, same folder or another branch, file and the functions they changed (see [Agents side by side](projects-and-threads.md#agents-side-by-side)) | ✓ |
 | `list_projects` | Projects with id, name and path | ✓ |
 | `list_threads` | Threads with status, optionally for one project and including archived ones | ✓ |
 | `read_thread` | The conversation of a thread (most recent part) | ✓ |

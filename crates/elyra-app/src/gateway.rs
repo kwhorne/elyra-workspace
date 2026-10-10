@@ -87,6 +87,7 @@ const READ_TOOLS: &[&str] = &[
     "symbols",
     "why",
     "history",
+    "intent_board",
     "list_projects",
     "list_threads",
     "read_thread",
@@ -134,6 +135,14 @@ fn tools() -> Vec<Tool> {
             json!({ "type": "object", "properties": {
                 "path": { "type": "string", "description": "File, relative to your folder" },
                 "symbol": { "type": "string", "description": "A function, method, class or type name instead of a path" },
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
+                "thread_id": id
+            } }),
+        ),
+        tool(
+            "intent_board",
+            "What other agents in Elyra Workspace changed in this repository during the last hour: thread, agent, whether they work in your folder or on another branch, file and the functions or classes they changed. Check it before changing shared code, so parallel agents stay out of each other's way. Your own thread, its Best of N siblings and side chats are left out.",
+            json!({ "type": "object", "properties": {
                 "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
                 "thread_id": id
             } }),
@@ -418,6 +427,8 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         why(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "history" {
         history(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "intent_board" {
+        intent_board(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "wait_for_thread" {
         wait_for_thread(&app, &call, cx).await.map(Output::Text)
     } else if crate::browser_tools::is_browser_tool(&call.tool) {
@@ -699,13 +710,54 @@ async fn why(app: &Entity<AppState>, call: &Call, cx: &mut AsyncApp) -> Result<S
         .await?;
     Ok(cx.update(|cx| {
         let state = app.read(cx);
-        let turns: Vec<_> = elyra_core::line_hash(&text)
+        let hash = elyra_core::line_hash(&text);
+        let turns: Vec<_> = hash
             .and_then(|hash| state.store.line_origins(project, &relative, hash).ok())
             .unwrap_or_default()
             .iter()
             .map(|origin| crate::provenance::turn(state, origin))
             .collect();
-        crate::provenance::why_text(&format!("{relative}:{line}"), &text, &turns, blame)
+        let read = hash.is_some_and(|hash| {
+            state
+                .store
+                .unreviewed_lines(project, &relative)
+                .is_ok_and(|unread| !unread.contains(&hash))
+        });
+        crate::provenance::why_text(&format!("{relative}:{line}"), &text, &turns, read, blame)
+    }))
+}
+
+async fn intent_board(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let dir = cx.update(|cx| symbols_dir(app, call, cx))?;
+    let (repo, root) = cx
+        .background_executor()
+        .spawn(async move {
+            let repo = elyra_git::common_dir(&dir).map_err(|err| format!("{err:#}"))?;
+            let root = elyra_git::repo_root(&dir).map_err(|err| format!("{err:#}"))?;
+            Ok::<_, String>((repo, root.canonicalize().unwrap_or(root)))
+        })
+        .await?;
+    Ok(cx.update(|cx| {
+        let me = match call.caller {
+            Caller::Thread(id) => Some(id),
+            Caller::Client { .. } => thread_arg(&call.args, app, cx).ok(),
+        };
+        let rows =
+            crate::intent_board::rows_for(app.read(cx), &repo, &root, me, chrono::Utc::now());
+        if rows.is_empty() {
+            "No other agent has changed files in this repository during the last hour.".into()
+        } else {
+            format!(
+                "Changed by other agents during the last hour, newest first:\n{}",
+                rows.iter()
+                    .map(|row| format!("- {row}\n"))
+                    .collect::<String>()
+            )
+        }
     }))
 }
 

@@ -115,7 +115,15 @@ pub fn short(turn: &Turn) -> String {
 }
 
 /// What `why` answers once the line, its origins and git's blame are known.
-pub fn why_text(location: &str, line: &str, turns: &[Turn], blame: Option<String>) -> String {
+/// What `why` answers. `read`: whether a person has marked the line as read
+/// in Changes since an agent last wrote it.
+pub fn why_text(
+    location: &str,
+    line: &str,
+    turns: &[Turn],
+    read: bool,
+    blame: Option<String>,
+) -> String {
     let mut out = format!("{location}: `{}`\n\n", clip(line, 200));
     match turns.first() {
         Some(turn) => {
@@ -138,6 +146,11 @@ pub fn why_text(location: &str, line: &str, turns: &[Turn], blame: Option<String
                     turns[1..].iter().map(short).collect::<Vec<_>>().join("; ")
                 ));
             }
+            out.push_str(if read {
+                "A person has read it since.\n"
+            } else {
+                "No person has marked it as read yet.\n"
+            });
         }
         None => out.push_str(
             "No agent in Elyra Workspace is recorded as writing this line (it predates the record, was written by hand, or changed since).\n",
@@ -217,6 +230,7 @@ mod tests {
             "app/Order.php:42",
             "  return $a?->street;",
             &[turn("Fix 500")],
+            false,
             Some("abc1234 · Ada · fix".into()),
         );
         assert!(text.starts_with("app/Order.php:42: `return $a?->street;`"));
@@ -228,8 +242,9 @@ mod tests {
         assert!(
             text.contains("The agent said afterwards:\n  “Fixed: a null check on the address.”")
         );
-        assert!(text.ends_with("Git: abc1234 · Ada · fix\n"));
-        let unknown = why_text("a.rs:1", "fn x()", &[], None);
+        assert!(text.ends_with("No person has marked it as read yet.\nGit: abc1234 · Ada · fix\n"));
+        let unknown = why_text("a.rs:1", "fn x()", &[], false, None);
+        assert!(!unknown.contains("marked it as read"));
         assert!(unknown.contains("No agent in Elyra Workspace is recorded"));
         let history = history_text(
             "app/Order.php",

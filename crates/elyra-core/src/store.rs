@@ -3,6 +3,7 @@ use crate::orchestration::*;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Row, params};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -109,6 +110,9 @@ const MIGRATIONS: &[&str] = &[
         at TEXT NOT NULL
     );
     CREATE INDEX line_origins_lookup ON line_origins (project_id, path, hash);
+"#,
+    r#"
+    ALTER TABLE line_origins ADD COLUMN reviewed_at TEXT;
 "#,
 ];
 
@@ -739,6 +743,42 @@ impl Store {
             .collect())
     }
 
+    /// Of the lines agents wrote in this file, the ones nobody has marked as
+    /// read since.
+    pub fn unreviewed_lines(&self, project: ProjectId, path: &str) -> Result<HashSet<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT hash FROM line_origins
+             WHERE project_id = ?1 AND path = ?2 AND reviewed_at IS NULL",
+        )?;
+        let rows = stmt.query_map(params![project.to_string(), path], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// A person read these lines of the file: what agents wrote there so far
+    /// counts as reviewed. Returns how many records changed.
+    pub fn mark_lines_reviewed(
+        &self,
+        project: ProjectId,
+        path: &str,
+        hashes: &[i64],
+        at: DateTime<Utc>,
+    ) -> Result<usize> {
+        let tx = self.conn.unchecked_transaction()?;
+        let mut changed = 0;
+        {
+            let mut update = tx.prepare(
+                "UPDATE line_origins SET reviewed_at = ?4
+                 WHERE project_id = ?1 AND path = ?2 AND hash = ?3 AND reviewed_at IS NULL",
+            )?;
+            for hash in hashes {
+                changed +=
+                    update.execute(params![project.to_string(), path, hash, at.to_rfc3339()])?;
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
     /// Record a gateway call; keeps the newest 5000 entries.
     pub fn audit(&self, entry: &AuditEntry) -> Result<()> {
         self.conn.execute(
@@ -932,6 +972,7 @@ mod tests {
         0xf69a_d7c2_003d_7105,
         0x3228_ebaa_3834_b92a,
         0x42f8_ac9c_0227_c9c2,
+        0x86b0_2911_ef91_5665,
     ];
 
     #[test]
@@ -1361,6 +1402,37 @@ mod tests {
         );
         let file = store.file_origins(project, "app/Order.php", 10).unwrap();
         assert_eq!((file[0].item, file[0].lines), (second, 2));
+        assert_eq!(
+            store.unreviewed_lines(project, "app/Order.php").unwrap(),
+            HashSet::from([hash, 7])
+        );
+        assert_eq!(
+            store
+                .mark_lines_reviewed(project, "app/Order.php", &[hash], Utc::now())
+                .unwrap(),
+            2,
+            "both turns' records of the line"
+        );
+        assert_eq!(
+            store.unreviewed_lines(project, "app/Order.php").unwrap(),
+            HashSet::from([7])
+        );
+        // Written again after the review: unread again.
+        store
+            .record_line_origins(
+                project,
+                thread,
+                new_id(),
+                Utc::now(),
+                &[("app/Order.php".into(), hash)],
+            )
+            .unwrap();
+        assert!(
+            store
+                .unreviewed_lines(project, "app/Order.php")
+                .unwrap()
+                .contains(&hash)
+        );
         assert_eq!(line_hash("  }  "), None, "too common to track");
         assert_eq!(line_hash("return x;"), line_hash("\treturn x;  "));
     }

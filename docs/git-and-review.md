@@ -46,6 +46,24 @@ Workspace wrote the line, a second line says which thread (*Written by the agent
 chat**. The comment and the line's location are added to the thread's message
 box, so you can collect several and send them to the agent together.
 
+### Lines nobody has read
+
+Elyra Workspace remembers which lines agents wrote, so it can also show which of
+them nobody has looked at yet:
+
+- A file with such lines says how many in the file list (*3 unread*), and in its
+  diff each of them has a dot instead of `+`.
+- **Mark as read**, at the top of the diff, marks everything agents wrote in the
+  file as read. The dots go away.
+- If an agent writes a line again later, it's unread again.
+- Before you commit, a line above the message box says how many lines agents
+  wrote in the commit that haven't been read. It's a reminder; it doesn't stop
+  the commit.
+
+Only you marking a file counts as reading it. An agent's review doesn't. The marks
+stay on this Mac with the rest of the record; nothing is added to the repository.
+Agents see them too: `why` says whether a person has read the line.
+
 ### Scopes
 
 The scope menu chooses what the diff compares:

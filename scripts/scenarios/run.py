@@ -467,12 +467,34 @@ def lines_lead_back_to_the_message_that_wrote_them(world, project):
     why = world.tool("why", path="lib.rs", line=2, project=project)
     expect("Written in the thread “Add the discount”" in why, why)
     expect("[write lib.rs] fn discount" in why and "Wrote lib.rs." in why, "the message and the answer: " + why)
+    expect("No person has marked it as read yet." in why, "nobody has read it: " + why)
     by_hand = world.tool("why", path="lib.rs", line=1, project=project)
     expect("No agent in Elyra Workspace is recorded" in by_hand, by_hand)
     history = world.tool("history", path="lib.rs", project=project)
     expect("“Add the discount”" in history and "1 line" in history, history)
     by_symbol = world.tool("history", symbol="discount", project=project)
     expect(by_symbol.startswith("discount: lib.rs:2") and "Add the discount" in by_symbol, by_symbol)
+
+
+@scenario(files={"lib.rs": RUST})
+def parallel_agents_see_what_the_others_change(world, project):
+    first = world.new_thread(project, "[edit lib.rs] fn member_discount(total: u32) -> u32 { total * 85 / 100 }")
+    world.wait(first, 30)
+    world.tool("set_thread_title", thread_id=first, title="Member discount")
+    second = world.new_thread(project, "[edit lib.rs] fn shipping(total: u32) -> u32 { 49 }")
+    world.wait(second, 30)
+    time.sleep(1.5)  # a turn's files are put on the board after it ends
+    prompt = next((p for p in world.prompts(project) if "fn shipping" in p), "")
+    expect(prompt.startswith("<other-agents>") and "“Member discount”" in prompt
+           and "lib.rs: member_discount" in prompt, "the prompt says what the other changed: " + prompt)
+    told = lambda thread: [i["text"] for i in world.items(thread) if i["kind"] == "notice"]
+    expect(any(n.startswith("“Member discount”") and "also changed lib.rs" in n and "same folder" in n
+               for n in told(second)), f"the second is told: {told(second)}")
+    expect(any("also changed lib.rs" in n for n in told(first)), f"and the first: {told(first)}")
+    expect(sum("also changed lib.rs" in n for n in told(second)) == 1, "once, not per edit")
+    board = world.tool("intent_board", project=project, thread_id=second)
+    expect("“Member discount”" in board and "lib.rs: member_discount" in board
+           and "shipping" not in board, "the board leaves the asker out: " + board)
 
 
 def main():

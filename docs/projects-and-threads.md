@@ -179,6 +179,32 @@ pick. When one is done and you like it best:
 The candidates are ordinary threads, so you can also talk to them before you
 choose. **Compare best of N** in a candidate's thread menu reopens the comparison.
 
+## Agents side by side
+
+When several threads work in the same repository, in the same folder or in
+worktrees of it, Elyra Workspace keeps track of what each agent changes. It
+records each file an agent edits and the functions and classes the edit sits in,
+and at the end of a turn every file the turn changed, including changes made
+from the shell. What happened during the last hour counts.
+
+- **When two threads change the same file**, both get a note in their
+  conversation. The note names the other thread, its agent and the functions both
+  changed. It says whether they share a folder (the same copy of the file) or work
+  in separate worktrees (the changes meet when the branches are merged). If both
+  changed how the same function is declared, the note says so. Each pair is told
+  once per file.
+- **Every message to an agent** starts with a short `<other-agents>` list of what
+  the others changed lately, so the agent knows before it picks a file. It's
+  asked to stay out of that code unless the task needs it, and to say so if it
+  does. The list is only added when there's something on it; you don't see it in
+  your own message.
+- **Agents can ask** with the gateway's `intent_board` tool
+  ([Agent gateway](agent-gateway.md)).
+
+Best of N candidates are meant to do the same work, so they aren't reported to
+each other. Neither are a thread and its side chats. Everything is advisory:
+nothing is locked, and the record stays in memory in the app.
+
 ## Import sessions
 
 **⌘I** (or **File → Import Sessions…**) imports sessions you ran outside Elyra.
