@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.3.1
+
+Updates keep working whichever of the two Apple teams signs a release.
+
+- **Updates from either release team.** Releases are signed by GETS AS or by
+  Knut Horne, and an official copy now accepts an update signed by either, so a
+  release can move between them without anyone having to reinstall by hand.
+  1.3.0 was the first release signed by Knut Horne: copies on 1.2.0 or older
+  still need to install 1.3.0 or later from the disk image once. A copy you
+  signed yourself still only takes updates from your own team.
+
 ## 1.3.0
 
 Agents understand the code they work in: every agent can look up where a symbol
