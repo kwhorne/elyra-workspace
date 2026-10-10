@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.4.0
+
+Agents that know about each other, and code you know you've read: parallel
+agents see what the others are changing, and Changes shows which lines agents
+wrote that nobody has looked at yet.
+
+- **Lines nobody has read.** Changes marks the lines agents wrote that nobody
+  has read yet: a count per file, a dot on each line in the diff, and a reminder
+  before you commit them. **Mark as read** clears a file; an agent's later
+  rewrite of a line makes it unread again. `why` tells agents whether a person
+  has read a line. See [Git and review](docs/git-and-review.md#lines-nobody-has-read).
+- **Agents side by side.** When several threads work in the same repository,
+  each agent learns what the others changed during the last hour: a short list in
+  front of every message, and the gateway's new `intent_board` tool. Two threads
+  that change the same file are both told, with the functions they share and
+  whether they work in the same folder or meet at merge. Best of N candidates and
+  side chats are left out. See
+  [Agents side by side](docs/projects-and-threads.md#agents-side-by-side).
+
 ## 1.3.1
 
 Updates keep working whichever of the two Apple teams signs a release.
