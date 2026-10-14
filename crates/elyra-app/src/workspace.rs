@@ -395,6 +395,15 @@ impl Workspace {
                 match event {
                     // The thread's view redraws itself; nothing here changes.
                     SessionEvent::Streamed => return,
+                    SessionEvent::FilesChanged => {
+                        if let Some(changes) = this.changes_views.get(&id) {
+                            changes.update(cx, |changes, cx| changes.refresh(cx));
+                        }
+                        if let Some(files) = this.files_views.get(&id) {
+                            files.update(cx, |files, cx| files.refresh(window, cx));
+                        }
+                        return;
+                    }
                     SessionEvent::TurnStarted => this.picture_page_before(id, cx),
                     SessionEvent::TurnCompleted => this.picture_page_after(id, cx),
                     SessionEvent::SiteReady(url) => this.open_site(id, url, window, cx),
@@ -970,7 +979,10 @@ impl Workspace {
             }
             SessionEvent::TurnCompleted => ("Finished", NotificationType::Success),
             SessionEvent::NeedsAttention => ("Needs your input", NotificationType::Warning),
-            SessionEvent::TurnStarted | SessionEvent::SiteReady(_) | SessionEvent::Streamed => {
+            SessionEvent::TurnStarted
+            | SessionEvent::SiteReady(_)
+            | SessionEvent::Streamed
+            | SessionEvent::FilesChanged => {
                 return;
             }
         };

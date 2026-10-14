@@ -198,10 +198,30 @@ number of matches and jumps between them: **Enter** for the next match,
 ## Checkpoints
 
 Before every turn, Elyra saves a snapshot of the thread's folder, as long as it is
-a Git repository. The snapshot is stored as a hidden Git reference and does not
-touch your branch, index or stash. Snapshots make **Restore files** possible and
-let the Changes tab show what one turn changed ([Git](git-and-review.md#scopes)).
-Deleting a thread deletes its snapshots.
+a Git repository, and another when the turn ends. Snapshots are stored as hidden
+Git references and don't touch your branch, index or stash. They make **Restore
+files** and **Undo this instruction** possible and let the Changes tab show what
+one turn changed ([Git](git-and-review.md#scopes)). Deleting a thread deletes its
+snapshots.
+
+### Undo an instruction
+
+**Restore files** takes the whole folder back to before a message, and with it
+everything that came after. **Undo this instruction** (the arrow next to it on
+your message) takes back only what that message changed:
+
+- What its turn and the automatic fixes after it changed in the folder is
+  undone: edits go, files it created are removed, files it deleted come back.
+- What came after it stays, also in the same files, as long as the changes don't
+  touch the same lines.
+- A file that changed again since in ways that don't merge is left as it is. The
+  card lists it, and **Ask the agent to finish** has the agent take the message's
+  part out of it.
+- **Put it back** brings the undone changes back, keeping what changed since.
+
+For turns from before 1.10, whose end wasn't saved, the undo goes up to the
+next message in the folder, so hand edits made in between are undone as well.
+Agents can take back an instruction with the gateway's `undo_instruction` tool.
 
 When [Elyra Grove](context-and-goals.md#grove) runs the project as an app, the
 checkpoint also takes a snapshot of the app's **database**: a copy of a SQLite

@@ -1515,6 +1515,7 @@ mod tests {
                     is_error: false,
                     context_tokens: None,
                     context_window: None,
+                    after: None,
                 },
             )
             .unwrap();

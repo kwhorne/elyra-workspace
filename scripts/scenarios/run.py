@@ -600,6 +600,29 @@ def who_broke_it_names_the_instruction(world, project):
     expect("already failed before the oldest turn" in always, always)
 
 
+@scenario()
+def an_instruction_can_be_taken_back(world, project):
+    path = world.projects[project]["path"]
+    thread = world.new_thread(project, "[write a.txt] alpha")
+    world.wait(thread, 30)
+    for text in ["[write b.txt] beta", "[write a.txt] alpha again"]:
+        world.tool("send_message", thread_id=thread, text=text)
+        world.wait(thread, 30)
+    time.sleep(1.5)  # a turn's end is kept once its lines are recorded
+    ends = [i.get("after") for i in world.items(thread) if i["kind"] == "turn_summary"]
+    expect(len(ends) == 3 and all(ends), f"each turn's end is kept: {ends}")
+    read = lambda name: open(os.path.join(path, name)).read() if os.path.exists(os.path.join(path, name)) else None
+    # The middle one: the file it made goes, the rest stays.
+    undone = world.tool("undo_instruction", thread_id=thread, instruction=2)
+    expect("Undid “[write b.txt] beta”" in undone and "Back as before it: b.txt" in undone, undone)
+    expect(read("b.txt") is None and read("a.txt") == "alpha\nalpha again\n", f"a.txt: {read('a.txt')!r}")
+    # The first one: a.txt changed again since, so it is left for the agent.
+    kept = world.tool("undo_instruction", thread_id=thread, instruction=1)
+    expect("left as they are: a.txt" in kept and read("a.txt") == "alpha\nalpha again\n", kept)
+    cards = [i for i in world.items(thread) if i["kind"] == "undo"]
+    expect(len(cards) == 2 and cards[0]["reverted"] == ["b.txt"] and cards[1]["kept"] == ["a.txt"], cards)
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

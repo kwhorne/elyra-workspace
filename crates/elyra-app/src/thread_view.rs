@@ -924,6 +924,26 @@ impl ThreadView {
         });
     }
 
+    pub fn confirm_undo(&mut self, item: ItemId, window: &mut Window, cx: &mut Context<Self>) {
+        let session = self.session.clone();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let session = session.clone();
+            alert
+                .title("Undo this instruction?")
+                .description(
+                    "What this message's turn (and its automatic fixes) changed in the folder is \
+                     taken back; what came after it stays. Files that changed again since are left \
+                     as they are, for the agent to finish. You can put it back afterwards.",
+                )
+                .confirm()
+                .ok_text("Undo")
+                .on_ok(move |_, _, cx| {
+                    session.update(cx, |s, cx| s.undo_instruction(item, cx));
+                    true
+                })
+        });
+    }
+
     /// Add a block of text (e.g. a review comment) to the composer.
     pub fn append_to_composer(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let value = self.composer.read(cx).value().to_string();

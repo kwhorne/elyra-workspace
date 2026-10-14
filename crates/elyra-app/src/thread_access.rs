@@ -21,6 +21,7 @@ pub const WRITES: &[&str] = &[
     "interrupt_thread",
     "set_thread_title",
     "archive_thread",
+    "undo_instruction",
     "browser_open",
     "browser_reload",
     "browser_click",

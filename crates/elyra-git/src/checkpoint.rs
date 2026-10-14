@@ -40,6 +40,11 @@ pub fn snapshot(repo: &Path, message: &str) -> Result<String> {
 /// as (path relative to the repository, line).
 pub fn added_lines(repo: &Path, commit: &str) -> Result<Vec<(String, String)>> {
     let now = snapshot(repo, "elyra: after turn")?;
+    added_between(repo, commit, &now)
+}
+
+/// The lines added from one snapshot to another, as (path, line).
+pub fn added_between(repo: &Path, commit: &str, now: &str) -> Result<Vec<(String, String)>> {
     let diff = run_ok(
         repo,
         &[
@@ -49,7 +54,7 @@ pub fn added_lines(repo: &Path, commit: &str) -> Result<Vec<(String, String)>> {
             "-U0",
             "--no-renames",
             commit,
-            &now,
+            now,
         ],
     )?;
     Ok(parse_added(&diff))

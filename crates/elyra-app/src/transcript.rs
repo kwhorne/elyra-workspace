@@ -13,7 +13,7 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::text::{TextView, TextViewState};
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
@@ -400,6 +400,20 @@ fn hover_actions(
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.edit_message(text.clone(), window, cx)
                     })),
+            )
+        })
+        .when(restore.is_some(), |this| {
+            this.child(
+                Button::new(SharedString::from(format!("undo-{id}")))
+                    .ghost()
+                    .xsmall()
+                    .icon(IconName::Undo2)
+                    .tooltip(
+                        "Undo this instruction: take back what it changed, keep what came after",
+                    )
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.confirm_undo(id, window, cx)),
+                    ),
             )
         })
         .when_some(restore, |this, sha| {
@@ -882,6 +896,21 @@ fn render_item(
             cx,
         ),
         ItemContent::Bisect { command, verdict } => bisect_card(command, verdict, cx),
+        ItemContent::Undo {
+            instruction,
+            reverted,
+            kept,
+            put_back,
+            ..
+        } => undo_card(
+            id,
+            instruction,
+            reverted,
+            kept,
+            *put_back,
+            session.running,
+            cx,
+        ),
         ItemContent::PageSnapshot { url, before, after } => {
             let picture = |label: &'static str, path: &str| {
                 let path = std::path::PathBuf::from(path);
@@ -1094,6 +1123,106 @@ fn proposal_card(
 /// The project's checks after a turn: passed or failed, with the output
 /// (the last line shows while folded, when they failed).
 #[allow(clippy::too_many_arguments)]
+/// An instruction taken back.
+fn undo_card(
+    id: ItemId,
+    instruction: &str,
+    reverted: &[String],
+    kept: &[String],
+    put_back: bool,
+    running: bool,
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    let headline = instruction
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string();
+    let list = |paths: &[String]| {
+        paths
+            .iter()
+            .map(|p| p.rsplit('/').next().unwrap_or(p).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let prompt = crate::undo::finish_prompt(instruction, kept, reverted);
+    v_flex()
+        .w_full()
+        .p_2()
+        .gap_1()
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().border)
+        .child(
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .child(Icon::new(IconName::Undo2).small().text_color(muted))
+                .child(div().font_weight(FontWeight::MEDIUM).child(if put_back {
+                    "Undone, then put back"
+                } else {
+                    "Undone"
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(format!("“{headline}”")),
+                ),
+        )
+        .when(!reverted.is_empty(), |this| {
+            this.child(div().text_xs().text_color(muted).child(format!(
+                "Back as before it: {}",
+                list(reverted)
+            )))
+        })
+        .when(!kept.is_empty(), |this| {
+            this.child(div().text_xs().text_color(cx.theme().warning).child(format!(
+                "Changed again since, left as they are: {}",
+                list(kept)
+            )))
+        })
+        .when(!put_back, |this| {
+            this.child(
+                h_flex()
+                    .gap_2()
+                    .when(!kept.is_empty(), |this| {
+                        this.child(
+                            Button::new(SharedString::from(format!("undo-finish-{id}")))
+                                .xsmall()
+                                .primary()
+                                .label("Ask the agent to finish")
+                                .tooltip("Have the agent take the instruction's part out of the files left as they are")
+                                .disabled(running)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let prompt = elyra_provider::Prompt::text(prompt.clone());
+                                    this.session
+                                        .update(cx, |session, cx| session.submit(prompt, cx));
+                                })),
+                        )
+                    })
+                    .child(
+                        Button::new(SharedString::from(format!("undo-put-back-{id}")))
+                            .xsmall()
+                            .ghost()
+                            .label("Put it back")
+                            .tooltip("Bring back what the undo took away; what changed since stays")
+                            .disabled(running)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.session
+                                    .update(cx, |session, cx| session.put_back_undo(id, cx));
+                            })),
+                    ),
+            )
+        })
+        .into_any_element()
+}
+
 /// What "Who broke it?" found.
 fn bisect_card(
     command: &str,

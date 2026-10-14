@@ -159,6 +159,14 @@ fn tools() -> Vec<Tool> {
             } }),
         ),
         tool(
+            "undo_instruction",
+            "Take back one earlier instruction in a thread: what its turn (and the automatic fixes after it) changed in the folder is undone, and what came after it stays. Files changed again since in ways that don't merge are left as they are and listed, for you to finish by hand. `instruction` counts the user's messages in the thread from 1 (the last one by default).",
+            json!({ "type": "object", "properties": {
+                "thread_id": id,
+                "instruction": { "type": "integer", "description": "Which message of the thread, from 1 (default: the last)" }
+            } }),
+        ),
+        tool(
             "who_broke_it",
             "When the project's checks fail: find the earlier instruction whose turn made them fail. Runs the check command against the state of the folder before each earlier turn (any thread or agent working in the folder) in a temporary checkout — the working tree is not touched — halving the range until the turn where they went from passing to failing, and names that message, its thread and the failing output. Takes a while: each step runs the checks. Use it instead of guessing when something broke earlier than your own changes.",
             json!({ "type": "object", "properties": {
@@ -458,6 +466,8 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         why(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "history" {
         history(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "undo_instruction" {
+        undo_instruction(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "who_broke_it" {
         who_broke_it(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "changes_by_instruction" {
@@ -764,6 +774,76 @@ async fn why(app: &Entity<AppState>, call: &Call, cx: &mut AsyncApp) -> Result<S
         });
         crate::provenance::why_text(&format!("{relative}:{line}"), &text, &turns, read, blame)
     }))
+}
+
+async fn undo_instruction(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let id = match call.caller {
+        Caller::Thread(own) if call.args["thread_id"].as_str().is_none() => own,
+        _ => cx.update(|cx| thread_arg(&call.args, app, cx))?,
+    };
+    let session = cx
+        .update(|cx| app.update(cx, |app, cx| app.session(id, cx)))
+        .ok_or("no such thread")?;
+    // The user's messages (automatic fixes are part of the one before).
+    let (item, before) = cx.update(|cx| {
+        let session = session.read(cx);
+        let messages: Vec<elyra_core::ItemId> = session
+            .items
+            .iter()
+            .filter_map(|i| match &i.content {
+                ItemContent::User { text, .. }
+                    if crate::checks::fix_prompt_label(text).is_none() =>
+                {
+                    Some(i.id)
+                }
+                _ => None,
+            })
+            .collect();
+        let which = call.args["instruction"].as_u64().map(|n| n as usize);
+        let item = match which {
+            Some(n) if n >= 1 => messages.get(n - 1).copied(),
+            _ => messages.last().copied(),
+        };
+        (item, session.items.len())
+    });
+    let item = item.ok_or("That thread has no such message.")?;
+    cx.update(|cx| session.update(cx, |s, cx| s.undo_instruction(item, cx)));
+    // It runs in the background; wait for its entry (or a notice).
+    let deadline = Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        cx.background_executor()
+            .timer(std::time::Duration::from_millis(100))
+            .await;
+        let result = cx.update(|cx| {
+            session.read(cx).items[before..]
+                .iter()
+                .find_map(|i| match &i.content {
+                    ItemContent::Undo {
+                        instruction,
+                        reverted,
+                        kept,
+                        ..
+                    } => Some(Ok(format!(
+                        "Undid “{}”.\nBack as before it: {}\nChanged again since, left as they are: {}",
+                        instruction.lines().next().unwrap_or(""),
+                        if reverted.is_empty() { "none".into() } else { reverted.join(", ") },
+                        if kept.is_empty() { "none".into() } else { kept.join(", ") },
+                    ))),
+                    ItemContent::Notice { text, .. } => Some(Err(text.clone())),
+                    _ => None,
+                })
+        });
+        if let Some(result) = result {
+            return result;
+        }
+        if Instant::now() > deadline {
+            return Err("The undo is taking long; see the thread.".into());
+        }
+    }
 }
 
 async fn who_broke_it(

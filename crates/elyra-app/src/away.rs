@@ -214,6 +214,7 @@ mod tests {
                     is_error,
                     context_tokens: None,
                     context_window: None,
+                    after: None,
                 },
                 minutes_ago,
             )

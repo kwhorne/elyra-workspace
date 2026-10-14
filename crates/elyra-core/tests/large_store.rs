@@ -64,6 +64,7 @@ fn items(turns: usize, seed: usize) -> Vec<(ItemContent, Option<chrono::DateTime
                 is_error: false,
                 context_tokens: Some(50_000),
                 context_window: Some(200_000),
+                after: None,
             },
             None,
         ));

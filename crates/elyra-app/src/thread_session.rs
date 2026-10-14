@@ -22,6 +22,8 @@ pub enum SessionEvent {
     TurnCompleted,
     /// The agent needs the user (approval or question).
     NeedsAttention,
+    /// The folder's files changed outside a turn (an instruction undone).
+    FilesChanged,
     /// More of the reply, thinking or a tool's output streamed in. Only the
     /// thread's own view redraws for it; observers of the session aren't
     /// notified (it happens many times a second).
@@ -697,6 +699,124 @@ impl ThreadSession {
             self.set_status(ThreadStatus::Failed, cx);
         }
         cx.notify();
+    }
+
+    /// Take back the instruction `item` (a message from the user): what its
+    /// turn and automatic fixes changed is undone, later work stays. The
+    /// result is added as an entry.
+    pub fn undo_instruction(&mut self, item: ItemId, cx: &mut Context<Self>) {
+        if self.running {
+            self.notice("Wait for the turn to finish before undoing.", false, cx);
+            return;
+        }
+        let Some(span) = crate::undo::span(&self.items, item) else {
+            self.notice("That message has no checkpoint to undo from.", true, cx);
+            return;
+        };
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let dir = self.working_dir();
+        let threads = crate::bisect::threads_in(app.read(cx), &dir);
+        let n = self.items.len();
+        let refs = (
+            format!("refs/elyra/{}/{n}-undo-before", self.thread.id.simple()),
+            format!("refs/elyra/{}/{n}-undo-after", self.thread.id.simple()),
+        );
+        self.activity = Some("Undoing…".into());
+        cx.notify();
+        let instruction = span.instruction.clone();
+        let job = cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&dir)?;
+            // A turn from before its end was kept: up to the folder's next
+            // instruction.
+            let next = if span.after.is_none() {
+                let store = elyra_core::Store::open_read_only(&elyra_core::paths::database_path())?;
+                crate::bisect::timeline(&store, &threads)?
+                    .into_iter()
+                    .find(|step| step.at > span.at)
+                    .map(|step| step.checkpoint)
+            } else {
+                None
+            };
+            crate::undo::undo(&root, &span, next, (&refs.0, &refs.1))
+        });
+        cx.spawn(async move |this, cx| {
+            let done = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.activity = None;
+                match done {
+                    Ok(done) => this.append(
+                        ItemContent::Undo {
+                            item,
+                            instruction,
+                            reverted: done.reverted,
+                            kept: done.kept,
+                            before_undo: done.before_undo,
+                            after_undo: done.after_undo,
+                            put_back: false,
+                        },
+                        cx,
+                    ),
+                    Err(err) => this.notice(format!("Could not undo: {err:#}"), true, cx),
+                }
+                cx.emit(SessionEvent::FilesChanged);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Put back an undo (the entry `undo`): its changes return, what
+    /// changed since stays.
+    pub fn put_back_undo(&mut self, undo: ItemId, cx: &mut Context<Self>) {
+        let Some(index) = self.items.iter().position(|i| i.id == undo) else {
+            return;
+        };
+        let ItemContent::Undo {
+            before_undo,
+            after_undo,
+            put_back: false,
+            ..
+        } = &self.items[index].content
+        else {
+            return;
+        };
+        let (before, after) = (before_undo.clone(), after_undo.clone());
+        let dir = self.working_dir();
+        let job = cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&dir)?;
+            crate::undo::put_back(&root, &before, &after)
+        });
+        cx.spawn(async move |this, cx| {
+            let applied = job.await;
+            let _ = this.update(cx, |this, cx| {
+                match applied {
+                    Ok(applied) => {
+                        if let Some(ItemContent::Undo { put_back, .. }) =
+                            this.items.get_mut(index).map(|i| &mut i.content)
+                        {
+                            *put_back = true;
+                        }
+                        this.persist_item(index, cx);
+                        if !applied.kept.is_empty() {
+                            this.notice(
+                                format!(
+                                    "Put back, except {}: changed since in ways that don't merge.",
+                                    applied.kept.join(", ")
+                                ),
+                                false,
+                                cx,
+                            );
+                        }
+                    }
+                    Err(err) => this.notice(format!("Could not put it back: {err:#}"), true, cx),
+                }
+                cx.emit(SessionEvent::FilesChanged);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Find the instruction whose turn made the checks fail ("Who broke
@@ -1488,6 +1608,7 @@ impl ThreadSession {
                 is_error,
                 context_tokens: self.usage.context_tokens,
                 context_window: self.usage.context_window,
+                after: None,
             },
             cx,
         );
@@ -1679,9 +1800,13 @@ impl ThreadSession {
             return;
         };
         let (dir, project, thread) = (self.working_dir(), self.project.id, self.thread.id);
+        // The folder as the turn left it, kept (a ref) for taking it back.
+        let after_ref = format!("refs/elyra/{}/{}-after", thread.simple(), self.items.len());
         let job = cx.background_executor().spawn(async move {
             let root = elyra_git::repo_root(&dir).ok()?;
-            let added = elyra_git::checkpoint::added_lines(&root, &checkpoint).ok()?;
+            let after =
+                elyra_git::checkpoint::create(&root, &after_ref, "elyra: after turn").ok()?;
+            let added = elyra_git::checkpoint::added_between(&root, &checkpoint, &after).ok()?;
             // Every file the turn added to, also from the shell, for the board.
             let mut files: Vec<String> = added
                 .iter()
@@ -1692,13 +1817,24 @@ impl ThreadSession {
                 .into_iter()
                 .filter_map(|(path, text)| Some((path, elyra_core::line_hash(&text)?)))
                 .collect::<Vec<_>>();
-            Some((files, lines))
+            Some((files, lines, after))
         });
         cx.spawn(async move |this, cx| {
-            let Some((files, lines)) = job.await else {
+            let Some((files, lines, after)) = job.await else {
                 return;
             };
             let _ = this.update(cx, |this, cx| {
+                // The turn's summary keeps where it left the folder.
+                if let Some(index) = this
+                    .items
+                    .iter()
+                    .rposition(|i| matches!(i.content, ItemContent::TurnSummary { .. }))
+                    && let ItemContent::TurnSummary { after: slot, .. } =
+                        &mut this.items[index].content
+                {
+                    *slot = Some(after);
+                    this.persist_item(index, cx);
+                }
                 this.publish_changes(
                     files.into_iter().map(|file| (file, Vec::new())).collect(),
                     cx,

@@ -6,6 +6,7 @@ pub mod diff;
 pub mod github;
 pub mod ops;
 pub mod scratch;
+pub mod undo;
 
 use anyhow::{Context as _, Result, bail};
 use std::path::{Path, PathBuf};

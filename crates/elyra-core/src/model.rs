@@ -333,6 +333,10 @@ pub enum ItemContent {
         context_tokens: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context_window: Option<u64>,
+        /// A snapshot of the folder when the turn ended (set once its lines
+        /// are recorded), for taking the turn back later.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
     },
     Notice {
         text: String,
@@ -379,6 +383,21 @@ pub enum ItemContent {
         /// The user acted on it (reviewed the changes or stopped following).
         #[serde(default)]
         handled: bool,
+    },
+    /// An instruction taken back: its turn's changes undone, later work kept.
+    Undo {
+        /// The user message it was.
+        item: ItemId,
+        instruction: String,
+        /// Files put back as they were before it.
+        reverted: Vec<String>,
+        /// Files changed since in ways that don't merge: left as they are.
+        kept: Vec<String>,
+        /// Snapshots just before and after the undo, to put it back.
+        before_undo: String,
+        after_undo: String,
+        #[serde(default)]
+        put_back: bool,
     },
     /// What made the checks fail: the instruction whose turn turned them
     /// from green to red, found by running them against earlier states.

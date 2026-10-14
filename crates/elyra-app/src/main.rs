@@ -55,6 +55,7 @@ mod thread_search;
 mod thread_session;
 mod thread_view;
 mod transcript;
+mod undo;
 mod updater;
 mod updates;
 mod webview;
