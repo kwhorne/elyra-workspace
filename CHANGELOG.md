@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.11.0
+
+Review a branch as the story of its instructions, and resolve conflicts knowing
+what each side was for.
+
+- **Review a branch step by step.** Go through a branch one instruction at a
+  time: what was asked, what the agent said it did, and the lines it wrote with
+  the unread ones marked. **Mark as read and next** marks them and moves on.
+  Open it from the PR tab or the command palette. See
+  [Review step by step](docs/git-and-review.md#review-step-by-step).
+- **Merge conflicts that know why.** When a merge leaves conflicts, **Resolve,
+  knowing why** in Changes gives the agent each conflict with the instruction
+  behind each side, so it keeps what both were asked to do. Agents can ask with
+  the gateway's new `conflict_context` tool. See
+  [Merge conflicts](docs/git-and-review.md#merge-conflicts).
+
 ## 1.10.0
 
 Take back one instruction without losing what came after it.
