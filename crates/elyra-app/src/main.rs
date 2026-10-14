@@ -23,6 +23,7 @@ mod felagi_runtime;
 mod files_view;
 mod gateway;
 mod grove;
+mod instructions;
 mod intent_board;
 mod journeys;
 mod lifecycle;

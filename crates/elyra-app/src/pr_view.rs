@@ -39,6 +39,8 @@ pub struct PrView {
     body: Entity<TextareaState>,
     comment: Entity<InputState>,
     draft: bool,
+    /// What the branch does, by instruction (None while it loads).
+    overview: Option<Result<crate::instructions::Overview, String>>,
 }
 
 impl EventEmitter<PrEvent> for PrView {}
@@ -71,6 +73,7 @@ impl PrView {
             }),
             comment: cx.new(|cx| InputState::new(window, cx).placeholder("Write a comment")),
             draft: false,
+            overview: None,
         };
         this.refresh(cx);
         this
@@ -142,11 +145,203 @@ impl PrView {
         cx.spawn(async move |this, cx| {
             let state = job.await;
             let _ = this.update(cx, |this, cx| {
+                let new_branch = matches!(state, PrState::NoPr { .. });
                 this.state = state;
+                if new_branch {
+                    this.load_overview(cx);
+                }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Group what the branch adds by the instructions behind it (in the
+    /// background: it diffs the branch and reads the line record).
+    fn load_overview(&mut self, cx: &mut Context<Self>) {
+        let project = self
+            .session
+            .as_ref()
+            .and_then(|s| s.upgrade())
+            .and_then(|s| s.read(cx).app_entity())
+            .and_then(|app| crate::provenance::project_of(app.read(cx), &self.cwd));
+        let Some(project) = project else {
+            self.overview = Some(Err("This folder isn't in a project.".into()));
+            return;
+        };
+        self.overview = None;
+        let cwd = self.cwd.clone();
+        let job = cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&cwd)?;
+            crate::instructions::load(&root, project, &elyra_core::paths::database_path())
+        });
+        cx.spawn(async move |this, cx| {
+            let overview = job.await.map_err(|err| format!("{err:#}"));
+            let _ = this.update(cx, |this, cx| {
+                this.overview = Some(overview);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Fill in the title and description from the instructions: no model.
+    fn describe_from_instructions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Ok(overview)) = &self.overview else {
+            return;
+        };
+        let issue = self
+            .session
+            .as_ref()
+            .and_then(|s| s.upgrade())
+            .and_then(|s| s.read(cx).thread.felagi_issue.clone());
+        let (title, body) = crate::instructions::pull_request(overview, issue.as_deref());
+        let title = if Self::conventional(cx) {
+            crate::conventional::normalize(&title)
+        } else {
+            title
+        };
+        self.title
+            .update(cx, |input, cx| input.set_value(title, window, cx));
+        self.body
+            .update(cx, |input, cx| input.set_value(body, window, cx));
+        cx.notify();
+    }
+
+    fn render_overview(&self, cx: &Context<Self>) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        let content = match &self.overview {
+            None => h_flex()
+                .gap_2()
+                .text_xs()
+                .text_color(muted)
+                .child(Spinner::new().xsmall())
+                .child("Reading which instructions wrote the branch…")
+                .into_any_element(),
+            Some(Err(err)) => div()
+                .text_xs()
+                .text_color(muted)
+                .child(err.clone())
+                .into_any_element(),
+            Some(Ok(overview)) if overview.groups.is_empty() => div()
+                .text_xs()
+                .text_color(muted)
+                .child(format!(
+                    "The branch adds no lines compared with {}.",
+                    overview.base
+                ))
+                .into_any_element(),
+            Some(Ok(overview)) => v_flex()
+                .gap_2()
+                .children(overview.groups.iter().map(|group| {
+                    let title = match group.turn {
+                        Some(_) => group
+                            .instruction
+                            .lines()
+                            .map(str::trim)
+                            .find(|l| !l.is_empty())
+                            .unwrap_or("(empty message)")
+                            .to_string(),
+                        None => "Not written by an agent in Elyra Workspace".to_string(),
+                    };
+                    let mut meta: Vec<String> = Vec::new();
+                    if group.turn.is_some() {
+                        meta.push(group.thread.clone());
+                        meta.push(group.agent.clone());
+                        if let Some(at) = group.at {
+                            meta.push(
+                                at.with_timezone(&chrono::Local)
+                                    .format("%Y-%m-%d")
+                                    .to_string(),
+                            );
+                        }
+                    }
+                    meta.push(format!(
+                        "+{} line{}",
+                        group.lines,
+                        if group.lines == 1 { "" } else { "s" }
+                    ));
+                    if let Some(cost) = group.cost {
+                        meta.push(crate::thread_session::format_usd(cost));
+                    }
+                    meta.retain(|m| !m.is_empty());
+                    let files = group
+                        .files
+                        .iter()
+                        .take(6)
+                        .map(|(path, lines)| {
+                            format!("{} +{lines}", path.rsplit('/').next().unwrap_or(path))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                        + if group.files.len() > 6 { ", …" } else { "" };
+                    v_flex()
+                        .p_2()
+                        .gap_0p5()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .child(
+                            div()
+                                .text_sm()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(title),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .text_xs()
+                                .text_color(muted)
+                                .child(meta.join(" · "))
+                                .when_some(group.checks, |this, passed| {
+                                    this.child(
+                                        div()
+                                            .text_color(if passed {
+                                                cx.theme().success
+                                            } else {
+                                                cx.theme().danger
+                                            })
+                                            .child(if passed {
+                                                "checks passed"
+                                            } else {
+                                                "checks failed"
+                                            }),
+                                    )
+                                })
+                                .when(group.unread > 0, |this| {
+                                    this.child(
+                                        div()
+                                            .text_color(cx.theme().warning)
+                                            .child(format!("{} unread", group.unread)),
+                                    )
+                                }),
+                        )
+                        .child(div().text_xs().text_color(muted).child(files))
+                }))
+                .into_any_element(),
+        };
+        v_flex()
+            .gap_2()
+            .pt_2()
+            .child(
+                h_flex()
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(muted)
+                    .child(div().flex_1().child(match &self.overview {
+                        Some(Ok(overview)) => {
+                            format!(
+                                "WHAT THIS BRANCH DOES · COMPARED WITH {}",
+                                overview.base.to_uppercase()
+                            )
+                        }
+                        _ => "WHAT THIS BRANCH DOES".to_string(),
+                    })),
+            )
+            .child(content)
+            .into_any_element()
     }
 
     fn run(
@@ -461,6 +656,18 @@ impl PrView {
                     )
                     .child(div().flex_1())
                     .child(
+                        Button::new("describe-pr")
+                            .small()
+                            .ghost()
+                            .icon(IconName::ListTree)
+                            .label("From instructions")
+                            .tooltip("Write the title and description from the instructions behind the branch, without a model")
+                            .disabled(!matches!(&self.overview, Some(Ok(o)) if !o.groups.is_empty()))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.describe_from_instructions(window, cx)
+                            })),
+                    )
+                    .child(
                         Button::new("generate-pr")
                             .small()
                             .ghost()
@@ -480,6 +687,7 @@ impl PrView {
                             .on_click(cx.listener(|this, _, _, cx| this.create(cx))),
                     ),
             )
+            .child(self.render_overview(cx))
             .into_any_element()
     }
 

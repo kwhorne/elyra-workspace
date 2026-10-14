@@ -54,6 +54,18 @@ pub fn repo_root(path: &Path) -> Result<PathBuf> {
     ))
 }
 
+/// Where the current branch left the default branch: the first of
+/// `origin/main`, `origin/master`, `main` and `master` that exists, and the
+/// commit HEAD shares with it. None on a repository without one of those.
+pub fn branch_base(repo: &Path) -> Option<(String, String)> {
+    ["origin/main", "origin/master", "main", "master"]
+        .into_iter()
+        .find_map(|base| {
+            let sha = run_ok(repo, &["merge-base", "HEAD", base]).ok()?;
+            Some((base.to_string(), sha.trim().to_string()))
+        })
+}
+
 /// The repository's shared git directory: the same for all its worktrees.
 pub fn common_dir(path: &Path) -> Result<PathBuf> {
     let dir = PathBuf::from(

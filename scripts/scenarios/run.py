@@ -550,6 +550,25 @@ def agents_find_earlier_threads(world, project):
     expect("Flaky checkout test" in reply, "the agent finds it: " + reply[-300:])
 
 
+@scenario(files={"lib.rs": RUST})
+def a_branch_reads_as_the_instructions_behind_it(world, project):
+    thread = world.new_thread(project, "[write cart.rs] fn member_discount(total: u32) -> u32 { total * 85 / 100 }")
+    world.wait(thread, 30)
+    world.tool("set_thread_title", thread_id=thread, title="Member discount")
+    world.tool("send_message", thread_id=thread, text="[write notes.md] Shipping is free above 500 kroner.")
+    world.wait(thread, 30)
+    time.sleep(1.5)  # a turn's lines are recorded after it ends
+    with open(os.path.join(world.projects[project]["path"], "lib.rs"), "a") as f:
+        f.write("fn written_by_hand() -> u32 { 42 }\n")
+    text = world.tool("changes_by_instruction", project=project)
+    first = text.find("### [write cart.rs] fn member_discount")
+    second = text.find("### [write notes.md] Shipping is free")
+    by_hand = text.find("### Not written by an agent in Elyra Workspace")
+    expect(-1 < first < second < by_hand, "the instructions in order, by hand last: " + text)
+    expect("Member discount · " in text and "- `cart.rs` (+1)" in text and "- `notes.md` (+1)" in text, text)
+    expect(text[by_hand:].count("- `lib.rs` (+1)") == 1, "the line written by hand: " + text[by_hand:])
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

@@ -139,11 +139,33 @@ The **PR** tab in the tools panel works with GitHub through the
 If the branch has no pull request yet, you can create one:
 
 - Write a title and description, or press **Generate** to have the agent write
-  them from the branch's commits.
+  them from the branch's commits. **From instructions** writes them without a
+  model, from [what the branch does](#what-this-branch-does): the instruction
+  behind the most lines is the title, and the description has one section per
+  instruction with its files, whether the checks passed, and the lines no agent
+  wrote.
 - Titles follow [Conventional Commits](#conventional-commits);
   **Create pull request** says what to fix if a title doesn't.
 - Tick **Draft** to open it as a draft.
 - Press **Create pull request**. The branch is pushed first if needed.
+
+### What this branch does
+
+Below the form, the tab shows what the branch adds compared with `main` (or
+`master`), its commits and anything not committed yet, grouped by the
+instruction behind it. Elyra Workspace remembers which lines every agent wrote
+for which message, so this works for every agent and across threads, also when
+an agent committed on its own. Each group shows:
+
+- the message, its thread, agent and date
+- how many lines it added and in which files
+- whether the project's checks passed after that turn (and its automatic
+  fixes), and what the turn cost
+- how many of its lines nobody has [marked as read](#lines-nobody-has-read)
+
+Lines no agent in Elyra Workspace wrote, by hand or before the record started,
+are listed last. Agents get the same with the gateway's `changes_by_instruction`
+tool, for instance to write the pull request themselves.
 
 When the branch has a pull request, the tab is labelled **PR #n** and shows:
 

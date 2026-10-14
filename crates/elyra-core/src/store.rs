@@ -432,6 +432,18 @@ impl Store {
         Ok(())
     }
 
+    /// One thread, archived or not.
+    pub fn thread(&self, id: ThreadId) -> Result<Option<Thread>> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!("SELECT {THREAD_COLUMNS} FROM threads WHERE id = ?1"),
+                params![id.to_string()],
+                thread_from_row,
+            )
+            .optional()?)
+    }
+
     pub fn threads(&self, include_archived: bool) -> Result<Vec<Thread>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT {THREAD_COLUMNS} FROM threads WHERE archived = 0 OR ?1
@@ -833,6 +845,25 @@ impl Store {
             .collect())
     }
 
+    /// Every recorded origin of lines in this file: (hash, thread, the user
+    /// message, when, whether a person has read it), oldest first.
+    pub fn origins_in_file(&self, project: ProjectId, path: &str) -> Result<Vec<LineRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT hash, thread_id, item_id, at, reviewed_at IS NOT NULL FROM line_origins
+             WHERE project_id = ?1 AND path = ?2 ORDER BY at",
+        )?;
+        let rows = stmt.query_map(params![project.to_string(), path], |row| {
+            Ok((
+                row.get(0)?,
+                parse_uuid(row, 1)?,
+                parse_uuid(row, 2)?,
+                parse_time(row, 3)?,
+                row.get(4)?,
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Of the lines agents wrote in this file, the ones nobody has marked as
     /// read since.
     pub fn unreviewed_lines(&self, project: ProjectId, path: &str) -> Result<HashSet<i64>> {
@@ -933,6 +964,10 @@ fn parse_time(row: &Row, index: usize) -> rusqlite::Result<DateTime<Utc>> {
 }
 
 /// The part of `text` around the first match of `query`.
+/// A recorded line: (hash, thread, the user message, when, whether a person
+/// has read it).
+pub type LineRecord = (i64, ThreadId, ItemId, DateTime<Utc>, bool);
+
 /// What to search in.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SearchFilter {

@@ -88,6 +88,7 @@ const READ_TOOLS: &[&str] = &[
     "why",
     "history",
     "intent_board",
+    "changes_by_instruction",
     "search_threads",
     "list_projects",
     "list_threads",
@@ -143,6 +144,14 @@ fn tools() -> Vec<Tool> {
         tool(
             "intent_board",
             "What other agents in Elyra Workspace changed in this repository during the last hour: thread, agent, whether they work in your folder or on another branch, file and the functions or classes they changed. Check it before changing shared code, so parallel agents stay out of each other's way. Your own thread, its Best of N siblings and side chats are left out.",
+            json!({ "type": "object", "properties": {
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
+                "thread_id": id
+            } }),
+        ),
+        tool(
+            "changes_by_instruction",
+            "What the current branch does, by the instructions behind it: the lines it adds compared with main (commits and uncommitted changes), grouped by the user message that had an agent write them — any agent in Elyra Workspace, across threads — with the thread, agent, date, whether the checks passed afterwards and the files. Lines no agent wrote form their own group. Use it to write a pull request description that says what was asked for, or to see what a branch contains before reviewing it.",
             json!({ "type": "object", "properties": {
                 "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
                 "thread_id": id
@@ -439,6 +448,10 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         why(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "history" {
         history(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "changes_by_instruction" {
+        changes_by_instruction(&app, &call, cx)
+            .await
+            .map(Output::Text)
     } else if call.tool == "search_threads" {
         search_threads(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "intent_board" {
@@ -739,6 +752,33 @@ async fn why(app: &Entity<AppState>, call: &Call, cx: &mut AsyncApp) -> Result<S
         });
         crate::provenance::why_text(&format!("{relative}:{line}"), &text, &turns, read, blame)
     }))
+}
+
+async fn changes_by_instruction(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let (dir, project) = cx.update(|cx| provenance_scope(app, call, cx))?;
+    let overview = cx
+        .background_executor()
+        .spawn(async move {
+            let root = elyra_git::repo_root(&dir)?;
+            crate::instructions::load(&root, project, &elyra_core::paths::database_path())
+        })
+        .await
+        .map_err(|err| format!("{err:#}"))?;
+    if overview.groups.is_empty() {
+        return Ok(format!(
+            "The branch adds no lines compared with {}.",
+            overview.base
+        ));
+    }
+    Ok(format!(
+        "Compared with {}, the branch adds lines for these instructions (oldest first):\n\n{}",
+        overview.base,
+        crate::instructions::markdown(&overview)
+    ))
 }
 
 async fn intent_board(
