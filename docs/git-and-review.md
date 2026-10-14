@@ -165,7 +165,8 @@ If the branch has no pull request yet, you can create one:
 
 Below the form, the tab shows what the branch adds compared with `main` (or
 `master`), its commits and anything not committed yet, grouped by the
-instruction behind it. Elyra Workspace remembers which lines every agent wrote
+instruction behind it. This only needs Git, so it shows also when the project
+has no GitHub remote. Elyra Workspace remembers which lines every agent wrote
 for which message, so this works for every agent and across threads, also when
 an agent committed on its own. Each group shows:
 
@@ -196,6 +197,30 @@ oldest first, starting at the first one with something unread:
 Changes does) and moves on; **Open thread** shows the conversation. The list on
 the left shows every instruction, with a check when it's read. The lines no
 agent wrote come last.
+
+### Restack by instruction
+
+**Restack by instruction** (next to **Review step by step**) rewrites the branch
+as one commit per instruction, in the order they were asked: each commit has the
+folder as that instruction's turns (and their automatic fixes) left it, the
+message as its title (with Conventional Commits on, a `chore:` when the message
+doesn't follow them) and the thread and agent in its body, dated when it was
+asked. A last commit, *Other changes*, holds what came after or what no agent
+wrote. However the agent committed along the way, in one big commit or many
+small ones, the branch then reads as the story of what was asked.
+
+- A dialog shows the new commits and the ones they replace before anything
+  happens.
+- Your files stay exactly as they are; what wasn't committed is committed.
+- Only the branch's commits since it left `main` (or `master`) are replaced. A
+  branch with commits already pushed needs a force push afterwards; Elyra doesn't
+  push for you. On `main` itself, only uncommitted work is restacked.
+- **Put the old commits back** undoes it: the old commits return, and what
+  wasn't committed before is uncommitted again.
+- It waits while a merge or rebase is in progress or there are conflicts.
+
+Only turns made on this branch count. Agents can see how a branch would be split
+with the gateway's `restack_preview` tool.
 
 When the branch has a pull request, the tab is labelled **PR #n** and shows:
 

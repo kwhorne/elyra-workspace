@@ -90,6 +90,7 @@ const READ_TOOLS: &[&str] = &[
     "intent_board",
     "changes_by_instruction",
     "conflict_context",
+    "restack_preview",
     "who_broke_it",
     "search_threads",
     "list_projects",
@@ -162,6 +163,14 @@ fn tools() -> Vec<Tool> {
         tool(
             "conflict_context",
             "When a merge, rebase or pull left conflicts: each conflict in the folder with both sides, and for each side the instruction (user message, thread, agent) that had an agent in Elyra Workspace write those lines. Call it before resolving, so the result keeps what both sides were asked to do instead of picking one block of text.",
+            json!({ "type": "object", "properties": {
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
+                "thread_id": id
+            } }),
+        ),
+        tool(
+            "restack_preview",
+            "How the current branch would read as one commit per instruction: the commits it would get on top of main (each instruction's message as the title, in the order they were asked, and the files it changes), which commits it would replace, and whether those are pushed. Read-only; the user restacks from the PR tab.",
             json!({ "type": "object", "properties": {
                 "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
                 "thread_id": id
@@ -477,6 +486,8 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         history(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "conflict_context" {
         conflict_context(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "restack_preview" {
+        restack_preview(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "undo_instruction" {
         undo_instruction(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "who_broke_it" {
@@ -802,6 +813,30 @@ async fn conflict_context(
         .await
         .map_err(|err| format!("{err:#}"))?;
     Ok(explained.unwrap_or_else(|| "There are no merge conflicts in this folder.".into()))
+}
+
+async fn restack_preview(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let (dir, project) = cx.update(|cx| provenance_scope(app, call, cx))?;
+    let conventional =
+        cx.update(|cx| crate::preferences::Preferences::global(cx).conventional_titles);
+    let plan = cx
+        .background_executor()
+        .spawn(async move {
+            let root = elyra_git::repo_root(&dir)?;
+            crate::restack::plan(
+                &root,
+                project,
+                &elyra_core::paths::database_path(),
+                conventional,
+            )
+        })
+        .await
+        .map_err(|err| format!("Can't restack: {err:#}"))?;
+    Ok(crate::restack::describe(&plan))
 }
 
 async fn undo_instruction(

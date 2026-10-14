@@ -5,6 +5,7 @@ pub mod checkpoint;
 pub mod diff;
 pub mod github;
 pub mod ops;
+pub mod restack;
 pub mod scratch;
 pub mod undo;
 

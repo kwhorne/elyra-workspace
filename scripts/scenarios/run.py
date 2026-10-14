@@ -653,6 +653,34 @@ def conflicts_say_what_each_side_was_for(world, project):
     expect("no merge conflicts" in world.tool("conflict_context", project=project), "none after the abort")
 
 
+@scenario()
+def a_branch_restacks_by_instruction(world, project):
+    path = world.projects[project]["path"]
+    git = lambda *args: subprocess.run(["git", "-c", "user.email=s@s", "-c", "user.name=s", *args],
+                                       cwd=path, check=True, capture_output=True, text=True).stdout
+    git("checkout", "-q", "-b", "feature")
+    thread = world.new_thread(project, "[write cart.rs] fn total() -> u32 { 0 }")
+    world.wait(thread, 30)
+    world.tool("set_thread_title", thread_id=thread, title="Cart")
+    world.tool("send_message", thread_id=thread, text="[write shipping.rs] fn shipping() -> u32 { 49 }")
+    world.wait(thread, 30)
+    time.sleep(1.5)
+    git("add", "-A")
+    git("commit", "-qm", "wip")  # one commit, mixing both instructions
+    world.tool("send_message", thread_id=thread, text="[write notes.md] Free shipping above 500.")
+    world.wait(thread, 30)
+    time.sleep(1.5)
+    with open(os.path.join(path, "README.md"), "w") as f:
+        f.write("Written by hand.\n")
+    text = world.tool("restack_preview", project=project)
+    expect(text.startswith("4 commits on top of"), text)
+    # Conventional Commits is on by default: titles that don't follow it are chores.
+    order = [text.find("- chore: [write cart.rs]"), text.find("- chore: [write shipping.rs]"),
+             text.find("- chore: [write notes.md]"), text.find("- chore: other changes")]
+    expect(all(i >= 0 for i in order) and order == sorted(order), "in the order asked: " + text)
+    expect("It replaces the branch's 1 commit since" in text, text)
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

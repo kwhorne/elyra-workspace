@@ -20,6 +20,8 @@ use std::path::PathBuf;
 pub enum PrEvent {
     /// Text for the thread's composer (e.g. "address these review comments").
     Prompt(String),
+    /// The branch's commits changed here (restacked, or put back).
+    BranchChanged,
 }
 
 enum PrState {
@@ -41,6 +43,8 @@ pub struct PrView {
     draft: bool,
     /// What the branch does, by instruction (None while it loads).
     overview: Option<Result<crate::instructions::Overview, String>>,
+    /// The last restack, to put back.
+    restacked: Option<crate::restack::Done>,
 }
 
 impl EventEmitter<PrEvent> for PrView {}
@@ -74,6 +78,7 @@ impl PrView {
             comment: cx.new(|cx| InputState::new(window, cx).placeholder("Write a comment")),
             draft: false,
             overview: None,
+            restacked: None,
         };
         this.refresh(cx);
         this
@@ -145,9 +150,14 @@ impl PrView {
         cx.spawn(async move |this, cx| {
             let state = job.await;
             let _ = this.update(cx, |this, cx| {
-                let new_branch = matches!(state, PrState::NoPr { .. });
+                // What the branch does needs only git: also without GitHub.
+                let overview = match &state {
+                    PrState::NoPr { .. } => true,
+                    PrState::Unavailable(reason) => !reason.contains("not a Git repository"),
+                    _ => false,
+                };
                 this.state = state;
-                if new_branch {
+                if overview {
                     this.load_overview(cx);
                 }
                 cx.notify();
@@ -180,6 +190,126 @@ impl PrView {
             let _ = this.update(cx, |this, cx| {
                 this.overview = Some(overview);
                 cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn project(&self, cx: &App) -> Option<elyra_core::ProjectId> {
+        self.session
+            .as_ref()
+            .and_then(|s| s.upgrade())
+            .and_then(|s| s.read(cx).app_entity())
+            .and_then(|app| crate::provenance::project_of(app.read(cx), &self.cwd))
+    }
+
+    /// Work out the restack by instruction, and ask before doing it.
+    fn restack(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(project) = self.project(cx) else {
+            return;
+        };
+        let (cwd, conventional) = (self.cwd.clone(), Self::conventional(cx));
+        self.busy = Some("Working out the commits…");
+        cx.notify();
+        let job = cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&cwd)?;
+            let plan = crate::restack::plan(
+                &root,
+                project,
+                &elyra_core::paths::database_path(),
+                conventional,
+            )?;
+            anyhow::Ok((root, plan))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let planned = job.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.busy = None;
+                match planned {
+                    Ok((root, plan)) => this.confirm_restack(root, plan, window, cx),
+                    Err(err) => this.message = Some((format!("Can't restack: {err:#}"), true)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn confirm_restack(
+        &mut self,
+        root: PathBuf,
+        plan: crate::restack::Plan,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = cx.weak_entity();
+        let text = crate::restack::describe(&plan);
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let (view, root, plan) = (view.clone(), root.clone(), plan.clone());
+            alert
+                .title("Restack by instruction?")
+                .description(text.clone())
+                .confirm()
+                .ok_text("Restack")
+                .on_ok(move |_, _, cx| {
+                    let (root, plan) = (root.clone(), plan.clone());
+                    let _ = view.update(cx, |this, cx| this.apply_restack(root, plan, cx));
+                    true
+                })
+        });
+    }
+
+    fn apply_restack(&mut self, root: PathBuf, plan: crate::restack::Plan, cx: &mut Context<Self>) {
+        self.busy = Some("Restacking…");
+        cx.notify();
+        let count = plan.steps.len();
+        let job = cx
+            .background_executor()
+            .spawn(async move { crate::restack::apply(&root, &plan) });
+        cx.spawn(async move |this, cx| {
+            let done = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = None;
+                match done {
+                    Ok(done) => {
+                        this.restacked = Some(done);
+                        this.message = Some((
+                            format!(
+                                "Restacked into {count} commit{}, one per instruction.",
+                                if count == 1 { "" } else { "s" }
+                            ),
+                            false,
+                        ));
+                        cx.emit(PrEvent::BranchChanged);
+                        this.refresh(cx);
+                    }
+                    Err(err) => this.message = Some((format!("Couldn't restack: {err:#}"), true)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Put the commits from before the restack back.
+    fn undo_restack(&mut self, cx: &mut Context<Self>) {
+        let Some(done) = self.restacked.take() else {
+            return;
+        };
+        let cwd = self.cwd.clone();
+        let job = cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&cwd)?;
+            crate::restack::undo(&root, &done)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.message = Some(match result {
+                    Ok(()) => ("The old commits are back.".into(), false),
+                    Err(err) => (format!("Couldn't put them back: {err:#}"), true),
+                });
+                cx.emit(PrEvent::BranchChanged);
+                this.refresh(cx);
             });
         })
         .detach();
@@ -345,14 +475,32 @@ impl PrView {
                 matches!(&self.overview, Some(Ok(o)) if o.groups.iter().any(|g| g.turn.is_some())),
                 |this| {
                     this.child(
-                        Button::new("review-step-by-step")
-                            .small()
-                            .icon(IconName::ListChecks)
-                            .label("Review step by step")
-                            .tooltip("Go through the branch one instruction at a time")
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(crate::actions::ReviewBranch), cx)
-                            }),
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                Button::new("review-step-by-step")
+                                    .small()
+                                    .icon(IconName::ListChecks)
+                                    .label("Review step by step")
+                                    .tooltip("Go through the branch one instruction at a time")
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(crate::actions::ReviewBranch),
+                                            cx,
+                                        )
+                                    }),
+                            )
+                            .child(
+                                Button::new("restack")
+                                    .small()
+                                    .icon(IconName::Layers)
+                                    .label("Restack by instruction")
+                                    .tooltip("Rewrite the branch as one commit per instruction, in the order they were asked; the files stay as they are")
+                                    .disabled(self.busy.is_some())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.restack(window, cx)
+                                    })),
+                            ),
                     )
                 },
             )
@@ -1012,11 +1160,16 @@ impl Render for PrView {
                 .child(Spinner::new().small())
                 .child("Loading pull request…")
                 .into_any_element(),
-            PrState::Unavailable(reason) => div()
-                .p_4()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(reason.clone())
+            PrState::Unavailable(reason) => v_flex()
+                .p_3()
+                .gap_2()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(reason.clone()),
+                )
+                .when(self.overview.is_some(), |this| this.child(self.render_overview(cx)))
                 .into_any_element(),
             PrState::NoPr { branch, dirty } => self.render_create(branch, *dirty, cx),
             PrState::Pr(pr, inline) => self.render_pr(pr, inline, cx),
@@ -1059,6 +1212,19 @@ impl Render for PrView {
                             cx.theme().muted_foreground
                         })
                         .child(message),
+                )
+            })
+            .when(self.restacked.is_some(), |this| {
+                this.child(
+                    div().px_3().pb_1().child(
+                        Button::new("undo-restack")
+                            .xsmall()
+                            .ghost()
+                            .icon(IconName::Undo2)
+                            .label("Put the old commits back")
+                            .tooltip("The branch's commits as they were before the restack; what wasn't committed then is uncommitted again")
+                            .on_click(cx.listener(|this, _, _, cx| this.undo_restack(cx))),
+                    ),
                 )
             })
             .child(

@@ -39,6 +39,7 @@ mod provenance;
 mod quitting;
 mod race;
 mod recovery;
+mod restack;
 mod review_follow;
 mod review_inbox;
 mod rules;

@@ -597,12 +597,18 @@ impl Workspace {
                     self._subscriptions.push(cx.subscribe_in(
                         &view,
                         window,
-                        move |this, _, event: &crate::pr_view::PrEvent, window, cx| {
-                            let crate::pr_view::PrEvent::Prompt(text) = event;
-                            if let Some(thread) = this.thread_views.get(&id) {
-                                thread.update(cx, |thread, cx| {
-                                    thread.append_to_composer(text, window, cx)
-                                });
+                        move |this, _, event: &crate::pr_view::PrEvent, window, cx| match event {
+                            crate::pr_view::PrEvent::Prompt(text) => {
+                                if let Some(thread) = this.thread_views.get(&id) {
+                                    thread.update(cx, |thread, cx| {
+                                        thread.append_to_composer(text, window, cx)
+                                    });
+                                }
+                            }
+                            crate::pr_view::PrEvent::BranchChanged => {
+                                if let Some(changes) = this.changes_views.get(&id) {
+                                    changes.update(cx, |changes, cx| changes.refresh(cx));
+                                }
                             }
                         },
                     ));
