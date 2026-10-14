@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.7.0
+
+Faster all round, most of all with long threads and agents at work, and Go to
+symbol.
+
+- **Go to symbol (⌘T).** Jump to a function, method, class or type by name,
+  with fuzzy matching like Find file, from the same symbol index the agents use.
+  Picking one opens its file at that line. See
+  [Go to symbol](docs/files-and-search.md#go-to-symbol-t).
+- **Faster, especially with long threads and agents at work.** The thread now
+  draws only the rows in view, so a thread with thousands of entries scrolls and
+  streams as smoothly as a short one; it still follows the end while you're at
+  the bottom. While an agent writes, only its thread redraws: the side panel,
+  the sidebar and other threads are drawn from cache, a streamed reply is parsed
+  only as far as it is new, and threads in the background no longer redraw the
+  window. Searching, the usage statistics and other slow reads run off the main
+  thread, the title bar and sidebar stopped doing work on every frame, the
+  terminal cursor only blinks while the terminal has focus, and closed panels
+  stop polling. Writes to the database no longer wait for the disk each time.
+
 ## 1.6.0
 
 Find anything you or the agents said or did, in every thread, in an instant.
