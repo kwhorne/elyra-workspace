@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.12.0
+
+A branch can read as the story of what was asked: one commit per instruction.
+
+- **Restack by instruction.** One click in the PR tab rewrites a branch as one
+  commit per instruction, in the order they were asked, each titled with the
+  message and dated when it was asked, plus one for what no agent wrote. Your
+  files stay exactly as they are, a dialog shows what will change first, and
+  **Put the old commits back** undoes it. Agents can preview it with the
+  gateway's new `restack_preview` tool. See
+  [Restack by instruction](docs/git-and-review.md#restack-by-instruction).
+- **What a branch does, also without GitHub.** The PR tab shows the branch by
+  instruction, with **Review step by step** and **Restack by instruction**, also
+  in projects without a GitHub remote: they only need Git.
+
 ## 1.11.0
 
 Review a branch as the story of its instructions, and resolve conflicts knowing
