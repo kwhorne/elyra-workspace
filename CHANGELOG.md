@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.10.0
+
+Take back one instruction without losing what came after it.
+
+- **Undo an instruction.** Take back what one message had an agent change, even
+  after other turns came after it: its edits go, the files it created are
+  removed and the ones it deleted come back, while later work stays, also in the
+  same files. Files that changed again in ways that don't merge are left as
+  they are, and **Ask the agent to finish** hands them to the agent; **Put it
+  back** brings the undone changes back. Elyra now also keeps a snapshot of the
+  folder when each turn ends, so an undo stops exactly where the turn did.
+  Agents get the gateway's new `undo_instruction` tool. See
+  [Undo an instruction](docs/chat.md#undo-an-instruction).
+
 ## 1.9.0
 
 When the checks fail, find the instruction that broke them in one click, and
