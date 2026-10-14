@@ -1,5 +1,6 @@
-//! The Context tab (⇧⌘I): thread notes, pinned messages, a generated recap,
-//! the project's agent instructions and dev servers running in the project.
+//! The Context tab (⇧⌘I): what fills the context window, thread notes,
+//! pinned messages, a generated recap, the project's agent instructions and
+//! dev servers running in the project.
 
 use crate::app_state::AppState;
 use crate::thread_session::{ThreadSession, format_usd};
@@ -106,6 +107,8 @@ pub fn local_servers(root: &Path) -> Vec<Server> {
 pub enum ContextEvent {
     /// Show a local server in the thread's browser.
     OpenUrl(String),
+    /// Scroll the conversation to an entry.
+    ShowItem(ItemId),
 }
 
 impl EventEmitter<ContextEvent> for ContextView {}
@@ -130,6 +133,8 @@ pub struct ContextView {
     scanning: bool,
     /// The project's app in Grove, with its dev processes and caught mail.
     grove: Option<GroveInfo>,
+    /// What fills the context, for (transcript length, reported use).
+    report: Option<((usize, Option<u64>), crate::context_report::Report)>,
     _save_notes: Option<Task<()>>,
     _save_instructions: Option<Task<()>>,
     _save_check: Option<Task<()>>,
@@ -214,7 +219,10 @@ impl ContextView {
                     }));
                 }
             }),
-            cx.observe(&session, |_, _, cx| cx.notify()),
+            cx.observe(&session, |this, _, cx| {
+                this.refresh_report(cx);
+                cx.notify()
+            }),
         ];
         let mut this = Self {
             app,
@@ -231,6 +239,7 @@ impl ContextView {
             servers: Vec::new(),
             scanning: false,
             grove: None,
+            report: None,
             _save_notes: None,
             _save_instructions: None,
             _save_check: None,
@@ -238,7 +247,235 @@ impl ContextView {
         };
         this.scan_servers(cx);
         this.load_shared(cx);
+        this.refresh_report(cx);
         this
+    }
+
+    /// Recount what fills the context when the transcript or the reported
+    /// use changed (not on every streamed token).
+    fn refresh_report(&mut self, cx: &App) {
+        let session = self.session.read(cx);
+        let key = (session.items.len(), session.usage.context_tokens);
+        if self.report.as_ref().is_some_and(|(known, _)| *known == key) {
+            return;
+        }
+        let report = crate::context_report::report(
+            &session.items,
+            session.usage.context_tokens,
+            session.usage.context_window,
+        );
+        self.report = Some((key, report));
+    }
+
+    fn render_context(&self, cx: &Context<Self>) -> AnyElement {
+        use crate::context_report::{Kind, hint};
+        use crate::thread_view::format_tokens;
+        let Some((_, report)) = &self.report else {
+            return div().into_any_element();
+        };
+        let running = self.session.read(cx).running;
+        let can_compact =
+            elyra_provider::capabilities(self.session.read(cx).thread.provider).compact;
+        let colors = [
+            cx.theme().chart_1,
+            cx.theme().chart_2,
+            cx.theme().chart_3,
+            cx.theme().chart_4,
+        ];
+        let setup_color = cx.theme().muted_foreground.opacity(0.6);
+        let percent = |tokens: u64| format!("{:.0} %", report.share(tokens) * 100.);
+        let price = |tokens: u64| {
+            report
+                .cost(tokens)
+                .filter(|cost| *cost >= 0.001)
+                .map(|cost| format!(" · ≈ {}", format_usd(cost)))
+                .unwrap_or_default()
+        };
+        let summary = match (report.used, report.window) {
+            (Some(used), Some(window)) => format!(
+                "{} of {} tokens · {:.0} % full",
+                format_tokens(used),
+                format_tokens(window),
+                used as f64 / window.max(1) as f64 * 100.
+            ),
+            (Some(used), None) => format!("{} tokens", format_tokens(used)),
+            _ => format!(
+                "About {} tokens of conversation (the agent doesn't report its context)",
+                format_tokens(report.total())
+            ),
+        };
+        // The bar: the setup, then each kind, against the window.
+        let scale = report.window.unwrap_or(report.total()).max(1) as f32;
+        let mut segments: Vec<(u64, Hsla)> = Vec::new();
+        if let Some(setup) = report.setup {
+            segments.push((setup, setup_color));
+        }
+        for (index, (tokens, _)) in report.kinds.iter().enumerate() {
+            segments.push((*tokens, colors[index]));
+        }
+        let bar = h_flex()
+            .w_full()
+            .h(px(8.))
+            .rounded_full()
+            .overflow_hidden()
+            .bg(cx.theme().muted)
+            .children(
+                segments
+                    .into_iter()
+                    .filter(|(t, _)| *t > 0)
+                    .map(|(tokens, color)| {
+                        div()
+                            .h_full()
+                            .w(relative((tokens as f32 / scale).clamp(0.005, 1.)))
+                            .bg(color)
+                    }),
+            );
+        let legend_row = |color: Hsla, label: String, tokens: u64| {
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .child(div().size(px(8.)).flex_none().rounded_sm().bg(color))
+                .child(div().flex_1().child(label))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "{} · {}{}",
+                            format_tokens(tokens),
+                            percent(tokens),
+                            price(tokens)
+                        )),
+                )
+        };
+        let mut legend = v_flex().gap_1();
+        if let Some(setup) = report.setup {
+            legend = legend.child(legend_row(
+                setup_color,
+                "Agent setup: system prompt, tools, instructions".into(),
+                setup,
+            ));
+        }
+        for (index, kind) in Kind::ALL.iter().enumerate() {
+            let (tokens, count) = report.kinds[index];
+            if count > 0 {
+                legend = legend.child(legend_row(
+                    colors[index],
+                    format!("{} ({count})", kind.label()),
+                    tokens,
+                ));
+            }
+        }
+        let largest = report
+            .largest
+            .iter()
+            .filter(|e| e.tokens >= 500)
+            .map(|entry| {
+                let item = entry.item;
+                h_flex()
+                    .id(SharedString::from(format!("context-entry-{item}")))
+                    .gap_2()
+                    .px_1()
+                    .rounded_sm()
+                    .text_sm()
+                    .cursor_pointer()
+                    .hover(|this| this.bg(cx.theme().muted))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(entry.label.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "{} · {}{}",
+                                format_tokens(entry.tokens),
+                                percent(entry.tokens),
+                                price(entry.tokens)
+                            )),
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(ContextEvent::ShowItem(item))))
+            });
+        let largest: Vec<_> = largest.collect();
+        v_flex()
+            .gap_2()
+            .child(
+                Self::section("In the context", cx)
+                    .child(
+                        Button::new("context-compact")
+                            .ghost()
+                            .xsmall()
+                            .label("Compact")
+                            .tooltip(if can_compact {
+                                "Have the agent summarise the conversation so far"
+                            } else {
+                                "This agent can't be asked to compact from Elyra"
+                            })
+                            .disabled(running || !can_compact)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.session.update(cx, |session, cx| session.compact(cx))
+                            })),
+                    )
+                    .child(
+                        Button::new("context-clear")
+                            .ghost()
+                            .xsmall()
+                            .label("Clear")
+                            .tooltip("Start a new conversation in this thread; the transcript stays")
+                            .disabled(running)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.session
+                                    .update(cx, |session, cx| session.clear_context(cx))
+                            })),
+                    ),
+            )
+            .child(div().text_sm().child(summary))
+            .child(bar)
+            .child(legend)
+            .when(report.compacted > 0, |this| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "About {} tokens of earlier conversation were compacted into a summary.",
+                            format_tokens(report.compacted)
+                        )),
+                )
+            })
+            .when(!largest.is_empty(), |this| {
+                this.child(
+                    div()
+                        .pt_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Largest"),
+                )
+                .children(largest)
+            })
+            .when_some(hint(report), |this, hint| {
+                this.child(div().text_xs().text_color(cx.theme().warning).child(hint))
+            })
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(match report.turn_cost {
+                        Some(cost) => format!(
+                            "Estimates, about four characters a token. Prices are each part's share of the last turn ({}).",
+                            format_usd(cost)
+                        ),
+                        None => "Estimates, about four characters a token.".into(),
+                    }),
+            )
+            .into_any_element()
     }
 
     fn load_shared(&mut self, cx: &mut Context<Self>) {
@@ -991,6 +1228,7 @@ impl Render for ContextView {
                 v_flex()
                     .p_3()
                     .gap_4()
+                    .child(self.render_context(cx))
                     .child(self.render_goal(cx))
                     .child(self.render_budget(cx))
                     .child(

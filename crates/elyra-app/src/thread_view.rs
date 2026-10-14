@@ -1030,6 +1030,17 @@ impl ThreadView {
         self.scroll_to_match(cx);
     }
 
+    /// Scroll the conversation to an entry.
+    pub fn reveal(&mut self, item: elyra_core::ItemId, cx: &mut Context<Self>) {
+        let rows = transcript::render(self.session.read(cx), &self.expanded, &self.forms, None, cx);
+        if let Some(index) = rows.iter().position(|(id, _)| *id == Some(item)) {
+            self.follow = false;
+            // Child 0 is the top spacer.
+            self.scroll.scroll_to_item(index + 1);
+        }
+        cx.notify();
+    }
+
     fn scroll_to_match(&mut self, cx: &mut Context<Self>) {
         let target = self
             .find
@@ -1976,7 +1987,7 @@ impl ThreadView {
     }
 }
 
-fn format_tokens(tokens: u64) -> String {
+pub(crate) fn format_tokens(tokens: u64) -> String {
     if tokens >= 1_000_000 {
         format!("{:.1}M", tokens as f64 / 1_000_000.)
     } else if tokens >= 1000 {
@@ -2005,7 +2016,7 @@ fn context_meter(session: &ThreadSession, cx: &App) -> AnyElement {
         .map(|c| format!(" · ${c:.2}"))
         .unwrap_or_default();
     let tooltip = format!(
-        "Context: {} of {} tokens{cost}",
+        "Context: {} of {} tokens{cost}. Click to see what fills it.",
         format_tokens(used),
         format_tokens(window)
     );
@@ -2030,6 +2041,8 @@ fn context_meter(session: &ThreadSession, cx: &App) -> AnyElement {
                 ),
         )
         .child(format!("{}%", (ratio * 100.).round() as u32))
+        .cursor_pointer()
+        .on_click(|_, window, cx| window.dispatch_action(Box::new(crate::actions::ShowContext), cx))
         .tooltip(move |window, cx| {
             gpui_kit::component::tooltip::Tooltip::new(tooltip.clone()).build(window, cx)
         })

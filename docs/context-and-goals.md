@@ -3,6 +3,32 @@
 The **Context** tab in the tools panel (**⇧⌘I**) collects everything around the
 active thread.
 
+## In the context
+
+The top of the tab shows what fills the agent's context window. It counts the
+conversation since the last **Clear**, next to what the agent last reported:
+
+- A bar and one row per part: the **agent setup** (its system prompt, tool
+  definitions and instructions, i.e. whatever the conversation doesn't account
+  for), **your messages**, **agent replies**, **tool calls** and **tool results**.
+  Each row has its size, its share of the context and roughly what carrying it
+  cost in the last turn.
+- **Largest**: the biggest single entries, such as a long log a command printed.
+  Click one to scroll the conversation to it.
+- When the agent has compacted earlier parts, a line says roughly how much.
+- When one tool result takes a large part of the context, a hint says so. The
+  agent reads the whole context again on every call it makes, so a large result
+  costs on every step until the conversation is compacted.
+
+**Compact** has the agent summarise the conversation so far. **Clear** starts a
+new conversation in the thread; the transcript stays. Neither is available while
+a turn runs.
+
+The numbers are estimates (about four characters a token). Prices are each part's
+share of what the last turn cost. Agents that don't report their context use
+(some ACP agents) get the conversation estimate only. Click the context meter
+below the message box to open this tab.
+
 ## Goal
 
 A goal keeps the agent working, turn after turn, until a larger objective is

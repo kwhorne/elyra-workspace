@@ -529,8 +529,16 @@ impl Workspace {
                         &view,
                         window,
                         move |this, _, event: &crate::context_view::ContextEvent, window, cx| {
-                            let crate::context_view::ContextEvent::OpenUrl(url) = event;
-                            this.open_in_browser(id, url, window, cx);
+                            match event {
+                                crate::context_view::ContextEvent::OpenUrl(url) => {
+                                    this.open_in_browser(id, url, window, cx);
+                                }
+                                crate::context_view::ContextEvent::ShowItem(item) => {
+                                    if let Some(view) = this.thread_views.get(&id) {
+                                        view.update(cx, |view, cx| view.reveal(*item, cx));
+                                    }
+                                }
+                            }
                         },
                     ));
                     self.context_views.insert(id, view);

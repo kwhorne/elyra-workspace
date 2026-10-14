@@ -132,7 +132,9 @@ The row below the message box controls the thread:
   fix and show the reproduction passing. The button turns yellow while it's on.
   The change applies from the next message.
 - **Context meter**: how full the model's context window is, with the cost so far
-  when the agent reports it. When it's nearly full, use `/compact`.
+  when the agent reports it. Click it to see
+  [what fills the context](context-and-goals.md#in-the-context). When it's nearly
+  full, use `/compact`.
 
 New threads start with the agent, model, effort and permission mode you used last.
 
