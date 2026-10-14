@@ -161,6 +161,9 @@ class World:
             prefs.setdefault("providers", {})["acp"] = {
                 "path": sys.executable, "args": os.path.join(HERE, "agent.py"),
                 "escalation_model": "big"}
+            # The scripted agent also stands in for Gemini CLI.
+            prefs["providers"]["gemini"] = {
+                "path": sys.executable, "args": os.path.join(HERE, "agent.py")}
             prefs["check_fix_attempts"] = 2
             prefs["agent_gateway"] = True
             prefs["check_updates"] = False
@@ -513,6 +516,20 @@ def acp_agents_get_the_instructions_once(world, project):
     given = open(path).read().splitlines() if os.path.exists(path) else []
     expect(len(given) == 1 and "Answer in Norwegian." in given[0],
            f"the first prompt carries them, the second doesn't: {given}")
+
+
+@scenario(files={"AGENTS.md": "# Rules\n\nUse Pest for tests.\n"})
+def gemini_gets_the_agents_md_it_wouldnt_read(world, project):
+    settings = os.path.expanduser("~/.gemini/settings.json")
+    if os.path.exists(settings) and "AGENTS.md" in open(settings).read():
+        return  # this Gemini reads AGENTS.md itself
+    text = world.tool("create_thread", project=project, prompt="[say] hi", provider="gemini")
+    thread = json.loads(text)["thread_id"]
+    world.wait(thread, 30)
+    path = os.path.join(world.projects[project]["path"], "instructions.log")
+    given = open(path).read() if os.path.exists(path) else ""
+    expect("The project's AGENTS.md" in given and "Use Pest for tests." in given,
+           "Gemini gets AGENTS.md: " + given[:300])
 
 
 def main():

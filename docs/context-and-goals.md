@@ -93,7 +93,7 @@ Elyra and Pi support this. ACP agents don't take extra instructions.
 When you correct an agent (*"no, we always validate with Form Requests"*), it can
 propose that as a rule: a card in the thread with the rule and what taught it.
 **Add to AGENTS.md** puts it under *Learned rules* in the repository's AGENTS.md
-(or CLAUDE.md, when that is what the project has), so every agent and your team
+(or CLAUDE.md or GEMINI.md, when that is what the project has), so every agent and your team
 get it; commit it with your changes. **Add to project instructions** keeps it in
 Elyra only. **Dismiss** drops it.
 
@@ -136,10 +136,16 @@ agents) too, so switching agents keeps the same tools.
   Mac, so they're only passed on after **Allow for every agent**. If the file
   changes, allow it again. **Stop sharing** takes it back. Agents get the change
   from their next message.
-- **Skills** in `.claude/skills/<name>/SKILL.md` and `.agents/skills/…`, in the
-  project and in your home folder. The other agents get a list of them (name,
-  description, path) and read a skill's SKILL.md when a task matches it. ACP
-  agents don't take extra instructions, so they don't get the list.
+- **Skills** in `.claude/skills/<name>/SKILL.md`, `.agents/skills/…` and
+  `.gemini/skills/…`, in the project and in your home folder. Each agent gets a
+  list (name, description, path) of the skills it doesn't find itself, and reads
+  a skill's SKILL.md when a task matches it. Claude Code finds `.claude/skills`;
+  Gemini CLI finds `.gemini/skills` and `.agents/skills`; the other agents get
+  them all.
+- **AGENTS.md for Gemini CLI.** Gemini CLI reads only `GEMINI.md` by default. In
+  a project without one, Gemini threads get the project's `AGENTS.md` (or
+  `CLAUDE.md`) along with their instructions, unless your Gemini settings
+  (`context.fileName`) already name that file.
 
 ## Local servers
 

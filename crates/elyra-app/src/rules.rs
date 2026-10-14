@@ -1,17 +1,18 @@
 //! Rules an agent learned from the user's corrections ("no, we always use
 //! Form Requests"): proposed as a card in the thread, and on the user's word
-//! added to the repository's agent instructions (AGENTS.md, or CLAUDE.md when
-//! that is what the project uses) or to the project's instructions in Elyra.
+//! added to the repository's agent instructions (AGENTS.md, or CLAUDE.md or
+//! GEMINI.md when that is what the project uses) or to the project's
+//! instructions in Elyra.
 
 use std::path::{Path, PathBuf};
 
 /// The section learned rules go under.
 const SECTION: &str = "## Learned rules";
 
-/// The instructions file to add rules to: AGENTS.md, else CLAUDE.md, else a
-/// new AGENTS.md.
+/// The instructions file to add rules to: AGENTS.md, else CLAUDE.md, else
+/// GEMINI.md, else a new AGENTS.md.
 pub fn instructions_file(dir: &Path) -> PathBuf {
-    for name in ["AGENTS.md", "CLAUDE.md"] {
+    for name in ["AGENTS.md", "CLAUDE.md", "GEMINI.md"] {
         let path = dir.join(name);
         if path.is_file() {
             return path;
@@ -119,6 +120,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         assert!(instructions_file(&dir).ends_with("AGENTS.md"));
+        std::fs::write(dir.join("GEMINI.md"), "").unwrap();
+        assert!(instructions_file(&dir).ends_with("GEMINI.md"));
         std::fs::write(dir.join("CLAUDE.md"), "").unwrap();
         assert!(instructions_file(&dir).ends_with("CLAUDE.md"));
         std::fs::write(dir.join("AGENTS.md"), "").unwrap();

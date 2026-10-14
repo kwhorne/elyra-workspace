@@ -1,15 +1,17 @@
 //! One setup for every agent. The MCP servers a project lists in `.mcp.json`
-//! (Claude Code's format) and the skills in `.claude/skills` and
-//! `.agents/skills` (and the user's own under `~/.claude/skills` and
-//! `~/.agents/skills`) reach the other agents too: Codex, Elyra, Pi and ACP
-//! agents. Claude Code reads both itself.
+//! (Claude Code's format) reach Codex, Elyra, Pi and ACP agents too; Claude
+//! Code reads the file itself. The skills in `.claude/skills`,
+//! `.agents/skills` and `.gemini/skills` (and the user's own under the same
+//! folders in the home directory) are listed for every agent that doesn't
+//! find them itself: Claude Code reads `.claude/skills`, Gemini CLI
+//! `.gemini/skills` and `.agents/skills`.
 //!
 //! `.mcp.json` comes with the repository and starts commands, so its servers
 //! are only passed on once the user allowed them for the project (Context
 //! tab); when the file changes, it has to be allowed again. Skills are only
 //! listed (name, description, path) for the agent to read when they apply.
 
-use elyra_core::{ProjectId, Store};
+use elyra_core::{ProjectId, ProviderKind, Store};
 use elyra_provider::McpServer;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -169,20 +171,28 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub path: PathBuf,
+    /// The skills folder it is in (`.claude`, `.agents` or `.gemini`).
+    pub home: &'static str,
 }
+
+/// The skills folders, in the order a name is taken from.
+const SKILL_HOMES: [&str; 3] = [".claude", ".agents", ".gemini"];
 
 /// The project's skills, then the user's own (a project skill wins a name).
 pub fn skills(project_dir: &Path) -> Vec<Skill> {
-    let mut roots = vec![
-        project_dir.join(".claude/skills"),
-        project_dir.join(".agents/skills"),
-    ];
-    if let Some(home) = dirs::home_dir() {
-        roots.push(home.join(".claude/skills"));
-        roots.push(home.join(".agents/skills"));
+    let mut roots: Vec<(&'static str, PathBuf)> = SKILL_HOMES
+        .iter()
+        .map(|home| (*home, project_dir.join(home).join("skills")))
+        .collect();
+    if let Some(user) = dirs::home_dir() {
+        roots.extend(
+            SKILL_HOMES
+                .iter()
+                .map(|home| (*home, user.join(home).join("skills"))),
+        );
     }
     let mut found: Vec<Skill> = Vec::new();
-    for root in roots {
+    for (home, root) in roots {
         let Ok(entries) = std::fs::read_dir(&root) else {
             continue;
         };
@@ -210,6 +220,7 @@ pub fn skills(project_dir: &Path) -> Vec<Skill> {
                 name,
                 description: description.unwrap_or_default(),
                 path,
+                home,
             });
         }
     }
@@ -234,6 +245,71 @@ fn frontmatter(text: &str) -> (Option<String>, Option<String>) {
     (field("name"), field("description"))
 }
 
+// ---- Gemini CLI's context file -----------------------------------------------
+
+/// The most of an instructions file passed along.
+const MAX_CONTEXT_FILE: usize = 24_000;
+
+/// What Gemini CLI wouldn't read by itself: it loads `GEMINI.md` unless its
+/// settings (`context.fileName`) name other files, so a project that keeps
+/// its agent instructions in AGENTS.md (or CLAUDE.md) gets them passed along.
+/// `user_settings` is `~/.gemini/settings.json`.
+pub fn gemini_context(dir: &Path, user_settings: Option<&Path>) -> Option<String> {
+    if dir.join("GEMINI.md").is_file() {
+        return None;
+    }
+    let configured: Vec<String> = [
+        Some(dir.join(".gemini/settings.json").as_path()),
+        user_settings,
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|path| std::fs::read_to_string(path).ok())
+    .filter_map(|text| serde_json::from_str::<Value>(&text).ok())
+    .flat_map(|settings| match &settings["context"]["fileName"] {
+        Value::String(name) => vec![name.clone()],
+        Value::Array(names) => names
+            .iter()
+            .filter_map(|n| n.as_str().map(str::to_string))
+            .collect(),
+        _ => Vec::new(),
+    })
+    .collect();
+    let name = ["AGENTS.md", "CLAUDE.md"]
+        .into_iter()
+        .find(|name| dir.join(name).is_file())?;
+    if configured.iter().any(|n| n == name) {
+        return None;
+    }
+    let text = std::fs::read_to_string(dir.join(name)).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let text: String = text.chars().take(MAX_CONTEXT_FILE).collect();
+    Some(format!(
+        "The project's {name}, its instructions for coding agents:\n\n{text}"
+    ))
+}
+
+/// The skills folders an agent reads itself.
+fn reads_itself(provider: ProviderKind) -> &'static [&'static str] {
+    match provider {
+        ProviderKind::Claude => &[".claude"],
+        ProviderKind::Gemini => &[".gemini", ".agents"],
+        _ => &[],
+    }
+}
+
+/// The skills to list for `provider`: those it doesn't find itself.
+pub fn skills_for(provider: ProviderKind, skills: Vec<Skill>) -> Vec<Skill> {
+    let own = reads_itself(provider);
+    skills
+        .into_iter()
+        .filter(|skill| !own.contains(&skill.home))
+        .collect()
+}
+
 /// Skills listed for the agent's system prompt.
 pub fn skills_prompt(skills: &[Skill]) -> Option<String> {
     if skills.is_empty() {
@@ -256,7 +332,11 @@ pub fn skills_prompt(skills: &[Skill]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{expand, fingerprint, frontmatter, parse_mcp_json, skills, skills_prompt};
+    use super::{
+        expand, fingerprint, frontmatter, gemini_context, parse_mcp_json, skills, skills_for,
+        skills_prompt,
+    };
+    use elyra_core::ProviderKind;
 
     #[test]
     fn reads_mcp_json_like_claude_code() {
@@ -315,6 +395,11 @@ mod tests {
             ),
             (".agents/skills", "plain", "No frontmatter"),
             (
+                ".gemini/skills",
+                "release",
+                "---\nname: release\ndescription: Cut a release\n---\n",
+            ),
+            (
                 ".agents/skills",
                 "dupe",
                 "---\nname: fluxui-development\n---\n",
@@ -328,13 +413,66 @@ mod tests {
             .into_iter()
             .filter(|s| s.path.starts_with(&dir))
             .collect();
-        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found.len(), 3, "{found:?}");
         assert_eq!(found[0].name, "fluxui-development");
         assert_eq!(found[0].description, "Flux UI in Livewire");
         assert_eq!(found[1].name, "plain", "the folder names it");
+        assert_eq!(
+            (found[2].name.as_str(), found[2].home),
+            ("release", ".gemini")
+        );
+        // Each agent gets what it doesn't find itself.
+        let names = |provider| {
+            skills_for(provider, found.clone())
+                .into_iter()
+                .map(|s| s.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(ProviderKind::Claude), ["plain", "release"]);
+        assert_eq!(names(ProviderKind::Gemini), ["fluxui-development"]);
+        assert_eq!(names(ProviderKind::Codex).len(), 3);
         let prompt = skills_prompt(&found).unwrap();
         assert!(prompt.contains("- fluxui-development: Flux UI in Livewire ("));
         assert_eq!(frontmatter("no"), (None, None));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn gives_gemini_the_instructions_it_wouldnt_read() {
+        let dir = std::env::temp_dir().join(format!("elyra-gemini-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".gemini")).unwrap();
+        assert_eq!(gemini_context(&dir, None), None, "nothing to pass");
+        std::fs::write(dir.join("AGENTS.md"), "# Rules\nUse Pest.\n").unwrap();
+        assert_eq!(
+            gemini_context(&dir, None).as_deref(),
+            Some(
+                "The project's AGENTS.md, its instructions for coding agents:\n\n# Rules\nUse Pest."
+            )
+        );
+        // Gemini reads it itself when its settings say so…
+        let user = dir.join("user-settings.json");
+        std::fs::write(
+            &user,
+            r#"{"context": {"fileName": ["AGENTS.md", "GEMINI.md"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(gemini_context(&dir, Some(&user)), None);
+        std::fs::write(&user, "{}").unwrap();
+        std::fs::write(
+            dir.join(".gemini/settings.json"),
+            r#"{"context": {"fileName": "AGENTS.md"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            gemini_context(&dir, Some(&user)),
+            None,
+            "also the project's settings"
+        );
+        std::fs::remove_file(dir.join(".gemini/settings.json")).unwrap();
+        // …or when the project has its own GEMINI.md.
+        std::fs::write(dir.join("GEMINI.md"), "x").unwrap();
+        assert_eq!(gemini_context(&dir, Some(&user)), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

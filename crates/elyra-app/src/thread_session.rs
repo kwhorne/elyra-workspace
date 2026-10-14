@@ -2341,14 +2341,26 @@ impl ThreadSession {
         if let Some(instructions) = self.project.instructions.as_deref() {
             parts.push(instructions.to_string());
         }
+        // Gemini CLI reads GEMINI.md only; give it the project's AGENTS.md.
+        if self.thread.provider == ProviderKind::Gemini
+            && let Some(context) = crate::shared_setup::gemini_context(
+                &self.working_dir(),
+                dirs::home_dir()
+                    .map(|home| home.join(".gemini/settings.json"))
+                    .as_deref(),
+            )
+        {
+            parts.push(context);
+        }
         if self.thread.debug_mode {
             parts.push(DEBUG_INSTRUCTIONS.to_string());
         }
-        // Claude Code finds skills itself; the others get a list.
-        if self.thread.provider != ProviderKind::Claude
-            && let Some(skills) =
-                crate::shared_setup::skills_prompt(&crate::shared_setup::skills(&self.project.path))
-        {
+        // Skills the agent doesn't find itself.
+        let skills = crate::shared_setup::skills_for(
+            self.thread.provider,
+            crate::shared_setup::skills(&self.project.path),
+        );
+        if let Some(skills) = crate::shared_setup::skills_prompt(&skills) {
             parts.push(skills);
         }
         (!parts.is_empty()).then(|| parts.join("\n\n"))
