@@ -19,6 +19,10 @@ pub struct AppState {
     sessions: HashMap<ThreadId, Entity<ThreadSession>>,
     /// What agents changed lately, per repository.
     pub intents: crate::intent_board::IntentBoard,
+    /// How many threads are archived (shown in the sidebar on every frame).
+    pub archived_count: usize,
+    /// Threads with a turn running, kept by their sessions.
+    pub running: std::collections::HashSet<ThreadId>,
 }
 
 impl AppState {
@@ -61,11 +65,13 @@ impl AppState {
             }
         }
         Ok(Self {
-            store,
             projects,
             threads,
             sessions: HashMap::new(),
             intents: Default::default(),
+            archived_count: store_archived(&store),
+            running: Default::default(),
+            store,
         })
     }
 
@@ -102,11 +108,9 @@ impl AppState {
         path: &Path,
         cx: &mut Context<Self>,
     ) -> Result<Project> {
-        let busy = self.project_threads(id).any(|thread| {
-            self.sessions
-                .get(&thread.id)
-                .is_some_and(|session| session.read(cx).running)
-        });
+        let busy = self
+            .project_threads(id)
+            .any(|thread| self.running.contains(&thread.id));
         anyhow::ensure!(
             !busy,
             "Stop the running threads in this project before changing its folder"
@@ -421,6 +425,7 @@ impl AppState {
         }
         self.threads.retain(|t| t.id != id);
         self.sessions.remove(&id);
+        self.archived_count = store_archived(&self.store);
         cx.notify();
     }
 
@@ -472,6 +477,7 @@ impl AppState {
             return;
         }
         self.threads.insert(0, thread);
+        self.archived_count = store_archived(&self.store);
         cx.notify();
     }
 
@@ -513,6 +519,7 @@ impl AppState {
             self.store.delete_thread(side)?;
             self.threads.retain(|t| t.id != side);
         }
+        self.archived_count = store_archived(&self.store);
         cx.notify();
         if remove_worktree
             && let Some(thread) = thread
@@ -604,14 +611,10 @@ impl AppState {
         }
     }
 
-    pub fn running_threads(&self, cx: &gpui_kit::App) -> Vec<Thread> {
+    pub fn running_threads(&self) -> Vec<Thread> {
         self.threads
             .iter()
-            .filter(|thread| {
-                self.sessions
-                    .get(&thread.id)
-                    .is_some_and(|s| s.read(cx).running)
-            })
+            .filter(|thread| self.running.contains(&thread.id))
             .cloned()
             .collect()
     }
@@ -681,6 +684,13 @@ impl AppState {
         self.sessions.insert(id, session.clone());
         Some(session)
     }
+}
+
+fn store_archived(store: &Store) -> usize {
+    store.archived_count().unwrap_or_else(|err| {
+        log::error!("counting archived threads: {err:#}");
+        0
+    })
 }
 
 /// A plain-text rendering of a transcript for another agent: messages and

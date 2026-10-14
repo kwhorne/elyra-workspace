@@ -293,22 +293,50 @@ pub fn link_project(
 
 // ---- token -------------------------------------------------------------
 
+/// Tokens read from the Keychain, kept for this process: the Félagi runtime
+/// asks every few seconds, and every save and delete goes through here.
+#[cfg(target_os = "macos")]
+static TOKENS: std::sync::Mutex<Option<std::collections::HashMap<String, Option<String>>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(target_os = "macos")]
+fn remember_token(account: &str, token: Option<String>) {
+    TOKENS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(Default::default)
+        .insert(account.to_string(), token);
+}
+
 #[cfg(target_os = "macos")]
 pub fn save_token(url: &str, token: &str) -> Result<()> {
     security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, url, token.as_bytes())
-        .context("saving the token in the Keychain")
+        .context("saving the token in the Keychain")?;
+    remember_token(url, Some(token.to_string()));
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
 pub fn token(url: &str) -> Option<String> {
-    security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, url)
+    if let Some(known) = TOKENS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|tokens| tokens.get(url).cloned())
+    {
+        return known;
+    }
+    let token = security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, url)
         .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .and_then(|bytes| String::from_utf8(bytes).ok());
+    remember_token(url, token.clone());
+    token
 }
 
 #[cfg(target_os = "macos")]
 pub fn forget_token(url: &str) {
     let _ = security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, url);
+    remember_token(url, None);
 }
 
 #[cfg(not(target_os = "macos"))]

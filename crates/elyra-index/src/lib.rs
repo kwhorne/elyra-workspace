@@ -771,6 +771,31 @@ impl SymbolIndex {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Every definition in the index, by file and line (at most `limit`), for
+    /// a client that matches names itself (a "go to symbol" list).
+    pub fn all_definitions(&self, limit: usize) -> Result<Vec<SymbolHit>, IndexError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.file, f.language, s.name, s.kind, s.line, s.col, s.end_line, s.container, s.signature
+             FROM symbols s JOIN files f ON f.path = s.file
+             ORDER BY s.file, s.line
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |r| {
+            Ok(SymbolHit {
+                file: r.get(0)?,
+                language: r.get(1)?,
+                name: r.get(2)?,
+                kind: r.get(3)?,
+                line: r.get(4)?,
+                col: r.get(5)?,
+                end_line: r.get(6)?,
+                container: r.get(7)?,
+                signature: r.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     /// References to `name` (exact, case-insensitive), with the enclosing definition when known.
     pub fn references(
         &self,
@@ -1197,6 +1222,20 @@ export function boot(options: Options): Runtime {
 
         let outline = index.outline("src/app.ts").unwrap();
         assert_eq!(outline.first().map(|h| h.name.as_str()), Some("Options"));
+        let all = index.all_definitions(10_000).unwrap();
+        assert!(
+            all.iter()
+                .any(|d| d.name == "Session" && d.file == "src/lib.rs")
+        );
+        assert!(
+            all.iter()
+                .any(|d| d.name == "Options" && d.file == "src/app.ts")
+        );
+        assert_eq!(
+            index.all_definitions(1).unwrap().len(),
+            1,
+            "the limit holds"
+        );
 
         // Unchanged files are skipped, edits are picked up, deletions are dropped.
         let second = index.refresh().unwrap();

@@ -172,8 +172,26 @@ impl Store {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
+    /// A second, read-only connection to an existing database, for slow
+    /// reads (search) on a background thread while the app keeps writing
+    /// through its own connection. No migrations: the app's store ran them.
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .with_context(|| format!("opening {} to read", path.display()))?;
+        conn.busy_timeout(std::time::Duration::from_secs(2))?;
+        Ok(Self { conn })
+    }
+
     fn from_connection(conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // With WAL, NORMAL keeps the database consistent and only syncs at
+        // checkpoints, instead of once per transcript entry.
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "journal_size_limit", 64 * 1024 * 1024)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         let mut store = Self { conn };
         store.migrate()?;
@@ -421,6 +439,15 @@ impl Store {
         ))?;
         let rows = stmt.query_map(params![include_archived], thread_from_row)?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn archived_count(&self) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM threads WHERE archived = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
     }
 
     pub fn archived_threads(&self) -> Result<Vec<Thread>> {

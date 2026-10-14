@@ -52,7 +52,18 @@ const MAX_SERVER_ERRORS: usize = 3;
 pub struct ThreadView {
     pub session: Entity<ThreadSession>,
     composer: Entity<TextareaState>,
-    scroll: ScrollHandle,
+    /// The conversation, drawn row by row: only the rows in view are built
+    /// each frame. Follows the end while it's at the bottom.
+    list: ListState,
+    /// Which entries have rows, and where results and subagent steps are.
+    rows: transcript::RowIndex,
+    /// The reply being streamed, parsed as it grows: (its state, how much
+    /// of the text it has, the number of entries when it began).
+    reply: Option<(
+        Entity<gpui_kit::component::text::TextViewState>,
+        usize,
+        usize,
+    )>,
     expanded: HashSet<ItemId>,
     forms: HashMap<String, QuestionForm>,
     attachments: Vec<Attachment>,
@@ -62,8 +73,6 @@ pub struct ThreadView {
     /// Position while browsing earlier prompts with ↑/↓.
     history: Option<usize>,
     find: Option<FindState>,
-    /// Follow new output while the user is at the bottom.
-    follow: bool,
     is_git_repo: bool,
     warmed_up: bool,
     /// The branch the thread's folder is on (asked in the background).
@@ -111,14 +120,9 @@ impl ThreadView {
                     _ => {}
                 },
             ),
-            cx.observe(&session, |this, _, cx| {
-                if this.follow {
-                    this.scroll.scroll_to_bottom();
-                }
-                cx.notify();
-            }),
+            cx.observe(&session, |_, _, cx| cx.notify()),
             cx.subscribe(&session, |this, _, event: &SessionEvent, cx| match event {
-                SessionEvent::NeedsAttention => cx.notify(),
+                SessionEvent::NeedsAttention | SessionEvent::Streamed => cx.notify(),
                 // The agent may have switched branches.
                 SessionEvent::TurnCompleted => this.refresh_branch(cx),
                 _ => {}
@@ -127,16 +131,26 @@ impl ThreadView {
                 let _ = weak.update(cx, |this, cx| this.intercept(event, window, cx));
             }),
         ];
-        let is_git_repo = elyra_git::is_repo(&session.read(cx).project.path);
         let grove_watch = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(SERVER_ERROR_CHECK).await;
                 // The folder the thread works in: a worktree Grove runs has
                 // its own site.
-                let Ok(dir) = this.update(cx, |this, cx| this.session.read(cx).working_dir())
-                else {
+                let Ok((dir, recent)) = this.update(cx, |this, cx| {
+                    let session = this.session.read(cx);
+                    // Server errors matter while the agent works and shortly
+                    // after; an idle tab doesn't ask Grove every few seconds.
+                    let recent = session.running
+                        || session.thread.last_activity_at.is_some_and(|at| {
+                            chrono::Utc::now() - at < chrono::Duration::minutes(30)
+                        });
+                    (session.working_dir(), recent)
+                }) else {
                     break;
                 };
+                if !recent {
+                    continue;
+                }
                 let requests = cx
                     .background_executor()
                     .spawn(async move {
@@ -158,12 +172,16 @@ impl ThreadView {
             let session = session.clone();
             cx.new(|cx| crate::felagi_report::FelagiLink::new(session, id, cx))
         });
-        let scroll = ScrollHandle::new();
-        scroll.scroll_to_bottom();
+        // Rows above and below the visible ones are drawn ahead, for smooth
+        // scrolling.
+        let list = ListState::new(FIRST_ROW + TRAILING_ROWS, ListAlignment::Top, px(1000.));
+        list.set_follow_mode(FollowMode::Tail);
         let mut this = Self {
             session,
             composer,
-            scroll,
+            list,
+            rows: transcript::RowIndex::default(),
+            reply: None,
             expanded: HashSet::new(),
             forms: HashMap::new(),
             attachments: Vec::new(),
@@ -172,8 +190,8 @@ impl ThreadView {
             indexing: false,
             history: None,
             find: None,
-            follow: true,
-            is_git_repo,
+            // Found out in the background, with the branch.
+            is_git_repo: false,
             felagi,
             branch: None,
             browser: None,
@@ -194,14 +212,19 @@ impl ThreadView {
             return;
         }
         let dir = session.working_dir();
-        let job = cx
-            .background_executor()
-            .spawn(async move { elyra_git::current_branch(&dir) });
+        let project = session.project.path.clone();
+        let job = cx.background_executor().spawn(async move {
+            (
+                elyra_git::current_branch(&dir),
+                elyra_git::is_repo(&project),
+            )
+        });
         cx.spawn(async move |this, cx| {
-            let branch = job.await;
+            let (branch, is_repo) = job.await;
             let _ = this.update(cx, |this, cx| {
-                if this.branch != branch {
+                if this.branch != branch || this.is_git_repo != is_repo {
                     this.branch = branch;
+                    this.is_git_repo = is_repo;
                     cx.notify();
                 }
             });
@@ -598,10 +621,10 @@ impl ThreadView {
         }
         self.set_composer("", None, window, cx);
         self.history = None;
-        self.follow = true;
         self.session
             .update(cx, |session, cx| session.submit(prompt, cx));
-        self.scroll.scroll_to_bottom();
+        // Back to the end, following what comes.
+        self.list.set_follow_mode(FollowMode::Tail);
     }
 
     /// App-level slash commands. Returns true when handled.
@@ -1030,13 +1053,16 @@ impl ThreadView {
         self.scroll_to_match(cx);
     }
 
-    /// Scroll the conversation to an entry.
+    /// Scroll the conversation to an entry (a tool result or a subagent's
+    /// step: to the call it belongs to).
     pub fn reveal(&mut self, item: elyra_core::ItemId, cx: &mut Context<Self>) {
-        let rows = transcript::render(self.session.read(cx), &self.expanded, &self.forms, None, cx);
-        if let Some(index) = rows.iter().position(|(id, _)| *id == Some(item)) {
-            self.follow = false;
-            // Child 0 is the top spacer.
-            self.scroll.scroll_to_item(index + 1);
+        self.sync_rows(cx);
+        let row = self.rows.row_of(&self.session.read(cx).items, item);
+        if let Some(row) = row {
+            // Stay there rather than snap back to the end; scrolling back
+            // down follows again.
+            self.list.pause_following_tail();
+            self.list.scroll_to_reveal_item(FIRST_ROW + row);
         }
         cx.notify();
     }
@@ -1048,22 +1074,119 @@ impl ThreadView {
             .and_then(|f| f.matches.get(f.current))
             .copied();
         if let Some(target) = target {
-            self.follow = false;
-            let rows =
-                transcript::render(self.session.read(cx), &self.expanded, &self.forms, None, cx);
-            if let Some(index) = rows.iter().position(|(id, _)| *id == Some(target)) {
-                // Child 0 is the top spacer; the empty state is never shown with matches.
-                self.scroll.scroll_to_item(index + 1);
-            }
+            self.reveal(target, cx);
         }
         cx.notify();
     }
 
-    fn update_follow(&mut self) {
-        let offset = self.scroll.offset().y;
-        let max = self.scroll.max_offset().y;
-        // Offsets are negative when scrolled down.
-        self.follow = (max + offset).abs() < px(48.);
+    /// Hand the newly streamed part of the reply to its text state, which
+    /// parses only that, instead of the whole reply on every chunk.
+    fn sync_reply(&mut self, cx: &mut Context<Self>) {
+        let session = self.session.read(cx);
+        let (text, entries) = (&session.streaming_text, session.items.len());
+        if text.is_empty() {
+            self.reply = None;
+            return;
+        }
+        match &mut self.reply {
+            // The same reply, grown.
+            Some((state, len, began))
+                if *began == entries && text.len() >= *len && text.is_char_boundary(*len) =>
+            {
+                if text.len() > *len {
+                    let added = text[*len..].to_string();
+                    *len = text.len();
+                    state.update(cx, |state, cx| state.push_str(&added, cx));
+                }
+            }
+            // A new one.
+            _ => {
+                let (text, len) = (text.clone(), text.len());
+                let state =
+                    cx.new(|cx| gpui_kit::component::text::TextViewState::markdown(&text, cx));
+                self.reply = Some((state, len, entries));
+            }
+        }
+    }
+
+    /// Bring the list in step with the transcript: new entries are added
+    /// after the existing rows, anything else lays the list out again.
+    fn sync_rows(&mut self, cx: &App) {
+        let session = self.session.read(cx);
+        match self.rows.update(&session.items) {
+            transcript::RowChange::Unchanged => {}
+            transcript::RowChange::Appended { from, count } => {
+                let at = FIRST_ROW + from;
+                self.list.splice(at..at, count);
+            }
+            transcript::RowChange::Rebuilt => {
+                self.list
+                    .reset(self.rows.rows.len() + FIRST_ROW + TRAILING_ROWS);
+            }
+        }
+    }
+
+    /// One row of the list: the top (a spacer, or the empty state), an
+    /// entry, the tail (what is streaming), or the bottom spacer.
+    fn render_list_row(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let session = self.session.read(cx);
+        let count = self.rows.rows.len();
+        if ix == 0 {
+            let empty = session.items.is_empty() && !session.running && session.preparing.is_none();
+            return if empty {
+                let project_name = session.project.name.clone();
+                let cwd = session.working_dir().display().to_string();
+                self.frame(self.empty_state(project_name, cwd, cx), cx)
+            } else {
+                div().h(px(12.)).into_any_element()
+            };
+        }
+        if ix == FIRST_ROW + count + 1 {
+            return div().h(px(16.)).into_any_element();
+        }
+        if ix == FIRST_ROW + count {
+            let tail =
+                transcript::tail(session, self.reply.as_ref().map(|(state, _, _)| state), cx);
+            return if tail.is_empty() {
+                div().into_any_element()
+            } else {
+                self.frame(v_flex().gap_2().children(tail).into_any_element(), cx)
+            };
+        }
+        let highlight = self
+            .find
+            .as_ref()
+            .and_then(|f| f.matches.get(f.current))
+            .copied();
+        let Some(&position) = self.rows.rows.get(ix - FIRST_ROW) else {
+            return div().into_any_element();
+        };
+        match transcript::row(
+            session,
+            &self.rows,
+            position,
+            &self.expanded,
+            &self.forms,
+            highlight,
+            cx,
+        ) {
+            Some(element) => self.frame(element, cx),
+            None => div().into_any_element(),
+        }
+    }
+
+    /// A row's frame: the chat width and spacing from the preferences.
+    fn frame(&self, child: AnyElement, cx: &App) -> AnyElement {
+        let prefs = crate::preferences::Preferences::global(cx);
+        let (width, compact) = (prefs.chat_width, prefs.compact());
+        div()
+            .w_full()
+            .when(width > 0., |this| this.max_w(px(width)))
+            .mx_auto()
+            .when(compact, |this| this.px_4().py_0p5())
+            .when(!compact, |this| this.px_6().py_1p5())
+            .child(child)
+            .into_any_element()
     }
 
     // ---- rendering --------------------------------------------------------
@@ -2049,25 +2172,43 @@ fn context_meter(session: &ThreadSession, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+/// The list's first entry row (row 0 is the top spacer or empty state).
+const FIRST_ROW: usize = 1;
+/// Rows after the entries: the tail and the bottom spacer.
+const TRAILING_ROWS: usize = 2;
+
+impl ThreadView {
+    fn empty_state(&self, project_name: String, cwd: String, cx: &App) -> AnyElement {
+        v_flex()
+            .pt(px(120.))
+            .items_center()
+            .gap_2()
+            .child(
+                Icon::new(IconName::Bot)
+                    .large()
+                    .text_color(cx.theme().muted_foreground),
+            )
+            .child(
+                div()
+                    .text_xl()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(format!("What should we do in {project_name}?")),
+            )
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(cwd),
+            )
+            .into_any_element()
+    }
+}
+
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_forms(window, cx);
-        let session = self.session.read(cx);
-        let empty = session.items.is_empty() && !session.running && session.preparing.is_none();
-        let project_name = session.project.name.clone();
-        let cwd = session.working_dir().display().to_string();
-        let highlight = self
-            .find
-            .as_ref()
-            .and_then(|f| f.matches.get(f.current))
-            .copied();
-        let rows = transcript::render(
-            self.session.read(cx),
-            &self.expanded,
-            &self.forms,
-            highlight,
-            cx,
-        );
+        self.sync_rows(cx);
+        self.sync_reply(cx);
         let controls = self.render_controls(cx);
         let queue = self.render_queue(cx);
         let interrupted = self.render_interrupted(cx);
@@ -2075,52 +2216,12 @@ impl Render for ThreadView {
         let page_errors = self.render_page_errors(cx);
         let popup = self.render_popup(cx);
         let find = self.render_find(cx);
-
-        let prefs = crate::preferences::Preferences::global(cx);
-        let width = prefs.chat_width;
-        let compact = prefs.compact();
-        let row = |child: AnyElement| {
-            div()
-                .w_full()
-                .when(width > 0., |this| this.max_w(px(width)))
-                .mx_auto()
-                .when(compact, |this| this.px_4().py_0p5())
-                .when(!compact, |this| this.px_6().py_1p5())
-                .child(child)
-        };
-        let mut children: Vec<AnyElement> = vec![div().h(px(12.)).into_any_element()];
-        if empty {
-            children.push(
-                row(v_flex()
-                    .pt(px(120.))
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Icon::new(IconName::Bot)
-                            .large()
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        div()
-                            .text_xl()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("What should we do in {project_name}?")),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(cwd),
-                    )
-                    .into_any_element())
-                .into_any_element(),
-            );
-        }
-        children.extend(
-            rows.into_iter()
-                .map(|(_, element)| row(element).into_any_element()),
-        );
-        children.push(div().h(px(16.)).into_any_element());
+        let width = crate::preferences::Preferences::global(cx).chat_width;
+        let rows = list(
+            self.list.clone(),
+            cx.processor(|this, ix: usize, window, cx| this.render_list_row(ix, window, cx)),
+        )
+        .size_full();
 
         v_flex()
             .key_context("Composer")
@@ -2134,16 +2235,8 @@ impl Render for ThreadView {
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    .child(
-                        div()
-                            .id("transcript")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.scroll)
-                            .on_scroll_wheel(cx.listener(|this, _, _, _| this.update_follow()))
-                            .children(children),
-                    )
-                    .vertical_scrollbar(&self.scroll),
+                    .child(rows)
+                    .vertical_scrollbar(&self.list),
             )
             .child(
                 div().w_full().px_6().pb_4().child(

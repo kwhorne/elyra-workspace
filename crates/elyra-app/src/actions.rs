@@ -31,6 +31,7 @@ gpui_kit::actions!(
         ManageWorktrees,
         CommandPalette,
         FindFile,
+        GoToSymbol,
         SearchInFiles,
         ShowFiles,
         OpenFilesEditor,
@@ -298,6 +299,14 @@ pub const SHORTCUTS: &[Shortcut] = &[
         OpenInEditor
     ),
     shortcut!("find_file", "Projects", "Find file", "cmd-p", WS, FindFile),
+    shortcut!(
+        "go_to_symbol",
+        "Projects",
+        "Go to symbol",
+        "cmd-t",
+        WS,
+        GoToSymbol
+    ),
     shortcut!(
         "search_in_files",
         "Projects",

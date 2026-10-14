@@ -41,7 +41,7 @@ fn draining_to_quit(cx: &App) -> bool {
 /// Quit, asking first when agents are still working.
 pub fn request(cx: &mut App) {
     let app = cx.global::<Quitting>().app.clone();
-    let running = app.read(cx).running_threads(cx);
+    let running = app.read(cx).running_threads();
     if !running.is_empty() && cx.windows().is_empty() {
         // The window was closed: bring it back to ask.
         reopen(cx);
@@ -131,7 +131,7 @@ fn quit_when_idle(cx: &mut App) {
                 if !quitting.when_idle {
                     return true;
                 }
-                let idle = quitting.app.read(cx).running_threads(cx).is_empty();
+                let idle = quitting.app.read(cx).running_threads().is_empty();
                 if idle {
                     quit_now(cx);
                 }

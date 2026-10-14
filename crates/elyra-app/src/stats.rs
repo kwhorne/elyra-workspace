@@ -32,9 +32,23 @@ impl StatsView {
         this
     }
 
+    /// Read the turn statistics in the background: they scan every turn of
+    /// every thread.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.stats = self.app.read(cx).store.turn_stats().unwrap_or_default();
-        cx.notify();
+        let job = cx.background_executor().spawn(async move {
+            elyra_core::Store::open_read_only(&elyra_core::paths::database_path())?.turn_stats()
+        });
+        cx.spawn(async move |this, cx| {
+            let stats = job.await;
+            let _ = this.update(cx, |this, cx| {
+                match stats {
+                    Ok(stats) => this.stats = stats,
+                    Err(err) => log::warn!("usage statistics: {err:#}"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }
 
@@ -65,7 +79,7 @@ impl Render for StatsView {
                 .or_default() += 1;
         }
         let state = self.app.read(cx);
-        let threads = state.threads.len() + state.archived_threads().len();
+        let threads = state.threads.len() + state.archived_count;
 
         let card = |label: &str, value: String| {
             v_flex()

@@ -21,6 +21,8 @@ pub enum PaletteMode {
     Commands,
     Files,
     Search,
+    /// Definitions from the project's symbol index.
+    Symbols,
 }
 
 /// What picking an entry does.
@@ -58,6 +60,9 @@ pub struct Palette {
     app: Entity<AppState>,
     root: Option<PathBuf>,
     files: Option<Arc<Vec<String>>>,
+    symbols: Option<Arc<Vec<elyra_index::SymbolHit>>>,
+    /// Why there are no symbols (no index, no supported files).
+    symbols_note: Option<String>,
     loading: bool,
     generation: u64,
     _subscriptions: Vec<Subscription>,
@@ -101,6 +106,12 @@ fn commands() -> Vec<Command> {
             actions::OpenInEditor
         ),
         command!("Find file…", "⌘P", IconName::File, actions::FindFile),
+        command!(
+            "Go to symbol…",
+            "⌘T",
+            IconName::SquareFunction,
+            actions::GoToSymbol
+        ),
         command!(
             "Search in files…",
             "⇧⌘F",
@@ -288,6 +299,7 @@ impl Palette {
             PaletteMode::Commands => "Search threads, projects and commands…",
             PaletteMode::Files => "Find a file by name…",
             PaletteMode::Search => "Search in files…",
+            PaletteMode::Symbols => "Go to a function, class or type…",
         };
         let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
         input.update(cx, |input, cx| input.focus(window, cx));
@@ -311,12 +323,17 @@ impl Palette {
             app,
             root,
             files: None,
+            symbols: None,
+            symbols_note: None,
             loading: false,
             generation: 0,
             _subscriptions: subscriptions,
         };
         if mode == PaletteMode::Files {
             this.load_files(cx);
+        }
+        if mode == PaletteMode::Symbols {
+            this.load_symbols(cx);
         }
         this.update_entries(cx);
         this
@@ -396,13 +413,103 @@ impl Palette {
         .detach();
     }
 
+    /// Every definition in the folder, from its symbol index (refreshed when
+    /// stale, built the first time).
+    /// Threads whose conversation matches, added below the other entries
+    /// once the search (in the background) is done.
+    fn search_messages(&mut self, query: String, cx: &mut Context<Self>) {
+        self.generation += 1;
+        if query.chars().count() < 3 {
+            return;
+        }
+        let generation = self.generation;
+        let job = crate::thread_search::search_in_background(
+            query,
+            elyra_core::SearchFilter::default(),
+            MESSAGE_HITS * 4,
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            let Ok(hits) = job.await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return; // the query changed meanwhile
+                }
+                let state = this.app.read(cx);
+                let mut seen = Vec::new();
+                let mut found = Vec::new();
+                for hit in hits {
+                    if seen.contains(&hit.thread) || found.len() == MESSAGE_HITS {
+                        continue;
+                    }
+                    seen.push(hit.thread);
+                    if let Some(thread) = state.thread(hit.thread) {
+                        found.push(Entry {
+                            icon: IconName::TextSearch,
+                            label: thread.title.clone(),
+                            detail: hit.plain_snippet(),
+                            hint: "message".into(),
+                            target: Target::Thread(hit.thread),
+                            score: -1000,
+                        });
+                    }
+                }
+                let room = MAX_ROWS.saturating_sub(this.entries.len());
+                this.entries.extend(found.into_iter().take(room));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn load_symbols(&mut self, cx: &mut Context<Self>) {
+        let Some(root) = self.root.clone() else {
+            self.symbols_note = Some("Open a thread or project first.".into());
+            return;
+        };
+        self.loading = true;
+        let job = cx.background_executor().spawn(async move {
+            let _one_at_a_time = crate::gateway::SYMBOL_LOOKUPS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let db =
+                elyra_index::default_db_path(&elyra_core::paths::data_dir().join("index"), &root);
+            let mut index = elyra_index::SymbolIndex::open(&root, &db)?;
+            index.refresh_if_stale(elyra_index::REFRESH_MAX_AGE)?;
+            index.all_definitions(MAX_SYMBOLS)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.loading = false;
+                match result {
+                    Ok(symbols) if symbols.is_empty() => {
+                        this.symbols_note = Some(
+                            "No symbols: the folder has no Rust, TypeScript, JavaScript, Python, Go, PHP or C files."
+                                .into(),
+                        )
+                    }
+                    Ok(symbols) => this.symbols = Some(Arc::new(symbols)),
+                    Err(err) => this.symbols_note = Some(format!("The symbol index failed: {err}")),
+                }
+                this.update_entries(cx);
+            });
+        })
+        .detach();
+    }
+
     fn update_entries(&mut self, cx: &mut Context<Self>) {
         let query = self.input.read(cx).value().trim().to_string();
         self.selected = 0;
         // New results start at the top (works before the list has been laid out).
         self.scroll.set_offset(point(px(0.), px(0.)));
         match self.mode {
-            PaletteMode::Commands => self.entries = self.command_entries(&query, cx),
+            PaletteMode::Commands => {
+                self.entries = self.command_entries(&query, cx);
+                self.search_messages(query, cx);
+            }
             PaletteMode::Files => {
                 self.entries = self
                     .files
@@ -411,6 +518,13 @@ impl Palette {
                     .unwrap_or_default();
             }
             PaletteMode::Search => self.run_search(query, cx),
+            PaletteMode::Symbols => {
+                self.entries = self
+                    .symbols
+                    .as_ref()
+                    .map(|symbols| symbol_entries(symbols, &query))
+                    .unwrap_or_default();
+            }
         }
         cx.notify();
     }
@@ -486,20 +600,6 @@ impl Palette {
                 });
             }
         }
-        if query.chars().count() >= 3 {
-            for (thread_id, snippet) in state.store.search_messages(query, 8).unwrap_or_default() {
-                if let Some(thread) = state.thread(thread_id) {
-                    entries.push(Entry {
-                        icon: IconName::TextSearch,
-                        label: thread.title.clone(),
-                        detail: snippet,
-                        hint: "message".into(),
-                        target: Target::Thread(thread_id),
-                        score: -1000,
-                    });
-                }
-            }
-        }
         if !query.is_empty() {
             entries.sort_by_key(|e| std::cmp::Reverse(e.score));
         }
@@ -548,6 +648,63 @@ impl Palette {
         })
         .detach();
     }
+}
+
+/// Threads found by their conversation, shown below the other entries.
+const MESSAGE_HITS: usize = 8;
+
+/// The most definitions read for the symbol list.
+const MAX_SYMBOLS: usize = 100_000;
+
+/// Definitions whose name matches `query`, best first: an exact name, then a
+/// name starting with it, then fuzzy matches; shorter names first.
+fn symbol_entries(symbols: &[elyra_index::SymbolHit], query: &str) -> Vec<Entry> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let lower = query.to_lowercase();
+    let mut scored: Vec<(i64, &elyra_index::SymbolHit)> = symbols
+        .iter()
+        .filter_map(|symbol| {
+            let mut score = fuzzy_score(&symbol.name, query)?;
+            if symbol.name.to_lowercase() == lower {
+                score += 1_000_000;
+            }
+            Some((score, symbol))
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.file.cmp(&b.1.file))
+            .then_with(|| a.1.line.cmp(&b.1.line))
+    });
+    scored
+        .into_iter()
+        .take(MAX_ROWS)
+        .map(|(score, symbol)| {
+            let place = format!("{}:{}", symbol.file, symbol.line);
+            Entry {
+                icon: match symbol.kind.as_str() {
+                    "function" | "method" => IconName::SquareFunction,
+                    "class" | "interface" | "type" | "struct" | "enum" | "trait" => IconName::Box,
+                    "module" => IconName::Boxes,
+                    "constant" | "variable" => IconName::Variable,
+                    _ => IconName::Braces,
+                },
+                label: symbol.name.clone(),
+                detail: match &symbol.container {
+                    Some(container) => format!("{container} · {place}"),
+                    None => place,
+                },
+                hint: symbol.kind.clone(),
+                target: Target::File {
+                    path: symbol.file.clone(),
+                    line: Some(symbol.line as usize),
+                },
+                score,
+            }
+        })
+        .collect()
 }
 
 fn file_entries(files: &[String], query: &str) -> Vec<Entry> {
@@ -674,11 +831,69 @@ impl Render for Palette {
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
                                 .child(match self.mode {
-                                    PaletteMode::Search => "Type at least two characters",
-                                    _ => "No matches",
+                                    PaletteMode::Search => "Type at least two characters".into(),
+                                    PaletteMode::Symbols => match &self.symbols_note {
+                                        Some(note) => note.clone(),
+                                        None if self.input.read(cx).value().trim().is_empty() => {
+                                            "Type the name of a function, class or type".into()
+                                        }
+                                        None => "No matches".into(),
+                                    },
+                                    _ => "No matches".to_string(),
                                 }),
                         )
                     }),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::symbol_entries;
+
+    fn symbol(name: &str, kind: &str, file: &str, line: u32) -> elyra_index::SymbolHit {
+        elyra_index::SymbolHit {
+            file: file.into(),
+            language: "rust".into(),
+            name: name.into(),
+            kind: kind.into(),
+            line,
+            col: 0,
+            end_line: line,
+            container: (kind == "method").then(|| "Cart".to_string()),
+            signature: String::new(),
+        }
+    }
+
+    #[test]
+    fn ranks_symbols_by_name() {
+        let symbols = vec![
+            symbol("CartTotals", "class", "src/totals.rs", 3),
+            symbol("update_totals", "function", "src/cart.rs", 40),
+            symbol("Cart", "class", "src/cart.rs", 1),
+            symbol("total", "method", "src/cart.rs", 12),
+        ];
+        let names = |query| {
+            symbol_entries(&symbols, query)
+                .into_iter()
+                .map(|e| e.label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names("cart")[..2],
+            ["Cart", "CartTotals"],
+            "the exact name first"
+        );
+        assert_eq!(names("updtot"), ["update_totals"], "fuzzy");
+        assert!(names("").is_empty(), "nothing until a name is typed");
+        let total = &symbol_entries(&symbols, "total")[0];
+        assert_eq!(
+            (
+                total.label.as_str(),
+                total.detail.as_str(),
+                total.hint.as_str()
+            ),
+            ("total", "Cart · src/cart.rs:12", "method")
+        );
     }
 }

@@ -12,7 +12,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::text::TextView;
+use gpui_kit::component::text::{TextView, TextViewState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -135,25 +135,55 @@ fn edit_preview(old: &str, new: &str, cx: &App) -> Div {
         .children(rows)
 }
 
-struct Lookup<'a> {
-    results: HashMap<&'a str, (&'a str, bool)>,
-    children: HashMap<&'a str, Vec<&'a TranscriptItem>>,
+/// Where each tool call's result and a subagent's steps are (by position in
+/// the transcript), and which entries get a row of their own. Kept by the
+/// view and extended as entries arrive, instead of rebuilt every frame.
+#[derive(Default)]
+pub struct RowIndex {
+    /// How many entries were indexed, and the last one's id.
+    seen: (usize, Option<ItemId>),
+    results: HashMap<String, usize>,
+    children: HashMap<String, Vec<usize>>,
     latest_todo: Option<ItemId>,
+    /// The entries with a row of their own, by position.
+    pub rows: Vec<usize>,
 }
 
-impl<'a> Lookup<'a> {
-    fn new(items: &'a [TranscriptItem]) -> Self {
-        let mut results = HashMap::new();
-        let mut children: HashMap<&str, Vec<&TranscriptItem>> = HashMap::new();
-        let mut latest_todo = None;
-        for item in items {
+/// What [`RowIndex::update`] did to the rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowChange {
+    Unchanged,
+    /// Rows were added after the existing ones.
+    Appended {
+        from: usize,
+        count: usize,
+    },
+    /// The transcript changed otherwise; every row may have moved.
+    Rebuilt,
+}
+
+impl RowIndex {
+    /// Bring the index up to date with `items`.
+    pub fn update(&mut self, items: &[TranscriptItem]) -> RowChange {
+        let (seen, last) = self.seen;
+        if seen == items.len() && last == items.last().map(|i| i.id) {
+            return RowChange::Unchanged;
+        }
+        // New entries after the ones indexed (the usual case), or a
+        // transcript that changed otherwise (start over).
+        let appended = seen > 0 && seen <= items.len() && items.get(seen - 1).map(|i| i.id) == last;
+        let from = if appended {
+            seen
+        } else {
+            *self = Self::default();
+            0
+        };
+        let rows_before = self.rows.len();
+        for (index, item) in items.iter().enumerate().skip(from) {
             match &item.content {
-                ItemContent::ToolResult {
-                    tool_use_id,
-                    content,
-                    is_error,
-                } => {
-                    results.insert(tool_use_id.as_str(), (content.as_str(), *is_error));
+                ItemContent::ToolResult { tool_use_id, .. } => {
+                    self.results.insert(tool_use_id.clone(), index);
+                    continue;
                 }
                 ItemContent::ToolUse {
                     name,
@@ -161,97 +191,157 @@ impl<'a> Lookup<'a> {
                     ..
                 } => {
                     if name == "TodoWrite" {
-                        latest_todo = Some(item.id);
+                        self.latest_todo = Some(item.id);
                     }
                     if let Some(parent) = parent_tool_use_id {
-                        children.entry(parent.as_str()).or_default().push(item);
+                        self.children.entry(parent.clone()).or_default().push(index);
+                        continue;
                     }
                 }
                 ItemContent::Assistant {
                     parent_tool_use_id: Some(parent),
                     ..
-                } => children.entry(parent.as_str()).or_default().push(item),
+                } => {
+                    self.children.entry(parent.clone()).or_default().push(index);
+                    continue;
+                }
                 _ => {}
             }
+            self.rows.push(index);
         }
-        Self {
-            results,
-            children,
-            latest_todo,
+        self.seen = (items.len(), items.last().map(|i| i.id));
+        if appended {
+            RowChange::Appended {
+                from: rows_before,
+                count: self.rows.len() - rows_before,
+            }
+        } else {
+            RowChange::Rebuilt
         }
+    }
+
+    /// The row an entry shows in: its own, or for a tool result or a
+    /// subagent's step, the call it belongs to.
+    pub fn row_of(&self, items: &[TranscriptItem], item: ItemId) -> Option<usize> {
+        let index = items.iter().position(|i| i.id == item)?;
+        let owner = match &items[index].content {
+            ItemContent::ToolResult { tool_use_id, .. } => self.call_index(items, tool_use_id),
+            ItemContent::ToolUse {
+                parent_tool_use_id: Some(parent),
+                ..
+            }
+            | ItemContent::Assistant {
+                parent_tool_use_id: Some(parent),
+                ..
+            } => self.call_index(items, parent),
+            _ => Some(index),
+        }?;
+        self.rows.binary_search(&owner).ok()
+    }
+
+    fn call_index(&self, items: &[TranscriptItem], tool_use_id: &str) -> Option<usize> {
+        items.iter().position(|i| {
+            matches!(&i.content, ItemContent::ToolUse { tool_use_id: id, .. } if id == tool_use_id)
+        })
     }
 }
 
-/// Returns the transcript rows, each tagged with the item it renders (used
-/// by find-in-thread to scroll to a match).
-pub fn render(
+/// The index read against the transcript it was built from.
+struct Lookup<'a> {
+    items: &'a [TranscriptItem],
+    index: &'a RowIndex,
+}
+
+impl<'a> Lookup<'a> {
+    fn result(&self, tool_use_id: &str) -> Option<(&'a str, bool)> {
+        let index = *self.index.results.get(tool_use_id)?;
+        match &self.items.get(index)?.content {
+            ItemContent::ToolResult {
+                content, is_error, ..
+            } => Some((content.as_str(), *is_error)),
+            _ => None,
+        }
+    }
+
+    fn children(&self, tool_use_id: &str) -> Vec<&'a TranscriptItem> {
+        self.index
+            .children
+            .get(tool_use_id)
+            .map(|indices| indices.iter().filter_map(|i| self.items.get(*i)).collect())
+            .unwrap_or_default()
+    }
+}
+
+/// The row of the entry at `position` (one of `index.rows`).
+pub fn row(
     session: &ThreadSession,
+    index: &RowIndex,
+    position: usize,
     expanded: &HashSet<ItemId>,
     forms: &HashMap<String, QuestionForm>,
     highlight: Option<ItemId>,
     cx: &Context<ThreadView>,
-) -> Vec<(Option<ItemId>, AnyElement)> {
-    let lookup = Lookup::new(&session.items);
-    let mut rows = Vec::new();
-    for item in &session.items {
-        let is_child = matches!(
-            &item.content,
-            ItemContent::ToolUse {
-                parent_tool_use_id: Some(_),
-                ..
-            } | ItemContent::Assistant {
-                parent_tool_use_id: Some(_),
-                ..
-            }
-        );
-        if is_child {
-            continue;
-        }
-        if let Some(element) = render_item(item, session, &lookup, expanded, forms, cx) {
-            let element = if highlight == Some(item.id) {
-                div()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(cx.theme().ring)
-                    .p_1()
-                    .child(element)
-                    .into_any_element()
-            } else {
-                element
-            };
-            rows.push((Some(item.id), element));
-        }
-    }
+) -> Option<AnyElement> {
+    let item = session.items.get(position)?;
+    let lookup = Lookup {
+        items: &session.items,
+        index,
+    };
+    let element = render_item(item, session, &lookup, expanded, forms, cx)?;
+    Some(if highlight == Some(item.id) {
+        div()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().ring)
+            .p_1()
+            .child(element)
+            .into_any_element()
+    } else {
+        element
+    })
+}
 
+/// What follows the entries while a turn runs: the thinking and reply being
+/// streamed, and what the agent is doing. `reply` is the streaming reply's
+/// text state, extended chunk by chunk (parsed incrementally).
+pub fn tail(
+    session: &ThreadSession,
+    reply: Option<&Entity<TextViewState>>,
+    cx: &Context<ThreadView>,
+) -> Vec<AnyElement> {
+    let mut rows = Vec::new();
     if !session.streaming_thinking.is_empty() && session.streaming_text.is_empty() {
-        let tail: String = {
-            let chars: Vec<char> = session.streaming_thinking.chars().collect();
-            chars[chars.len().saturating_sub(400)..].iter().collect()
-        };
-        rows.push((
-            None,
+        // The last 400 characters, without copying the whole text.
+        let thinking = &session.streaming_thinking;
+        let start = thinking
+            .char_indices()
+            .rev()
+            .nth(399)
+            .map(|(at, _)| at)
+            .unwrap_or(0);
+        rows.push(
             div()
                 .text_sm()
                 .italic()
                 .text_color(cx.theme().muted_foreground)
-                .child(tail)
+                .child(thinking[start..].to_string())
                 .into_any_element(),
-        ));
+        );
     }
     if !session.streaming_text.is_empty() {
-        rows.push((
-            None,
-            TextView::markdown("md-streaming", session.streaming_text.clone())
+        rows.push(match reply {
+            Some(state) => TextView::new(state).selectable(true).into_any_element(),
+            None => TextView::markdown("md-streaming", session.streaming_text.clone())
                 .selectable(true)
                 .into_any_element(),
-        ));
+        });
     }
     if let Some(preparing) = &session.preparing {
-        rows.push((None, working_row(preparing.clone(), cx)));
+        rows.push(working_row(preparing.clone(), cx));
     } else if let Some(activity) = &session.activity {
-        rows.push((None, working_row(activity.clone(), cx)));
+        rows.push(working_row(activity.clone(), cx));
     } else if session.running && session.streaming_text.is_empty() && !session.pending_approval() {
-        rows.push((None, working_row("Working…".into(), cx)));
+        rows.push(working_row("Working…".into(), cx));
     }
     rows
 }
@@ -471,7 +561,12 @@ fn render_item(
             ..
         } => {
             if name == "TodoWrite" {
-                return Some(todo_card(id, input, lookup.latest_todo == Some(id), cx));
+                return Some(todo_card(
+                    id,
+                    input,
+                    lookup.index.latest_todo == Some(id),
+                    cx,
+                ));
             }
             if is_subagent(name) {
                 return Some(subagent_card(
@@ -1090,7 +1185,7 @@ fn tool_row(
     cx: &Context<ThreadView>,
 ) -> AnyElement {
     let open = expanded.contains(&id);
-    let result = lookup.results.get(tool_use_id).copied();
+    let result = lookup.result(tool_use_id);
     let progress = session.tool_progress.get(tool_use_id);
     let field = |key: &str| input.get(key).and_then(Value::as_str);
     let details: Option<AnyElement> = open.then(|| {
@@ -1290,12 +1385,8 @@ fn subagent_card(
 ) -> AnyElement {
     let id = item.id;
     let open = expanded.contains(&id);
-    let result = lookup.results.get(tool_use_id).copied();
-    let children = lookup
-        .children
-        .get(tool_use_id)
-        .cloned()
-        .unwrap_or_default();
+    let result = lookup.result(tool_use_id);
+    let children = lookup.children(tool_use_id);
     let tool_calls = children
         .iter()
         .filter(|c| matches!(c.content, ItemContent::ToolUse { .. }))
@@ -1822,8 +1913,75 @@ pub fn searchable_text(item: &TranscriptItem) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::tool_summary;
+    use super::{RowChange, RowIndex, tool_summary};
+    use elyra_core::{ItemContent, TranscriptItem};
     use serde_json::json;
+
+    fn item(content: ItemContent) -> TranscriptItem {
+        TranscriptItem {
+            id: elyra_core::new_id(),
+            thread_id: elyra_core::new_id(),
+            seq: 0,
+            content,
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    fn call(id: &str, parent: Option<&str>) -> TranscriptItem {
+        item(ItemContent::ToolUse {
+            tool_use_id: id.into(),
+            name: "Bash".into(),
+            input: json!({ "command": "ls" }),
+            parent_tool_use_id: parent.map(str::to_string),
+        })
+    }
+
+    fn result(id: &str) -> TranscriptItem {
+        item(ItemContent::ToolResult {
+            tool_use_id: id.into(),
+            content: "ok".into(),
+            is_error: false,
+        })
+    }
+
+    #[test]
+    fn keeps_rows_in_step_with_the_transcript() {
+        let mut items = vec![
+            item(ItemContent::User {
+                text: "Fix it".into(),
+                checkpoint: None,
+            }),
+            call("task", None),
+            call("inner", Some("task")),
+            result("inner"),
+            result("task"),
+        ];
+        let mut index = RowIndex::default();
+        assert_eq!(index.update(&items), RowChange::Rebuilt);
+        assert_eq!(index.rows, [0, 1], "the message and the subagent call");
+        assert_eq!(index.update(&items), RowChange::Unchanged);
+        // A result and a subagent's step show in their call's row.
+        assert_eq!(index.row_of(&items, items[4].id), Some(1));
+        assert_eq!(index.row_of(&items, items[2].id), Some(1));
+        assert_eq!(index.row_of(&items, items[0].id), Some(0));
+
+        items.push(call("t2", None));
+        items.push(result("t2"));
+        items.push(item(ItemContent::Assistant {
+            text: "Done".into(),
+            parent_tool_use_id: None,
+        }));
+        assert_eq!(
+            index.update(&items),
+            RowChange::Appended { from: 2, count: 2 }
+        );
+        assert_eq!(index.rows, [0, 1, 5, 7]);
+
+        // Anything but appending starts over.
+        items.remove(0);
+        assert_eq!(index.update(&items), RowChange::Rebuilt);
+        assert_eq!(index.rows, [0, 4, 6]);
+    }
 
     #[test]
     fn summarizes_tool_inputs() {

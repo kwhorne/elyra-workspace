@@ -424,6 +424,8 @@ pub fn apply(cx: &mut App) {
         theme.mono_font_family = prefs.mono_font_family.clone().into();
         theme.mono_font_size = px(prefs.mono_font_size);
     });
+    // Also the views drawn from cache: a new theme or font changes them all.
+    cx.refresh_windows();
 }
 
 /// Toggle between the remembered light and dark themes.

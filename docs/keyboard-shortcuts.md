@@ -39,6 +39,7 @@ Press **⌘/** in the app to see all shortcuts, including any you changed.
 | ⇧⌘O | Add project |
 | ⌘O | Open in external editor |
 | ⌘P | Find file |
+| ⌘T | Go to symbol |
 | ⇧⌘F | Search in files |
 | ⌥⌘F | Search threads |
 | ⌘S | Save (Files tab) |

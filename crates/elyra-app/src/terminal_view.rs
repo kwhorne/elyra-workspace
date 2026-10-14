@@ -111,6 +111,9 @@ pub struct TerminalView {
     layout: Rc<Cell<Option<Layout>>>,
     selecting: bool,
     blink_on: bool,
+    /// The terminal has focus: only then does the cursor blink (each blink
+    /// redraws the window).
+    focused: bool,
     scroll_remainder: f32,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -142,7 +145,8 @@ impl TerminalView {
                 cx.background_executor().timer(BLINK_INTERVAL).await;
                 let alive = this
                     .update(cx, |this, cx| {
-                        if Preferences::global(cx).terminal_cursor_blink || !this.blink_on {
+                        let blink = this.focused && Preferences::global(cx).terminal_cursor_blink;
+                        if blink || !this.blink_on {
                             this.blink_on = !this.blink_on;
                             cx.notify();
                         }
@@ -156,12 +160,14 @@ impl TerminalView {
         let subscriptions = vec![
             cx.on_focus(&focus, window, |this, _, cx| {
                 this.blink_on = true;
+                this.focused = true;
                 if let Some(terminal) = &this.terminal {
                     terminal.focus_changed(true);
                 }
                 cx.notify();
             }),
             cx.on_blur(&focus, window, |this, _, cx| {
+                this.focused = false;
                 if let Some(terminal) = &this.terminal {
                     terminal.focus_changed(false);
                 }
@@ -184,6 +190,7 @@ impl TerminalView {
             layout: Rc::new(Cell::new(None)),
             selecting: false,
             blink_on: true,
+            focused: false,
             scroll_remainder: 0.,
             _tasks: tasks,
             _subscriptions: subscriptions,

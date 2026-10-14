@@ -47,7 +47,29 @@ during the scenarios is `scripts/scenarios/login-shell`, which puts fake tools
 from `scripts/scenarios/bin` (such as a `gh` answering from a JSON file) first on
 its PATH. Scenarios cover the turn
 lifecycle, checks after each turn and stopping. Add one when you change how
-sessions, providers or the gateway behave.
+sessions, providers or the gateway behave. The `[stream N]` tag has the agent
+write N lines slowly, which is handy for trying the thread view by hand while an
+agent writes.
+
+### Performance
+
+```console
+cargo test -p elyra-core --release --test large_store -- --ignored --nocapture
+```
+
+Times the store with a lot of history (200 threads, 20 of them with about
+2,000 entries): opening it, loading a long thread, appending, search and
+statistics. A few rules keep the app fast while agents stream, which redraws the
+window many times a second:
+
+- Don't read the database, the disk or start processes in `render`; keep the
+  value in a field, or load it in the background (`Store::open_read_only` gives a
+  second connection for slow reads off the main thread).
+- The thread view draws only the visible rows (`list` with `ListState`); the
+  heavy views are drawn from cache (`cached` in `workspace.rs`) and must
+  `cx.notify()` when what they show changes.
+- Streamed text is a `SessionEvent::Streamed` for the thread's own view, not a
+  notify that wakes every observer of the session.
 
 ### Layout check
 

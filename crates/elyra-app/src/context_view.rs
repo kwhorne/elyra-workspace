@@ -131,6 +131,8 @@ pub struct ContextView {
     budget: Entity<InputState>,
     servers: Vec<Server>,
     scanning: bool,
+    /// When the servers were last looked up (`lsof` is slow).
+    scanned_at: Option<std::time::Instant>,
     /// The project's app in Grove, with its dev processes and caught mail.
     grove: Option<GroveInfo>,
     /// What fills the context, for (transcript length, reported use).
@@ -238,6 +240,7 @@ impl ContextView {
             budget,
             servers: Vec::new(),
             scanning: false,
+            scanned_at: None,
             grove: None,
             report: None,
             _save_notes: None,
@@ -818,11 +821,23 @@ impl ContextView {
             .into_any_element()
     }
 
+    /// Look up the servers again, unless that was moments ago (switching
+    /// back and forth between threads).
+    pub fn scan_servers_if_stale(&mut self, cx: &mut Context<Self>) {
+        if self
+            .scanned_at
+            .is_none_or(|at| at.elapsed() > std::time::Duration::from_secs(30))
+        {
+            self.scan_servers(cx);
+        }
+    }
+
     pub fn scan_servers(&mut self, cx: &mut Context<Self>) {
         if self.scanning {
             return;
         }
         self.scanning = true;
+        self.scanned_at = Some(std::time::Instant::now());
         let root = self.session.read(cx).working_dir();
         let job = cx.background_executor().spawn(async move {
             // A worktree Grove runs has its own site.

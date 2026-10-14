@@ -119,13 +119,19 @@ pub fn machine_name(cx: &App) -> String {
     if !name.is_empty() {
         return name;
     }
-    std::process::Command::new("scutil")
-        .args(["--get", "ComputerName"])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|n| !n.is_empty())
-        .unwrap_or_else(|| "Elyra Workspace".into())
+    // Asked once: it is read on every tick.
+    static COMPUTER_NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    COMPUTER_NAME
+        .get_or_init(|| {
+            std::process::Command::new("scutil")
+                .args(["--get", "ComputerName"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "Elyra Workspace".into())
+        })
+        .clone()
 }
 
 /// One output line for Félagi.

@@ -136,8 +136,24 @@ fn app_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Editors present on this machine (Finder always is).
+/// Editors present on this machine (Finder always is). Looked up once and
+/// kept: the title bar asks on every frame. [`rescan`] looks again.
 pub fn installed() -> Vec<EditorApp> {
+    INSTALLED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(scan)
+        .clone()
+}
+
+/// Look for installed editors again (Settings opened).
+pub fn rescan() {
+    *INSTALLED.lock().unwrap_or_else(|e| e.into_inner()) = Some(scan());
+}
+
+static INSTALLED: std::sync::Mutex<Option<Vec<EditorApp>>> = std::sync::Mutex::new(None);
+
+fn scan() -> Vec<EditorApp> {
     let dirs = app_dirs();
     EDITORS
         .iter()

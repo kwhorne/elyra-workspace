@@ -26,12 +26,15 @@ fn thread_menu(
     menu: PopupMenu,
     workspace: WeakEntity<Workspace>,
     app: Entity<AppState>,
-    thread: Thread,
+    id: ThreadId,
     path: std::path::PathBuf,
     window: &mut Window,
     cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
-    let id = thread.id;
+    // Read when the menu opens, not cloned into every row on every frame.
+    let Some(thread) = app.read(cx).thread(id).cloned() else {
+        return menu;
+    };
     let current_provider = thread.provider;
     let handoff_workspace = workspace.clone();
     let review_workspace = workspace.clone();
@@ -315,23 +318,16 @@ impl Workspace {
         let state = self.app.read(cx);
         let id = thread.id;
         let selected = self.active == Some(id);
-        let running = state
-            .existing_session(id)
-            .is_some_and(|s| s.read(cx).running);
+        let running = state.running.contains(&id);
         let unread = thread.is_unread() && !selected;
         let path = state
             .project(thread.project_id)
             .map(|p| thread.working_dir(p))
             .unwrap_or_default();
         let age = format_age(Utc::now() - thread.updated_at);
-        let (menu_workspace, menu_app, menu_thread, menu_path) = (
-            cx.weak_entity(),
-            self.app.clone(),
-            thread.clone(),
-            path.clone(),
-        );
-        let (button_workspace, button_app, button_thread) =
-            (cx.weak_entity(), self.app.clone(), thread.clone());
+        let (menu_workspace, menu_app, menu_path) =
+            (cx.weak_entity(), self.app.clone(), path.clone());
+        let (button_workspace, button_app) = (cx.weak_entity(), self.app.clone());
         h_flex()
             .id(SharedString::from(format!("thread-{id}")))
             .group("thread-row")
@@ -387,7 +383,7 @@ impl Workspace {
                                     menu,
                                     button_workspace.clone(),
                                     button_app.clone(),
-                                    button_thread.clone(),
+                                    id,
                                     path.clone(),
                                     window,
                                     cx,
@@ -401,7 +397,7 @@ impl Workspace {
                     menu,
                     menu_workspace.clone(),
                     menu_app.clone(),
-                    menu_thread.clone(),
+                    id,
                     menu_path.clone(),
                     window,
                     cx,
@@ -587,7 +583,7 @@ impl Workspace {
                 self.project_section(project, &threads, cx)
             })
             .collect();
-        let archived = state.store.archived_threads().map(|t| t.len()).unwrap_or(0);
+        let archived = state.archived_count;
         let label = |text: &'static str| {
             div()
                 .px_2()

@@ -16,3 +16,6 @@ log.workspace = true
 croner.workspace = true
 chrono-tz.workspace = true
 iana-time-zone.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

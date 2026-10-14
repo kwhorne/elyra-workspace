@@ -236,7 +236,7 @@ pub fn restart(cx: &mut App) {
         return;
     }
     let app = cx.global::<Updater>().app.clone();
-    let running = app.read(cx).running_threads(cx);
+    let running = app.read(cx).running_threads();
     let window = cx.active_window().or_else(|| cx.windows().first().copied());
     let (false, Some(window)) = (running.is_empty(), window) else {
         restart_now(cx);
@@ -324,7 +324,7 @@ fn restart_when_idle(cx: &mut App) {
                 if !updater.waiting {
                     return true;
                 }
-                let idle = updater.app.read(cx).running_threads(cx).is_empty();
+                let idle = updater.app.read(cx).running_threads().is_empty();
                 if idle {
                     restart_now(cx);
                 }

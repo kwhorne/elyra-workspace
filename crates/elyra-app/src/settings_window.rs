@@ -94,6 +94,8 @@ fn shell_quote(value: &str) -> String {
 
 /// Open the Settings window, or bring the existing one to the front.
 pub fn open(cx: &mut App) {
+    // An editor may have been installed since the list was made.
+    crate::editors::rescan();
     if let Some(handle) = cx.try_global::<SettingsWindow>().and_then(|w| w.0)
         && handle
             .update(cx, |_, window, _| window.activate_window())

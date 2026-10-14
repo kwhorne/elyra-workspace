@@ -437,11 +437,10 @@ mod tests {
         assert!(board.publish(intent(b, "/shop", &[]), |_| false).is_empty());
         assert!(board.publish(intent(a, "/shop", &[]), |_| false).is_empty());
         // A Best of N sibling is meant to overlap.
-        assert!(
-            board
-                .publish(intent(c, "/wt/c", &[]), |t| t == a || t == b)
-                .is_empty()
-        );
+        // (A second later, so "newest first" doesn't hang on the clock.)
+        let mut sibling = intent(c, "/wt/c", &[]);
+        sibling.at += Duration::seconds(1);
+        assert!(board.publish(sibling, |t| t == a || t == b).is_empty());
 
         let now = Utc::now();
         let others = board.others(Path::new("/shop/.git"), Some(b), now, |_| false);

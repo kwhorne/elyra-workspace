@@ -11,6 +11,8 @@ What it does depends on a tag in the prompt:
   [mcp]    reply with the names of the MCP servers Elyra gave it
   [ask]    ask permission to run a command, and say what the answer was
   [say] X  reply X, changing nothing
+  [stream N]  reply N lines slowly, with a tool call midway (for trying
+           the view while an agent writes)
   [write PATH] TEXT  append TEXT as a line to PATH
   [edit PATH] TEXT   the same, as an ACP edit tool call (what Elyra sees of
            a real agent's edit)
@@ -113,6 +115,22 @@ def prompt(rid, params):
         with open(os.path.join(state["cwd"], write.group(1)), "a") as f:
             f.write(write.group(2).strip() + "\n")
         say(sid, "Wrote " + write.group(1) + ".")
+        return end(rid)
+    stream = re.search(r"\[stream (\d+)\]", text)
+    if stream:
+        import time
+        lines = int(stream.group(1))
+        for line in range(1, lines + 1):
+            say(sid, f"Line {line} of {lines}: the cart total is rounded after the discount.\n\n")
+            if line == lines // 2:
+                send({"method": "session/update", "params": {"sessionId": sid, "update": {
+                    "sessionUpdate": "tool_call", "toolCallId": "s1", "title": "Run the tests",
+                    "kind": "execute", "status": "in_progress", "rawInput": {"command": "php artisan test"}}}})
+                time.sleep(1)
+                send({"method": "session/update", "params": {"sessionId": sid, "update": {
+                    "sessionUpdate": "tool_call_update", "toolCallId": "s1", "status": "completed",
+                    "content": [{"type": "content", "content": {"type": "text", "text": "Tests: 214 passed"}}]}}})
+            time.sleep(0.15)
         return end(rid)
     if "[say]" in text:
         say(sid, text.split("[say]", 1)[1].strip())

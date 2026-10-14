@@ -55,6 +55,15 @@ impl RightTab {
     }
 }
 
+/// A view drawn from the previous frame's cache unless it notified since.
+/// Spinners and streaming redraw the window many times a second; the views
+/// that didn't change are then not built again.
+fn cached<V: Render>(view: &Entity<V>) -> AnyElement {
+    view.clone()
+        .cached(StyleRefinement::default().size_full())
+        .into_any_element()
+}
+
 /// Full-width views that replace the chat area.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Panel {
@@ -109,6 +118,8 @@ pub struct Workspace {
     automations: Option<Entity<crate::automations::AutomationsView>>,
     tasks: Option<Entity<crate::tasks::TasksView>>,
     stats: Option<Entity<crate::stats::StatsView>>,
+    /// The title last given to the window (set only when it changes).
+    window_title: String,
     search: Option<Entity<crate::thread_search::ThreadSearch>>,
     pub(crate) sidebar_open: bool,
     pub(crate) right_open: bool,
@@ -229,6 +240,7 @@ impl Workspace {
             automations: None,
             tasks: None,
             stats: None,
+            window_title: String::new(),
             search: None,
             sidebar_open,
             right_open,
@@ -381,6 +393,8 @@ impl Workspace {
             window,
             move |this, _, event: &SessionEvent, window, cx| {
                 match event {
+                    // The thread's view redraws itself; nothing here changes.
+                    SessionEvent::Streamed => return,
                     SessionEvent::TurnStarted => this.picture_page_before(id, cx),
                     SessionEvent::TurnCompleted => this.picture_page_after(id, cx),
                     SessionEvent::SiteReady(url) => this.open_site(id, url, window, cx),
@@ -448,6 +462,7 @@ impl Workspace {
         }
         self.active = Some(id);
         self.panel = None;
+        self.release_hidden_panels();
         self.current_project = self.app.read(cx).thread(id).map(|t| t.project_id);
         self.app.update(cx, |app, cx| app.mark_read(id, cx));
         view.update(cx, |view, cx| view.focus_composer(window, cx));
@@ -547,7 +562,7 @@ impl Workspace {
                     ));
                     self.context_views.insert(id, view);
                 } else if let Some(view) = self.context_views.get(&id) {
-                    view.update(cx, |view, cx| view.scan_servers(cx));
+                    view.update(cx, |view, cx| view.scan_servers_if_stale(cx));
                 }
             }
             RightTab::SideChat => match self.side_chat_of(id, cx) {
@@ -620,6 +635,11 @@ impl Workspace {
         self.open_tabs.remove(index);
         self.thread_views.remove(&id);
         self.browser_views.remove(&id);
+        // Its panels observe the session; they're made again when it opens.
+        // (A terminal stays: its shell may be running something.)
+        self.changes_views.remove(&id);
+        self.context_views.remove(&id);
+        self.pr_views.remove(&id);
         self.recent.retain(|t| *t != id);
         self.back.retain(|t| *t != id);
         self.forward.retain(|t| *t != id);
@@ -667,6 +687,24 @@ impl Workspace {
         self.toggle_panel(Panel::Review, window, cx);
     }
 
+    /// Let go of panels that aren't shown: they observe the app or poll (the
+    /// race comparison every few seconds, Félagi issues every 90 seconds) and
+    /// are quick to make again.
+    fn release_hidden_panels(&mut self) {
+        if self.panel != Some(Panel::Race) {
+            self.race = None;
+        }
+        if self.panel != Some(Panel::Tasks) {
+            self.tasks = None;
+        }
+        if self.panel != Some(Panel::Automations) {
+            self.automations = None;
+        }
+        if self.panel != Some(Panel::Stats) {
+            self.stats = None;
+        }
+    }
+
     /// Show (or hide) a full-width panel instead of the chat.
     pub(crate) fn toggle_panel(
         &mut self,
@@ -676,10 +714,12 @@ impl Workspace {
     ) {
         if self.panel == Some(panel) {
             self.panel = None;
+            self.release_hidden_panels();
             cx.notify();
             return;
         }
         self.panel = Some(panel);
+        self.release_hidden_panels();
         let (app, workspace) = (self.app.clone(), cx.weak_entity());
         match panel {
             Panel::Review => match &self.review {
@@ -740,6 +780,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         self.panel = None;
+        self.release_hidden_panels();
         self.activate(id, window, cx);
     }
 
@@ -929,7 +970,9 @@ impl Workspace {
             }
             SessionEvent::TurnCompleted => ("Finished", NotificationType::Success),
             SessionEvent::NeedsAttention => ("Needs your input", NotificationType::Warning),
-            SessionEvent::TurnStarted | SessionEvent::SiteReady(_) => return,
+            SessionEvent::TurnStarted | SessionEvent::SiteReady(_) | SessionEvent::Streamed => {
+                return;
+            }
         };
         let workspace = cx.weak_entity();
         let note = Notification::new()
@@ -1244,6 +1287,10 @@ impl Workspace {
 
     fn on_find_file(&mut self, _: &FindFile, window: &mut Window, cx: &mut Context<Self>) {
         self.open_palette(PaletteMode::Files, window, cx);
+    }
+
+    fn on_go_to_symbol(&mut self, _: &GoToSymbol, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_palette(PaletteMode::Symbols, window, cx);
     }
 
     fn on_search_in_files(
@@ -2270,7 +2317,7 @@ impl Workspace {
             .min_w_0()
             .overflow_hidden()
             .child(self.render_tabs(cx))
-            .child(div().flex_1().min_h_0().child(view));
+            .child(div().flex_1().min_h_0().child(cached(&view)));
         let split = self
             .split
             .filter(|id| Some(*id) != self.active)
@@ -2327,7 +2374,7 @@ impl Workspace {
                             })),
                     ),
             )
-            .child(div().flex_1().min_h_0().child(split_view));
+            .child(div().flex_1().min_h_0().child(cached(&split_view)));
         h_resizable("chat-split")
             .child(resizable_panel().child(main))
             .child(resizable_panel().child(pane))
@@ -2340,17 +2387,17 @@ impl Workspace {
             (RightTab::Changes, Some(id)) => self
                 .changes_views
                 .get(&id)
-                .map(|v| v.clone().into_any_element())
+                .map(cached)
                 .unwrap_or_else(|| div().into_any_element()),
             (RightTab::Terminal, Some(id)) => self
                 .terminal_views
                 .get(&id)
-                .map(|v| v.clone().into_any_element())
+                .map(cached)
                 .unwrap_or_else(|| div().into_any_element()),
             (RightTab::PullRequest, Some(id)) => self
                 .pr_views
                 .get(&id)
-                .map(|v| v.clone().into_any_element())
+                .map(cached)
                 .unwrap_or_else(|| div().into_any_element()),
             (RightTab::Files, Some(id)) if self.files_sheet == Some(id) => v_flex()
                 .size_full()
@@ -2370,7 +2417,7 @@ impl Workspace {
             (RightTab::Files, Some(id)) => self
                 .files_views
                 .get(&id)
-                .map(|v| v.clone().into_any_element())
+                .map(cached)
                 .unwrap_or_else(|| div().into_any_element()),
             (RightTab::Browser, Some(id)) => self
                 .browser_views
@@ -2380,12 +2427,12 @@ impl Workspace {
             (RightTab::Context, Some(id)) => self
                 .context_views
                 .get(&id)
-                .map(|v| v.clone().into_any_element())
+                .map(cached)
                 .unwrap_or_else(|| div().into_any_element()),
             (RightTab::SideChat, Some(id)) => self
                 .side_chat_of(id, cx)
                 .and_then(|side| self.thread_views.get(&side))
-                .map(|v| v.clone().into_any_element())
+                .map(cached)
                 .unwrap_or_else(|| div().into_any_element()),
             _ => div()
                 .p_4()
@@ -2529,7 +2576,10 @@ impl Render for Workspace {
             Some((project, title)) => format!("{project} — {title}"),
             None => "Elyra Workspace".to_string(),
         };
-        window.set_window_title(&window_title);
+        if self.window_title != window_title {
+            window.set_window_title(&window_title);
+            self.window_title = window_title;
+        }
         // The large editor sheet was closed: hand the Files view back.
         if let Some(id) = self.files_sheet
             && !window.has_active_sheet(cx)
@@ -2548,12 +2598,12 @@ impl Render for Workspace {
             self.terminal_full = false;
         }
         let panel: Option<AnyElement> = match self.panel {
-            Some(Panel::Review) => self.review.clone().map(|v| v.into_any_element()),
-            Some(Panel::Automations) => self.automations.clone().map(|v| v.into_any_element()),
-            Some(Panel::Tasks) => self.tasks.clone().map(|v| v.into_any_element()),
-            Some(Panel::Stats) => self.stats.clone().map(|v| v.into_any_element()),
-            Some(Panel::Race) => self.race.clone().map(|v| v.into_any_element()),
-            Some(Panel::Search) => self.search.clone().map(|v| v.into_any_element()),
+            Some(Panel::Review) => self.review.as_ref().map(cached),
+            Some(Panel::Automations) => self.automations.as_ref().map(cached),
+            Some(Panel::Tasks) => self.tasks.as_ref().map(cached),
+            Some(Panel::Stats) => self.stats.as_ref().map(cached),
+            Some(Panel::Race) => self.race.as_ref().map(cached),
+            Some(Panel::Search) => self.search.as_ref().map(cached),
             None => None,
         };
         let panel_open = panel.is_some();
@@ -2612,6 +2662,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_focus_composer))
             .on_action(cx.listener(Self::on_command_palette))
             .on_action(cx.listener(Self::on_find_file))
+            .on_action(cx.listener(Self::on_go_to_symbol))
             .on_action(cx.listener(Self::on_search_in_files))
             .on_action(cx.listener(Self::on_show_files))
             .on_action(cx.listener(Self::on_show_context))

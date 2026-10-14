@@ -271,7 +271,7 @@ fn on_session_event(
             let reply = last_reply(&session.items);
             finish(app, id, failed, reply, cx);
         }
-        SessionEvent::TurnStarted | SessionEvent::SiteReady(_) => {}
+        SessionEvent::TurnStarted | SessionEvent::SiteReady(_) | SessionEvent::Streamed => {}
     }
 }
 

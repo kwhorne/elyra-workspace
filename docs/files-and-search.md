@@ -43,6 +43,19 @@ Lists the files of the active thread's folder, or the current project's,
 respecting `.gitignore`. Type part of a name or path. Picking a file opens it in
 the Files tab.
 
+## Go to symbol (⌘T)
+
+Finds a function, method, class, type or module by name in the active thread's
+folder, or the current project's, and opens its file at that line in the Files
+tab. Matching is fuzzy like **Find a file**: `updtot` finds `update_totals`, and
+an exact name comes first. Each row shows the kind, the class or module it
+belongs to, and `file:line`.
+
+It reads the same symbol index the agents use with the gateway's `symbols` tool:
+Rust, TypeScript, TSX, JavaScript, Python, Go, PHP and C, following `.gitignore`.
+The first time in a project the index is built (a few seconds for a few thousand
+files); after that it's refreshed in the background as files change.
+
 ## Search in files (⇧⌘F)
 
 Searches file contents in the same folder. From two characters, results show the

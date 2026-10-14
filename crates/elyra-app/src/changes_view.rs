@@ -101,6 +101,24 @@ fn kind_color(kind: ChangeKind, cx: &App) -> Hsla {
     }
 }
 
+/// A diff as patch text, for the clipboard.
+fn patch_text(diff: &FileDiff) -> String {
+    diff.hunks
+        .iter()
+        .flat_map(|h| {
+            std::iter::once(h.header.clone()).chain(h.lines.iter().map(|l| {
+                let sign = match l.kind {
+                    DiffLineKind::Added => "+",
+                    DiffLineKind::Removed => "-",
+                    DiffLineKind::Context => " ",
+                };
+                format!("{sign}{}", l.text)
+            }))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The mark of a line an agent wrote that nobody has read.
 fn unread_dot(cx: &App) -> Div {
     div()
@@ -153,12 +171,15 @@ impl ChangesView {
         if let Some(session) = &session {
             subscriptions.push(cx.observe(session, |this, session, cx| {
                 // A finished turn's lines are recorded after it ends.
+                // Only then: the session changes with every entry, and a
+                // redraw rebuilds the whole diff. (The workspace refreshes
+                // this view when a turn ends.)
                 let recorded = session.read(cx).lines_recorded;
                 if recorded != this.lines_recorded {
                     this.lines_recorded = recorded;
                     this.count_unread(cx);
+                    cx.notify();
                 }
-                cx.notify();
             }));
         }
         let mut this = Self {
@@ -1582,21 +1603,6 @@ impl ChangesView {
             .map(|(_, count)| *count)
             .filter(|count| *count > 0)
             .zip(self.selected.as_ref().map(|s| s.change.path.clone()));
-        let copy_text = diff
-            .hunks
-            .iter()
-            .flat_map(|h| {
-                std::iter::once(h.header.clone()).chain(h.lines.iter().map(|l| {
-                    let sign = match l.kind {
-                        DiffLineKind::Added => "+",
-                        DiffLineKind::Removed => "-",
-                        DiffLineKind::Context => " ",
-                    };
-                    format!("{sign}{}", l.text)
-                }))
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
         v_flex()
             .flex_1()
             .min_h_0()
@@ -1668,9 +1674,13 @@ impl ChangesView {
                             .xsmall()
                             .icon(IconName::Copy)
                             .tooltip("Copy diff")
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()))
-                            }),
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(diff) = &this.diff {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(patch_text(
+                                        diff,
+                                    )))
+                                }
+                            })),
                     ),
             )
             .when(truncated, |this| {

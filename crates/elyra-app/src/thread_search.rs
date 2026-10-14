@@ -28,6 +28,8 @@ pub struct ThreadSearch {
     tools: bool,
     hits: Vec<SearchHit>,
     error: Option<String>,
+    /// Bumped per search, so an older result doesn't replace a newer one.
+    generation: u64,
     _search: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -61,6 +63,7 @@ impl ThreadSearch {
             tools: true,
             hits: Vec::new(),
             error: None,
+            generation: 0,
             _search: None,
             _subscriptions: subscriptions,
         }
@@ -78,22 +81,29 @@ impl ThreadSearch {
             archived: self.archived,
             messages_only: !self.tools,
         };
-        match self
-            .app
-            .read(cx)
-            .store
-            .search_transcripts(&query, &filter, MAX_HITS)
-        {
-            Ok(hits) => {
-                self.hits = hits;
-                self.error = None;
-            }
-            Err(err) => {
-                self.hits.clear();
-                self.error = Some(format!("{err:#}"));
-            }
-        }
-        cx.notify();
+        self.generation += 1;
+        let generation = self.generation;
+        let job = search_in_background(query, filter, MAX_HITS, cx);
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return; // a newer search is running
+                }
+                match result {
+                    Ok(hits) => {
+                        this.hits = hits;
+                        this.error = None;
+                    }
+                    Err(err) => {
+                        this.hits.clear();
+                        this.error = Some(format!("{err:#}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn set_project(&mut self, project: Option<ProjectId>, cx: &mut Context<Self>) {
@@ -171,6 +181,20 @@ impl ThreadSearch {
             .on_click(cx.listener(move |this, _, window, cx| this.open(thread, item, window, cx)))
             .into_any_element()
     }
+}
+
+/// Search the transcripts on a read-only connection of its own, off the
+/// main thread (a common word in a long history takes tens of milliseconds).
+pub fn search_in_background(
+    query: String,
+    filter: SearchFilter,
+    limit: usize,
+    cx: &App,
+) -> Task<anyhow::Result<Vec<SearchHit>>> {
+    cx.background_executor().spawn(async move {
+        elyra_core::Store::open_read_only(&elyra_core::paths::database_path())?
+            .search_transcripts(&query, &filter, limit)
+    })
 }
 
 /// What kind of entry a hit is in, for its row.

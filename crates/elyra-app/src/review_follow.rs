@@ -182,9 +182,29 @@ pub fn after_turn(app: &Entity<AppState>, thread: ThreadId, cx: &mut App) {
     let Some(session) = app.read(cx).existing_session(thread) else {
         return;
     };
+    // Only this turn's entries, and only when it used gh at all: this runs
+    // after every turn of every thread.
     let (items, dir) = {
         let session = session.read(cx);
-        (session.items.clone(), session.working_dir())
+        let start = session
+            .items
+            .iter()
+            .rposition(|item| matches!(item.content, ItemContent::User { .. }))
+            .unwrap_or(0);
+        let turn = &session.items[start..];
+        let used_gh = turn.iter().any(|item| match &item.content {
+            ItemContent::ToolUse { input, .. } => input["command"]
+                .as_str()
+                .is_some_and(|command| command.contains("gh ")),
+            ItemContent::ToolResult { content: text, .. } | ItemContent::Assistant { text, .. } => {
+                text.contains("pullrequestreview-")
+            }
+            _ => false,
+        });
+        if !used_gh {
+            return;
+        }
+        (turn.to_vec(), session.working_dir())
     };
     let app = app.clone();
     cx.spawn(async move |cx: &mut AsyncApp| {

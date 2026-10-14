@@ -197,6 +197,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Open in Editor", actions::OpenInEditor),
                 MenuItem::separator(),
                 MenuItem::action("Find File…", actions::FindFile),
+                MenuItem::action("Go to Symbol…", actions::GoToSymbol),
                 MenuItem::action("Search in Files…", actions::SearchInFiles),
                 MenuItem::separator(),
                 MenuItem::action("Manage Worktrees…", actions::ManageWorktrees),

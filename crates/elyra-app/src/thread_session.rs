@@ -22,6 +22,10 @@ pub enum SessionEvent {
     TurnCompleted,
     /// The agent needs the user (approval or question).
     NeedsAttention,
+    /// More of the reply, thinking or a tool's output streamed in. Only the
+    /// thread's own view redraws for it; observers of the session aren't
+    /// notified (it happens many times a second).
+    Streamed,
 }
 
 /// One thread's live state: transcript, in-flight streaming text, queued
@@ -187,6 +191,23 @@ impl ThreadSession {
         let _ = self.app.update(cx, |app, cx| app.save_thread(&thread, cx));
     }
 
+    /// Whether a turn is running, also for the app (the sidebar reads it there
+    /// rather than from the session, so streaming doesn't redraw the window).
+    fn set_running(&mut self, running: bool, cx: &mut Context<Self>) {
+        self.running = running;
+        let id = self.thread.id;
+        let _ = self.app.update(cx, |app, cx| {
+            let changed = if running {
+                app.running.insert(id)
+            } else {
+                app.running.remove(&id)
+            };
+            if changed {
+                cx.notify();
+            }
+        });
+    }
+
     fn set_status(&mut self, status: ThreadStatus, cx: &mut Context<Self>) {
         if self.thread.status != status {
             self.thread.status = status;
@@ -270,7 +291,7 @@ impl ThreadSession {
             cx,
         );
         let item_id = self.items.last().map(|item| item.id);
-        self.running = true;
+        self.set_running(true, cx);
         self.stopped = false;
         self.set_status(ThreadStatus::Running, cx);
         cx.emit(SessionEvent::TurnStarted);
@@ -555,7 +576,7 @@ impl ThreadSession {
                         this.checkpoint_then_deliver(prompt, item_id, cx);
                     }
                     Err(err) => {
-                        this.running = false;
+                        this.set_running(false, cx);
                         this.notice(format!("Could not create worktree: {err:#}"), true, cx);
                         this.set_status(ThreadStatus::Failed, cx);
                     }
@@ -670,7 +691,7 @@ impl ThreadSession {
             .ensure_provider(cx)
             .and_then(|()| self.provider.as_ref().unwrap().send(&prompt));
         if let Err(err) = result {
-            self.running = false;
+            self.set_running(false, cx);
             self.stop_provider();
             self.notice(format!("{err:#}"), true, cx);
             self.set_status(ThreadStatus::Failed, cx);
@@ -707,7 +728,7 @@ impl ThreadSession {
             Ok(()) => {
                 if self.thread.provider == ProviderKind::Claude {
                     // Claude runs /compact as a turn.
-                    self.running = true;
+                    self.set_running(true, cx);
                 }
                 self.activity = Some("Compacting conversation…".into());
             }
@@ -955,6 +976,7 @@ impl ThreadSession {
         }
         self.stop_provider();
         if was_running {
+            // The app is quitting: nothing to tell it.
             self.running = false;
             self.thread.status = ThreadStatus::Interrupted;
         }
@@ -1135,11 +1157,11 @@ impl ThreadSession {
             ProviderEvent::TextDelta(text) => {
                 self.activity = None;
                 self.streaming_text.push_str(&text);
-                cx.notify();
+                cx.emit(SessionEvent::Streamed);
             }
             ProviderEvent::ThinkingDelta(text) => {
                 self.streaming_thinking.push_str(&text);
-                cx.notify();
+                cx.emit(SessionEvent::Streamed);
             }
             ProviderEvent::AssistantText {
                 text,
@@ -1191,7 +1213,7 @@ impl ThreadSession {
                 output,
             } => {
                 self.tool_progress.insert(tool_use_id, output);
-                cx.notify();
+                cx.emit(SessionEvent::Streamed);
             }
             ProviderEvent::ToolResult {
                 tool_use_id,
@@ -1323,7 +1345,7 @@ impl ThreadSession {
                 self._events = None;
                 self.needs_restart = false;
                 let was_running = self.running;
-                self.running = false;
+                self.set_running(false, cx);
                 self.activity = None;
                 self.streaming_text.clear();
                 self.streaming_thinking.clear();
@@ -1403,7 +1425,7 @@ impl ThreadSession {
         if let Some((model, effort)) = self.escalated_from.take() {
             self.apply_model_effort(model, effort, cx);
         }
-        self.running = false;
+        self.set_running(false, cx);
         self.activity = None;
         self.set_status(
             if is_error {

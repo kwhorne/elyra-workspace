@@ -439,6 +439,8 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         why(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "history" {
         history(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "search_threads" {
+        search_threads(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "intent_board" {
         intent_board(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "wait_for_thread" {
@@ -613,7 +615,7 @@ fn arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
 
 /// One index at a time: lookups are quick, but two first-time builds of the
 /// same project would race for its database.
-static SYMBOL_LOOKUPS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static SYMBOL_LOOKUPS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The folder to look symbols up in: a named thread's or project's, else the
 /// calling agent's own thread's.
@@ -909,9 +911,25 @@ fn status_name(status: ThreadStatus) -> &'static str {
     }
 }
 
-/// `search_threads`: matches grouped by thread, best thread first.
-fn search_threads(state: &AppState, args: &Value) -> Result<String, String> {
-    let query = arg(args, "query")?;
+/// `search_threads`: matches grouped by thread, best thread first. The
+/// search itself runs off the main thread.
+async fn search_threads(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let args = &call.args;
+    let query = arg(args, "query")?.to_string();
+    let filter = cx.update(|cx| search_filter(app.read(cx), args))?;
+    let limit = args["limit"].as_u64().unwrap_or(20).clamp(1, 100) as usize;
+    let hits = cx
+        .update(|cx| crate::thread_search::search_in_background(query.clone(), filter, limit, cx))
+        .await
+        .map_err(|err| format!("{err:#}"))?;
+    Ok(cx.update(|cx| format_hits(app.read(cx), &query, &hits)))
+}
+
+fn search_filter(state: &AppState, args: &Value) -> Result<elyra_core::SearchFilter, String> {
     let project = match args["project"].as_str().map(str::to_lowercase) {
         Some(wanted) => Some(
             state
@@ -927,22 +945,20 @@ fn search_threads(state: &AppState, args: &Value) -> Result<String, String> {
         ),
         None => None,
     };
-    let filter = elyra_core::SearchFilter {
+    Ok(elyra_core::SearchFilter {
         project,
         archived: args["archived"].as_bool().unwrap_or(false),
         messages_only: args["messages_only"].as_bool().unwrap_or(false),
-    };
-    let limit = args["limit"].as_u64().unwrap_or(20).clamp(1, 100) as usize;
-    let hits = state
-        .store
-        .search_transcripts(query, &filter, limit)
-        .map_err(|err| format!("{err:#}"))?;
+    })
+}
+
+fn format_hits(state: &AppState, query: &str, hits: &[elyra_core::SearchHit]) -> String {
     if hits.is_empty() {
-        return Ok(format!("Nothing in any thread matches “{query}”."));
+        return format!("Nothing in any thread matches “{query}”.");
     }
     let archived = state.archived_threads();
     let mut groups: Vec<(ThreadId, Vec<&elyra_core::SearchHit>)> = Vec::new();
-    for hit in &hits {
+    for hit in hits {
         match groups.iter_mut().find(|(thread, _)| *thread == hit.thread) {
             Some((_, list)) => list.push(hit),
             None => groups.push((hit.thread, vec![hit])),
@@ -979,13 +995,12 @@ fn search_threads(state: &AppState, args: &Value) -> Result<String, String> {
             ));
         }
     }
-    Ok(out)
+    out
 }
 
 fn run_tool(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String, String> {
     let args = &call.args;
     match call.tool.as_str() {
-        "search_threads" => search_threads(app.read(cx), args),
         "list_projects" => {
             let projects: Vec<Value> = app
                 .read(cx)
