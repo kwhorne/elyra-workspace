@@ -96,7 +96,11 @@ pub fn changed_since(dir: &Path, checkpoint: Option<&str>) -> bool {
     let (Some(checkpoint), Ok(root)) = (checkpoint, elyra_git::repo_root(dir)) else {
         return true;
     };
-    elyra_git::checkpoint::changed_since(&root, checkpoint).unwrap_or(true)
+    elyra_git::checkpoint::changed_since(&root, checkpoint).unwrap_or_else(|err| {
+        // Can't tell: check, rather than skip checks after a real change.
+        log::warn!("comparing with checkpoint {checkpoint}: {err:#}");
+        true
+    })
 }
 
 /// Run `command` in `dir` with the user's login shell, until it ends, the

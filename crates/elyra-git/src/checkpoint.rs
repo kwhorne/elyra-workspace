@@ -85,9 +85,13 @@ fn with_working_tree(
     finish: impl FnOnce(&dyn Fn(&[&str]) -> Result<String>, &str) -> Result<String>,
 ) -> Result<String> {
     let index = git_path(repo, "index")?;
+    // Unique per call: snapshots run concurrently (a turn's line record and
+    // its checks at once), and the clock alone repeats within a microsecond.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let temp = std::env::temp_dir().join(format!(
-        "elyra-checkpoint-{}-{}.index",
+        "elyra-checkpoint-{}-{}-{}.index",
         std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -202,6 +206,29 @@ mod tests {
                 ("keep.txt".to_string(), "two added".to_string()),
                 ("new.rs".to_string(), "fn fresh() {}".to_string())
             ]
+        );
+        std::fs::remove_dir_all(&repo).unwrap();
+    }
+
+    #[test]
+    fn snapshots_can_run_at_the_same_time() {
+        let repo = temp_repo("concurrent");
+        std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+        stage_all(&repo).unwrap();
+        commit_staged(&repo, "base").unwrap();
+        let base = create(&repo, "refs/elyra/test/concurrent", "turn").unwrap();
+        // A turn's line record and its checks compare with the working tree
+        // at once; neither may trip over the other's temporary index.
+        let results: Vec<bool> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..16)
+                .map(|_| scope.spawn(|| super::changed_since(&repo, &base).is_ok()))
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert!(results.iter().all(|ok| *ok), "{results:?}");
+        assert!(
+            !super::changed_since(&repo, &base).unwrap(),
+            "nothing changed"
         );
         std::fs::remove_dir_all(&repo).unwrap();
     }
