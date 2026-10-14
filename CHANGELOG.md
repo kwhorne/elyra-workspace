@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.6.0
+
+Find anything you or the agents said or did, in every thread, in an instant.
+
+- **Search threads (⌥⌘F).** Find anything in any thread: your messages, the
+  agents' replies, their tool calls and what the tools printed. Every word must
+  occur and matches word beginnings, "quotes" make a phrase, and results come
+  best first, grouped by thread, with the matching words marked. Filter by
+  project, include archived threads or leave tool output out; a click opens the
+  thread at the entry. The command palette's message search uses the same index
+  and now ranks its hits. Agents can search too, with the gateway's new
+  `search_threads` tool. See
+  [Search threads](docs/files-and-search.md#search-threads-f).
+
 ## 1.5.1
 
 Gemini CLI as a full member: it gets the project's AGENTS.md and the shared
