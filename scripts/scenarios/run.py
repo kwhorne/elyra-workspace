@@ -30,12 +30,14 @@ AT_LEAST_TWO = 'test "$(cat value.txt)" -ge 2 || { echo "value is $(cat value.tx
 SCENARIOS = []
 
 
-def scenario(check=None, value=0, files=None, allow_mcp_json=False):
+def scenario(check=None, value=0, files=None, allow_mcp_json=False, instructions=None):
     """Register a scenario with the project it runs in: its check command,
-    value.txt, extra files, and whether its .mcp.json is allowed."""
+    value.txt, extra files, whether its .mcp.json is allowed and the
+    instructions Elyra gives its agents."""
     def register(fn):
         SCENARIOS.append((fn.__name__, fn, {"check": check, "value": value, "files": files or {},
-                                            "allow_mcp_json": allow_mcp_json}))
+                                            "allow_mcp_json": allow_mcp_json,
+                                            "instructions": instructions}))
         return fn
     return register
 
@@ -75,7 +77,7 @@ class World:
         self.app = None
         self.port = None
 
-    def project(self, name, check, value, files=None, allow_mcp_json=False):
+    def project(self, name, check, value, files=None, allow_mcp_json=False, instructions=None):
         path = os.path.join(self.dir, name)
         os.makedirs(path)
         for file, text in (files or {}).items():
@@ -86,10 +88,11 @@ class World:
         with open(os.path.join(path, "value.txt"), "w") as f:
             f.write(f"{value}\n")
         with open(os.path.join(path, ".gitignore"), "w") as f:
-            f.write("prompts.log\nmodels.log\n")
+            f.write("prompts.log\nmodels.log\ninstructions.log\n")
         git("add", ".")
         git("-c", "user.email=s@s", "-c", "user.name=s", "commit", "-qm", "start")
-        self.projects[name] = {"path": path, "check": check, "allow_mcp_json": allow_mcp_json}
+        self.projects[name] = {"path": path, "check": check, "allow_mcp_json": allow_mcp_json,
+                               "instructions": instructions}
         return path
 
     def start(self):
@@ -139,8 +142,10 @@ class World:
             for name, project in self.projects.items():
                 project_id = str(uuid.uuid4())
                 db.execute(
-                    "INSERT INTO projects (id, name, path, created_at, check_command) VALUES (?, ?, ?, ?, ?)",
-                    (project_id, name, project["path"], "2026-01-01T00:00:00Z", project["check"]),
+                    "INSERT INTO projects (id, name, path, created_at, check_command, instructions) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (project_id, name, project["path"], "2026-01-01T00:00:00Z", project["check"],
+                     project.get("instructions")),
                 )
                 if project["allow_mcp_json"]:
                     with open(os.path.join(project["path"], ".mcp.json"), "rb") as f:
@@ -497,6 +502,19 @@ def parallel_agents_see_what_the_others_change(world, project):
            and "shipping" not in board, "the board leaves the asker out: " + board)
 
 
+@scenario(instructions="Answer in Norwegian.")
+def acp_agents_get_the_instructions_once(world, project):
+    thread = world.new_thread(project, "[say] first")
+    world.wait(thread, 30)
+    world.tool("send_message", thread_id=thread, text="[say] second")
+    world.wait(thread, 30)
+    expect(world.prompts(project) == ["[say] first", "[say] second"], f"prompts: {world.prompts(project)}")
+    path = os.path.join(world.projects[project]["path"], "instructions.log")
+    given = open(path).read().splitlines() if os.path.exists(path) else []
+    expect(len(given) == 1 and "Answer in Norwegian." in given[0],
+           f"the first prompt carries them, the second doesn't: {given}")
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]
@@ -510,7 +528,7 @@ def main():
         world.stop()
         for name, _, project in chosen:
             world.project(name, project["check"], project["value"], project["files"],
-                          project["allow_mcp_json"])
+                          project["allow_mcp_json"], project["instructions"])
         world.seed()
         world.start()
         for name, fn, _ in chosen:

@@ -286,6 +286,27 @@ impl Preferences {
         }
     }
 
+    /// Every provider's executable and environment for one-shot generation,
+    /// with `account`'s environment for `kind`.
+    pub fn cli_settings(
+        &self,
+        kind: ProviderKind,
+        account: Option<&str>,
+    ) -> elyra_provider::CliSettings {
+        let launch = ProviderKind::ALL
+            .into_iter()
+            .map(|provider| {
+                let launch = self.launch(provider, (provider == kind).then_some(account).flatten());
+                (provider, (launch.executable, launch.env))
+            })
+            .collect();
+        let disabled = ProviderKind::ALL
+            .into_iter()
+            .filter(|provider| !self.provider_enabled(*provider))
+            .collect();
+        elyra_provider::CliSettings { launch, disabled }
+    }
+
     pub fn is_starred(&self, preset: &ModelPreset) -> bool {
         self.starred_models
             .iter()

@@ -98,6 +98,17 @@ impl PrView {
             .unwrap_or(ProviderKind::Claude)
     }
 
+    /// How to start the agents for one-shot generation, with the thread's account.
+    fn cli_settings(&self, cx: &App) -> elyra_provider::CliSettings {
+        let account = self
+            .session
+            .as_ref()
+            .and_then(|s| s.upgrade())
+            .and_then(|s| s.read(cx).thread.account.clone());
+        crate::preferences::Preferences::global(cx)
+            .cli_settings(self.provider(cx), account.as_deref())
+    }
+
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let cwd = self.cwd.clone();
         if !matches!(self.state, PrState::Pr(..)) {
@@ -206,6 +217,7 @@ impl PrView {
     fn generate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let cwd = self.cwd.clone();
         let provider = self.provider(cx);
+        let settings = self.cli_settings(cx);
         let conventional = Self::conventional(cx);
         // A thread on a Félagi issue names it: the issue is the scope.
         let issue = self
@@ -264,7 +276,7 @@ impl PrView {
                 "Write a GitHub pull request title and description for these changes. \
                  {rules}Format exactly:\nTITLE: <title, at most 72 characters>\n\n<description in Markdown: summary, then a short list of notable changes and how it was tested if known>\n\n{context}"
             );
-            elyra_provider::generate_text(provider, &root, &prompt)
+            elyra_provider::generate_text(provider, &root, &prompt, &settings)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = job.await;

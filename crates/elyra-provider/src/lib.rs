@@ -133,7 +133,7 @@ pub fn capabilities(kind: ProviderKind) -> Capabilities {
 pub fn supports_fork(kind: ProviderKind) -> bool {
     matches!(
         kind,
-        ProviderKind::Claude | ProviderKind::Elyra | ProviderKind::Pi
+        ProviderKind::Claude | ProviderKind::Codex | ProviderKind::Elyra | ProviderKind::Pi
     )
 }
 
@@ -246,13 +246,45 @@ pub fn is_installed(kind: ProviderKind) -> bool {
     find_executable(kind).is_some()
 }
 
+/// An executable (None: find it on PATH) and extra environment.
+pub type CliLaunch = (Option<std::path::PathBuf>, Vec<(String, String)>);
+
+/// How the user starts each provider's CLI (Settings → Providers), for
+/// one-shot generation.
+#[derive(Clone, Debug, Default)]
+pub struct CliSettings {
+    /// Executable (None: find it on PATH) and extra environment per provider.
+    pub launch: std::collections::HashMap<ProviderKind, CliLaunch>,
+    /// Providers switched off: not used, also not as a fallback.
+    pub disabled: Vec<ProviderKind>,
+}
+
 /// One-shot text generation with the provider's CLI in print mode (titles,
-/// commit messages). Blocking; run it on a background thread. Providers
-/// without a print mode fall back to Claude Code, then Elyra.
-pub fn generate_text(kind: ProviderKind, cwd: &std::path::Path, prompt: &str) -> Result<String> {
+/// commit messages). Blocking; run it on a background thread. When the
+/// provider can't, Claude Code, Elyra, Codex and Gemini CLI are tried in turn.
+pub fn generate_text(
+    kind: ProviderKind,
+    cwd: &std::path::Path,
+    prompt: &str,
+    settings: &CliSettings,
+) -> Result<String> {
     let mut errors = Vec::new();
-    for kind in [kind, ProviderKind::Claude, ProviderKind::Elyra] {
-        match generate_with(kind, cwd, prompt) {
+    let mut chain = vec![kind];
+    for fallback in [
+        ProviderKind::Claude,
+        ProviderKind::Elyra,
+        ProviderKind::Codex,
+        ProviderKind::Gemini,
+    ] {
+        if !chain.contains(&fallback) {
+            chain.push(fallback);
+        }
+    }
+    for kind in chain {
+        if settings.disabled.contains(&kind) {
+            continue;
+        }
+        match generate_with(kind, cwd, prompt, settings) {
             Ok(Some(text)) => return Ok(text),
             Ok(None) => {}
             Err(err) => errors.push(format!("{}: {err:#}", kind.label())),
@@ -269,8 +301,10 @@ fn generate_with(
     kind: ProviderKind,
     cwd: &std::path::Path,
     prompt: &str,
+    settings: &CliSettings,
 ) -> Result<Option<String>> {
-    let Some(executable) = find_executable(kind) else {
+    let (custom, env) = settings.launch.get(&kind).cloned().unwrap_or_default();
+    let Some(executable) = custom.or_else(|| find_executable(kind)) else {
         return Ok(None);
     };
     let args: Vec<&str> = match kind {
@@ -290,6 +324,7 @@ fn generate_with(
     };
     let output = std::process::Command::new(executable)
         .args(args)
+        .envs(env)
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
         .output()?;

@@ -725,11 +725,7 @@ impl ThreadSession {
         self.thread.provider_session_id = None;
         self.usage = Usage::default();
         self.save_thread(cx);
-        self.notice(
-            "Context cleared — the next message starts a new conversation.",
-            false,
-            cx,
-        );
+        self.notice(crate::context_report::CLEARED, false, cx);
     }
 
     // ---- decisions --------------------------------------------------------
@@ -1012,9 +1008,11 @@ impl ThreadSession {
             "Write a short title (3-7 words, no quotes, no trailing period) for this coding task conversation. Reply with the title only.\n\n{excerpt}"
         );
         let (kind, cwd) = (self.thread.provider, self.working_dir());
+        let settings = crate::preferences::Preferences::global(cx)
+            .cli_settings(kind, self.thread.account.as_deref());
         let job = cx
             .background_executor()
-            .spawn(async move { elyra_provider::generate_text(kind, &cwd, &prompt) });
+            .spawn(async move { elyra_provider::generate_text(kind, &cwd, &prompt, &settings) });
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| match result {
@@ -1076,9 +1074,11 @@ impl ThreadSession {
             "Summarise this coding conversation for someone picking it up later: the goal, what has been done, decisions made, and what is left. Use at most 8 short bullet points. Reply with the bullets only.\n\n{excerpt}"
         );
         let (kind, cwd) = (self.thread.provider, self.working_dir());
+        let settings = crate::preferences::Preferences::global(cx)
+            .cli_settings(kind, self.thread.account.as_deref());
         let job = cx
             .background_executor()
-            .spawn(async move { elyra_provider::generate_text(kind, &cwd, &prompt) });
+            .spawn(async move { elyra_provider::generate_text(kind, &cwd, &prompt, &settings) });
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| {

@@ -15,8 +15,9 @@ What it does depends on a tag in the prompt:
   [edit PATH] TEXT   the same, as an ACP edit tool call (what Elyra sees of
            a real agent's edit)
   anything else (also Elyra's follow-ups): add 1 to value.txt
-Every prompt is appended to prompts.log in the working directory, and every
-model Elyra switches to (session/set_model) to models.log.
+Every prompt is appended to prompts.log in the working directory, the
+instructions that lead a new session's first prompt to instructions.log, and
+every model Elyra switches to (session/set_model) to models.log.
 """
 import json
 import os
@@ -84,7 +85,12 @@ def request(method, params):
 
 def prompt(rid, params):
     sid = params["sessionId"]
-    text = "".join(block.get("text", "") for block in params["prompt"])
+    blocks = params["prompt"]
+    if blocks and blocks[0].get("text", "").startswith("<system-instructions>"):
+        with open(os.path.join(state["cwd"], "instructions.log"), "a") as log:
+            log.write(blocks[0]["text"].replace("\n", " ") + "\n")
+        blocks = blocks[1:]
+    text = "".join(block.get("text", "") for block in blocks)
     with open(os.path.join(state["cwd"], "prompts.log"), "a") as log:
         log.write(text.replace("\n", " ")[:400] + "\n")
     edit = re.search(r"\[edit ([^\]]+)\] (.*)", text, re.S)

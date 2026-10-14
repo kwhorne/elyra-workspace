@@ -103,6 +103,12 @@ struct State {
     mcp_servers: Vec<crate::McpServer>,
     /// The agent accepts HTTP MCP servers (else stdio bridges are used).
     mcp_http: bool,
+    /// Elyra's instructions for the agent (project instructions, debug mode,
+    /// skills). ACP has no system prompt, so they lead the first prompt of a
+    /// new session.
+    instructions: Option<String>,
+    /// A new session started and hasn't had its first prompt yet.
+    instructions_due: bool,
 }
 
 impl State {
@@ -272,6 +278,11 @@ impl AcpSession {
             plan: None,
             mcp_servers: config.mcp_servers.clone(),
             mcp_http: false,
+            instructions: config
+                .append_system_prompt
+                .clone()
+                .filter(|text| !text.trim().is_empty()),
+            instructions_due: false,
         }));
         let writer: Writer = Arc::new(Mutex::new(None));
         let (reader_state, reader_writer) = (state.clone(), writer.clone());
@@ -325,6 +336,22 @@ fn request_frame(state: &mut State, method: &str, params: Value, pending: Pendin
     json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
 }
 
+/// A prompt's blocks, led by the instructions when it is a new session's first.
+fn with_instructions(state: &mut State, mut blocks: Value) -> Value {
+    if std::mem::take(&mut state.instructions_due)
+        && let (Some(instructions), Some(list)) = (&state.instructions, blocks.as_array_mut())
+    {
+        list.insert(
+            0,
+            json!({
+                "type": "text",
+                "text": format!("<system-instructions>\n{instructions}\n</system-instructions>")
+            }),
+        );
+    }
+    blocks
+}
+
 fn prompt_blocks(prompt: &Prompt) -> Value {
     let mut blocks = vec![json!({ "type": "text", "text": prompt.text })];
     for image in &prompt.images {
@@ -363,10 +390,11 @@ impl AgentSession for AcpSession {
                 state.queued.push(prompt_blocks(prompt));
                 return Ok(());
             };
+            let blocks = with_instructions(&mut state, prompt_blocks(prompt));
             request_frame(
                 &mut state,
                 "session/prompt",
-                json!({ "sessionId": session_id, "prompt": prompt_blocks(prompt) }),
+                json!({ "sessionId": session_id, "prompt": blocks }),
                 Pending::Prompt(Instant::now()),
             )
         };
@@ -606,6 +634,8 @@ fn handle_response(
                 }
             };
             state.session_id = Some(session_id.clone());
+            // A loaded session has had its instructions already.
+            state.instructions_due = matches!(pending, Pending::NewSession);
             state.modes = result["modes"]["availableModes"]
                 .as_array()
                 .into_iter()
@@ -659,6 +689,7 @@ fn handle_response(
                 ));
             }
             for prompt in std::mem::take(&mut state.queued) {
+                let prompt = with_instructions(state, prompt);
                 outgoing.push(request_frame(
                     state,
                     "session/prompt",
@@ -1012,8 +1043,9 @@ fn handle_request(
             }));
         }
         "fs/read_text_file" => {
-            let path = params["path"].as_str().unwrap_or("");
-            match std::fs::read_to_string(path) {
+            let file = state.cwd.join(params["path"].as_str().unwrap_or(""));
+            let path = file.display();
+            match std::fs::read_to_string(&file) {
                 Ok(text) => {
                     let start = params["line"].as_u64().unwrap_or(1).max(1) as usize - 1;
                     let limit = params["limit"].as_u64().map(|l| l as usize);
@@ -1032,13 +1064,22 @@ fn handle_request(
             }
         }
         "fs/write_text_file" => {
-            let path = params["path"].as_str().unwrap_or("");
+            // Paths are absolute by the protocol; a relative one is the thread's.
+            let file = state.cwd.join(params["path"].as_str().unwrap_or(""));
+            let path = file.display();
+            if state.permission_mode == PermissionMode::Plan {
+                outgoing.push(fail(
+                    -32003,
+                    format!("{path}: the thread is in plan mode, which doesn't change files"),
+                ));
+                return;
+            }
             let content = params["content"].as_str().unwrap_or("");
-            let result = std::path::Path::new(path)
+            let result = file
                 .parent()
                 .map(std::fs::create_dir_all)
                 .transpose()
-                .and_then(|_| std::fs::write(path, content));
+                .and_then(|_| std::fs::write(&file, content));
             match result {
                 Ok(()) => outgoing.push(reply(Value::Null)),
                 Err(err) => outgoing.push(fail(-32002, format!("{path}: {err}"))),
@@ -1114,7 +1155,7 @@ mod tests {
             args: vec![script.display().to_string()],
             env: vec![("MOCK_GREETING".into(), "hej".into())],
             fork: false,
-            append_system_prompt: None,
+            append_system_prompt: Some("Use tabs, not spaces.".into()),
             mcp_servers: Vec::new(),
         };
         let (session, rx) = AcpSession::start(ProviderKind::CustomAcp, config).unwrap();
@@ -1180,6 +1221,30 @@ mod tests {
         });
         assert_eq!(message, None, "cancelled turns end cleanly");
         assert!(!dir.join("out.txt").exists());
+
+        // The instructions led the session's first prompt, and only that one.
+        session.send(&Prompt::text("show instructions")).unwrap();
+        let reply = wait_for(&rx, &mut seen, |e| match e {
+            ProviderEvent::AssistantText { text, .. } if text.contains(": ") => Some(text.clone()),
+            _ => None,
+        });
+        assert_eq!(reply, "1: Use tabs, not spaces.");
+
+        // Plan mode doesn't write files, also when the agent is allowed to.
+        session.set_permission_mode(PermissionMode::Plan).unwrap();
+        session.send(&Prompt::text("write file")).unwrap();
+        let request = wait_for(&rx, &mut seen, |e| match e {
+            ProviderEvent::PermissionRequest(r) => Some(r.clone()),
+            _ => None,
+        });
+        session
+            .respond_permission(&request.request_id, PermissionResponse::Allow)
+            .unwrap();
+        wait_for(&rx, &mut seen, |e| match e {
+            ProviderEvent::TurnCompleted { .. } => Some(()),
+            _ => None,
+        });
+        assert!(!dir.join("out.txt").exists(), "refused in plan mode");
 
         // Writes go through fs/write_text_file when allowed.
         session

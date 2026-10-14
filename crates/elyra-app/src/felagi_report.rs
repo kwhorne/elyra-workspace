@@ -297,6 +297,8 @@ impl Report {
     fn draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let session = self.session.read(cx);
         let provider = session.thread.provider;
+        let settings = crate::preferences::Preferences::global(cx)
+            .cli_settings(provider, session.thread.account.as_deref());
         let cwd = session.working_dir();
         let conversation = crate::app_state::transcript_text(&session.items, 12_000);
         let prompt = format!(
@@ -327,7 +329,7 @@ impl Report {
                     "\n\nThe work is in the pull request {pr}; end the report with the line \u{201c}Pull request: {pr}\u{201d}."
                 ));
             }
-            elyra_provider::generate_text(provider, &cwd, &prompt)
+            elyra_provider::generate_text(provider, &cwd, &prompt, &settings)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = job.await;

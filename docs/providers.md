@@ -79,7 +79,14 @@ spoken by many agents. Through it Elyra supports:
 - resuming sessions, when the agent supports it
 
 The permission mode is mapped to the agent's closest mode. For example *Plan
-only* picks a mode called `plan`.
+only* picks a mode called `plan`. In *Plan only*, Elyra also refuses the agent's
+requests to write files.
+
+ACP has no system prompt, so the project instructions, debug mode and shared
+skills lead the first message of each new session, in a
+`<system-instructions>` block. A resumed session already has them. Side chats
+and forks start a new session and carry the conversation so far along with
+their first message.
 
 Any other ACP agent works as **Custom agent (ACP)**. Set its command, and any
 arguments, in **Settings → Providers**. An adapter that wraps another agent also

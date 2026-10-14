@@ -214,6 +214,17 @@ impl ChangesView {
             .unwrap_or(ProviderKind::Claude)
     }
 
+    /// How to start the agents for one-shot generation, with the thread's account.
+    fn cli_settings(&self, cx: &App) -> elyra_provider::CliSettings {
+        let account = self
+            .session
+            .as_ref()
+            .and_then(|s| s.upgrade())
+            .and_then(|s| s.read(cx).thread.account.clone());
+        crate::preferences::Preferences::global(cx)
+            .cli_settings(self.provider(cx), account.as_deref())
+    }
+
     fn turns(&self, cx: &App) -> Vec<(String, String)> {
         self.session
             .as_ref()
@@ -636,6 +647,7 @@ impl ChangesView {
         self.busy = Some("Writing message…");
         cx.notify();
         let provider = self.provider(cx);
+        let settings = self.cli_settings(cx);
         let conventional = crate::preferences::Preferences::global(cx).conventional_titles;
         let job = cx.background_executor().spawn(async move {
             let staged = elyra_git::has_staged(&root)?;
@@ -658,7 +670,7 @@ impl ChangesView {
                 "Write a Git commit message for this diff. {first_line} \
                  Then a blank line and a short body only if it adds information. Reply with the message only, no code fences.\n\n{diff}"
             );
-            elyra_provider::generate_text(provider, &root, &prompt)
+            elyra_provider::generate_text(provider, &root, &prompt, &settings)
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = job.await;

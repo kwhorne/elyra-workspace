@@ -47,6 +47,14 @@ def prompt(rid, params):
     sid = params["sessionId"]
     text = "".join(block.get("text", "") for block in params["prompt"])
     cwd = state["cwd"]
+    first = params["prompt"][0].get("text", "")
+    if first.startswith("<system-instructions>"):
+        state["instructions"] = state.get("instructions", []) + [first]
+    if "show instructions" in text:
+        given = state.get("instructions", [])
+        reply = f"{len(given)}: " + (given[0].splitlines()[1] if given else "none")
+        update(sid, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": reply}})
+        return send({"id": rid, "result": {"stopReason": "end_turn"}})
     if "read notes" in text:
         update(sid, {"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": "Planning…"}})
         update(sid, {"sessionUpdate": "plan", "entries": [
@@ -74,8 +82,9 @@ def prompt(rid, params):
         if not ask(sid, "t2", "edit", "Write out.txt"):
             update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "t2", "status": "failed"})
             return send({"id": rid, "result": {"stopReason": "cancelled"}})
-        request("fs/write_text_file", {"sessionId": sid, "path": path, "content": "written by agent"})
-        update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "t2", "status": "completed"})
+        written = request("fs/write_text_file", {"sessionId": sid, "path": path, "content": "written by agent"})
+        status = "failed" if "error" in written else "completed"
+        update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "t2", "status": status})
         return send({"id": rid, "result": {"stopReason": "end_turn"}})
     update(sid, {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "ok"}})
     send({"id": rid, "result": {"stopReason": "end_turn"}})

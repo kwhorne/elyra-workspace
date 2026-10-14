@@ -112,8 +112,9 @@ it on the left.
 
 A side chat (**⌥⌘S**) is a quick conversation that branches from the current
 thread. Use it to ask about something without derailing the main thread. It
-starts with the same agent, model and folder. For Claude Code, Codex, Elyra and Pi it
-also starts from the main thread's conversation so far.
+starts with the same agent, model and folder, and from the main thread's
+conversation so far: Claude Code, Codex, Elyra and Pi branch their own session,
+and other agents get the conversation along with the first message.
 
 The side chat opens in the **Side chat** tab of the tools panel. It is not listed
 in the sidebar. Its header has buttons to:

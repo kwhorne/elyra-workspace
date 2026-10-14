@@ -213,7 +213,17 @@ impl AppState {
         thread.title = format!("Side chat · {}", parent.title);
         thread.effort = parent.effort.clone();
         thread.parent_id = Some(parent_id);
-        thread.provider_session_id = parent.provider_session_id.clone();
+        // Branch the parent's agent session where the agent can; otherwise
+        // the side chat would continue the parent's own session. Then the
+        // conversation so far goes along with the first message instead.
+        if elyra_provider::supports_fork(parent.provider) {
+            thread.provider_session_id = parent.provider_session_id.clone();
+        } else {
+            let items = self.store.transcript(parent_id)?;
+            if !items.is_empty() {
+                thread.fork_context = Some(transcript_text(&items, 24_000));
+            }
+        }
         self.store.update_thread(&thread)?;
         let fork = thread.provider_session_id.is_some();
         let id = thread.id;
