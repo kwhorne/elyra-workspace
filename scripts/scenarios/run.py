@@ -569,6 +569,37 @@ def a_branch_reads_as_the_instructions_behind_it(world, project):
     expect(text[by_hand:].count("- `lib.rs` (+1)") == 1, "the line written by hand: " + text[by_hand:])
 
 
+@scenario()
+def who_broke_it_names_the_instruction(world, project):
+    path = world.projects[project]["path"]
+    for name, text in [("a.txt", "alpha"), ("broken.txt", "this file breaks the build"),
+                       ("c.txt", "gamma")]:
+        thread = world.new_thread(project, f"[write {name}] {text}")
+        world.wait(thread, 30)
+        # A plain title: the next thread's list of what the others changed
+        # names it, and the scripted agent would follow a tag in it.
+        world.tool("set_thread_title", thread_id=thread, title=f"Add {name}")
+        # One turn after the other: the next one's checkpoint has this file.
+        deadline = time.time() + 10
+        while not os.path.exists(os.path.join(path, name)):
+            expect(time.time() < deadline, f"{name} was not written")
+            time.sleep(0.1)
+        time.sleep(0.5)
+    found = world.tool("who_broke_it", project=project, command="test ! -f broken.txt")
+    expect("started failing with the turn for this message" in found
+           and "[write broken.txt] this file breaks the build" in found, found)
+    expect("check runs" in found, found)
+    # The working tree is as it was, and no temporary checkout is left behind.
+    expect(sorted(f for f in os.listdir(path) if f.endswith(".txt")) == ["a.txt", "broken.txt", "c.txt", "value.txt"],
+           f"files: {os.listdir(path)}")
+    worktrees = subprocess.run(["git", "worktree", "list"], cwd=path, capture_output=True, text=True).stdout
+    expect(worktrees.count("\n") == 1, "the temporary checkout is gone: " + worktrees)
+    passes = world.tool("who_broke_it", project=project, command="true")
+    expect("passes in a clean copy" in passes, passes)
+    always = world.tool("who_broke_it", project=project, command="false")
+    expect("already failed before the oldest turn" in always, always)
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

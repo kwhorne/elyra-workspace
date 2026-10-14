@@ -64,6 +64,8 @@ pub struct ThreadView {
         usize,
         usize,
     )>,
+    /// For a new thread: how the agents have done in its project.
+    agent_hint: Option<String>,
     expanded: HashSet<ItemId>,
     forms: HashMap<String, QuestionForm>,
     attachments: Vec<Attachment>,
@@ -182,6 +184,7 @@ impl ThreadView {
             list,
             rows: transcript::RowIndex::default(),
             reply: None,
+            agent_hint: None,
             expanded: HashSet::new(),
             forms: HashMap::new(),
             attachments: Vec::new(),
@@ -202,6 +205,7 @@ impl ThreadView {
             _subscriptions: subscriptions,
         };
         this.refresh_branch(cx);
+        this.load_agent_hint(cx);
         this
     }
 
@@ -1077,6 +1081,39 @@ impl ThreadView {
             self.reveal(target, cx);
         }
         cx.notify();
+    }
+
+    /// For a thread that hasn't started: how the agents did in its project
+    /// (green checks on the first try, and cost), to help pick one.
+    fn load_agent_hint(&mut self, cx: &mut Context<Self>) {
+        let session = self.session.read(cx);
+        if !session.items.is_empty() {
+            return;
+        }
+        let (project, name) = (session.project.id, session.project.name.clone());
+        if let Some(rows) = crate::leaderboard::cached(project) {
+            self.agent_hint = crate::leaderboard::hint(&rows, &name);
+            return;
+        }
+        let Some(app) = session.app_entity() else {
+            return;
+        };
+        let threads = crate::leaderboard::threads(app.read(cx), Some(project));
+        let job = cx.background_executor().spawn(async move {
+            crate::leaderboard::load(&elyra_core::paths::database_path(), threads)
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(rows) = job.await else {
+                return;
+            };
+            let hint = crate::leaderboard::hint(&rows, &name);
+            crate::leaderboard::remember(project, rows);
+            let _ = this.update(cx, |this, cx| {
+                this.agent_hint = hint;
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Hand the newly streamed part of the reply to its text state, which
@@ -2200,6 +2237,18 @@ impl ThreadView {
                     .text_color(cx.theme().muted_foreground)
                     .child(cwd),
             )
+            .when_some(self.agent_hint.clone(), |this, hint| {
+                this.child(
+                    h_flex()
+                        .pt_4()
+                        .max_w(px(560.))
+                        .gap_2()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(Icon::new(IconName::ChartColumn).xsmall())
+                        .child(hint),
+                )
+            })
             .into_any_element()
     }
 }

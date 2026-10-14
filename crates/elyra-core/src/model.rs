@@ -380,6 +380,12 @@ pub enum ItemContent {
         #[serde(default)]
         handled: bool,
     },
+    /// What made the checks fail: the instruction whose turn turned them
+    /// from green to red, found by running them against earlier states.
+    Bisect {
+        command: String,
+        verdict: BisectVerdict,
+    },
     /// A saved browser journey, replayed (after a turn, or on request).
     Journey {
         name: String,
@@ -489,6 +495,39 @@ pub struct LineOrigin {
     pub at: DateTime<Utc>,
     /// How many of the matched lines it wrote.
     pub lines: usize,
+}
+
+/// What looking for the change that broke the checks found.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BisectVerdict {
+    /// The checks passed before this turn and failed after it.
+    Found {
+        thread: ThreadId,
+        item: ItemId,
+        instruction: String,
+        thread_title: String,
+        agent: String,
+        at: DateTime<Utc>,
+        /// The end of the failing output.
+        output: String,
+        runs: usize,
+    },
+    /// They already failed before the oldest turn looked at.
+    AlreadyFailing {
+        since: DateTime<Utc>,
+        runs: usize,
+    },
+    /// They pass in a clean copy of the latest state: the failure depends on
+    /// something outside the repository.
+    Passes {
+        runs: usize,
+    },
+    /// Too few turns in this folder to compare.
+    NoHistory,
+    Failed {
+        error: String,
+    },
 }
 
 /// A line's content, for finding where it came from: whitespace around it

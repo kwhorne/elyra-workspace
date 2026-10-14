@@ -870,14 +870,18 @@ fn render_item(
             output,
         } => check_row(
             id,
-            command,
-            *passed,
-            *exit_code,
-            *duration_ms,
-            output,
+            Check {
+                command,
+                passed: *passed,
+                exit_code: *exit_code,
+                duration_ms: *duration_ms,
+                output,
+            },
             expanded.contains(&id),
+            !*passed && !session.running,
             cx,
         ),
+        ItemContent::Bisect { command, verdict } => bisect_card(command, verdict, cx),
         ItemContent::PageSnapshot { url, before, after } => {
             let picture = |label: &'static str, path: &str| {
                 let path = std::path::PathBuf::from(path);
@@ -1090,16 +1094,159 @@ fn proposal_card(
 /// The project's checks after a turn: passed or failed, with the output
 /// (the last line shows while folded, when they failed).
 #[allow(clippy::too_many_arguments)]
-fn check_row(
-    id: ItemId,
+/// What "Who broke it?" found.
+fn bisect_card(
     command: &str,
+    verdict: &elyra_core::BisectVerdict,
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    use elyra_core::BisectVerdict;
+    let muted = cx.theme().muted_foreground;
+    let BisectVerdict::Found {
+        thread,
+        instruction,
+        thread_title,
+        agent,
+        at,
+        output,
+        runs,
+        ..
+    } = verdict
+    else {
+        return h_flex()
+            .w_full()
+            .gap_2()
+            .text_sm()
+            .text_color(muted)
+            .child(Icon::new(IconName::Search).small())
+            .child(crate::bisect::describe(command, verdict))
+            .into_any_element();
+    };
+    let thread = *thread;
+    let headline = instruction
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("(an empty message)")
+        .to_string();
+    let tail: Vec<&str> = output
+        .lines()
+        .rev()
+        .filter(|l| !l.trim().is_empty())
+        .take(6)
+        .collect();
+    let tail = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+    let prompt = format!(
+        "The project's checks (`{command}`) started failing with the changes made for this message:\n“{headline}”\n\nThey passed before that turn and fail after it. The failing output ends with:\n```\n{}\n```\nFind and fix the cause.",
+        output
+            .lines()
+            .rev()
+            .take(40)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    let open = move |window: &mut Window, cx: &mut App| {
+        if let Some(hub) = cx.try_global::<crate::browser_tools::BrowserHub>() {
+            let workspace = hub.workspace.clone();
+            let _ = workspace.update(cx, |this, cx| this.activate(thread, window, cx));
+        }
+    };
+    v_flex()
+        .w_full()
+        .p_2()
+        .gap_1()
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().warning)
+        .child(
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .child(Icon::new(IconName::Search).small().text_color(cx.theme().warning))
+                .child(div().font_weight(FontWeight::MEDIUM).child("Broken by"))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(format!("“{headline}”")),
+                ),
+        )
+        .child(div().text_xs().text_color(muted).child(format!(
+            "{thread_title} · {agent} · {} · `{command}` passed before that turn and failed after it ({runs} runs)",
+            at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")
+        )))
+        .when(!tail.is_empty(), |this| {
+            this.child(
+                div()
+                    .p_1()
+                    .rounded_sm()
+                    .bg(cx.theme().muted)
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_xs()
+                    .child(tail),
+            )
+        })
+        .child(
+            h_flex()
+                .gap_2()
+                .child(
+                    Button::new(SharedString::from(format!("bisect-open-{thread}")))
+                        .xsmall()
+                        .ghost()
+                        .label("Open thread")
+                        .on_click(move |_, window, cx| open(window, cx)),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("bisect-send-{thread}")))
+                        .xsmall()
+                        .primary()
+                        .label("Send the failure there")
+                        .tooltip("Ask the thread that broke it to fix it, with the failing output")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let Some(app) = this.session.read(cx).app_entity() else {
+                                return;
+                            };
+                            if let Some(session) = app.update(cx, |app, cx| app.session(thread, cx)) {
+                                let prompt = elyra_provider::Prompt::text(prompt.clone());
+                                session.update(cx, |session, cx| session.submit(prompt, cx));
+                            }
+                            open(window, cx);
+                        })),
+                ),
+        )
+        .into_any_element()
+}
+
+/// A check entry's fields, for its row.
+struct Check<'a> {
+    command: &'a str,
     passed: bool,
     exit_code: Option<i32>,
     duration_ms: u64,
-    output: &str,
+    output: &'a str,
+}
+
+fn check_row(
+    id: ItemId,
+    check: Check,
     open: bool,
+    can_bisect: bool,
     cx: &Context<ThreadView>,
 ) -> AnyElement {
+    let Check {
+        command,
+        passed,
+        exit_code,
+        duration_ms,
+        output,
+    } = check;
+    let bisect_command = command.to_string();
     let mut summary = vec![
         command.to_string(),
         format!("{:.1}s", duration_ms as f64 / 1000.0),
@@ -1145,6 +1292,23 @@ fn check_row(
                         .text_color(cx.theme().muted_foreground)
                         .child(summary.join(" · ")),
                 )
+                .when(can_bisect, |this| {
+                    this.child(
+                        Button::new(SharedString::from(format!("bisect-{id}")))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Search)
+                            .label("Who broke it?")
+                            .tooltip("Run the checks against the states before earlier turns in this folder to find the one that made them fail")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                let command = bisect_command.clone();
+                                this.session.update(cx, |session, cx| {
+                                    session.find_breaking_change(Some(command), cx)
+                                });
+                            })),
+                    )
+                })
                 .on_click(cx.listener(move |this, _, _, cx| this.toggle_expanded(id, cx))),
         )
         .when_some(last_line, |this, line| {

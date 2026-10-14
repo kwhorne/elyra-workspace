@@ -124,6 +124,50 @@ tries it.
 
 The command applies to every thread in the project. Empty turns it off.
 
+### Who broke it?
+
+When the checks fail, the problem may come from earlier than the last turn:
+another thread, another agent, or a turn hours ago. **Who broke it?** on a
+**Checks failed** card finds the instruction that made them fail:
+
+1. Every turn has a snapshot of the folder taken before it, also turns in other
+   threads working in the same folder. With the current state, that is a line of
+   states.
+2. The check runs against them in a temporary copy next to the project: first
+   the current state and the oldest (up to 40 turns back), then halving the
+   range until it finds the turn after which the checks fail. Thirty turns take
+   about seven runs.
+3. A card names the message behind that turn, its thread, agent and time, and
+   the end of the failing output. **Send the failure there** asks that thread to
+   fix it; **Open thread** shows it.
+
+Your working folder isn't touched. The temporary copy shares what Git ignores at
+the top of the project (dependencies such as `vendor` and `node_modules`, and
+`.env`) by link, so the checks can run there; it's removed afterwards. **Stop**
+ends the search. If the checks pass in the temporary copy, the failure depends on
+something outside the project's files (a database, a service); if they already
+failed before the oldest turn, none of the turns looked at caused it. Turns that
+ran at the same time in one folder can't be told apart.
+
+Agents can ask too, with the gateway's `who_broke_it` tool.
+
+### How the agents do on your code
+
+**Usage statistics** (command palette) has a table of how each agent and model
+does on your projects, counted per instruction: a message from you, with the
+automatic fixes after it.
+
+- **Green first try**: the checks passed after the agent's first answer.
+- **Green in the end**: they passed after the automatic fixes.
+- **Fixes each** and **Cost each**: automatic fixes and reported cost per
+  instruction.
+
+Agents with fewer than three instructions that were checked are greyed out.
+Side chats aren't counted. A new thread shows a line with the same numbers for
+its project when at least two agents have enough to compare, for example
+*Checks green on the first try in shop: Codex 9 of 10 ($0.12 each), Claude Code
+7 of 10 ($0.40 each)*.
+
 ## Shared with every agent
 
 *One setup for every agent.* Claude Code reads a project's `.mcp.json` and its

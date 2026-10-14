@@ -192,7 +192,7 @@ fn kill_tree(child: &mut std::process::Child) {
 }
 
 /// How every follow-up message for a failed check begins.
-const FIX_PROMPT_START: &str = "The project's checks failed after your changes:";
+pub(crate) const FIX_PROMPT_START: &str = "The project's checks failed after your changes:";
 
 /// "automatic fix 1 of 2" when `text` is a follow-up message for a failed
 /// check (shown folded in the transcript).

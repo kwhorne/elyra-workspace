@@ -5,6 +5,7 @@ use crate::app_state::AppState;
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::{BTreeMap, HashMap};
 
@@ -20,6 +21,8 @@ struct Totals {
 pub struct StatsView {
     app: Entity<AppState>,
     stats: Vec<elyra_core::TurnStat>,
+    /// How each agent does, per instruction, across projects.
+    agents: Vec<crate::leaderboard::Row>,
 }
 
 impl StatsView {
@@ -27,6 +30,7 @@ impl StatsView {
         let mut this = Self {
             app,
             stats: Vec::new(),
+            agents: Vec::new(),
         };
         this.refresh(cx);
         this
@@ -35,20 +39,98 @@ impl StatsView {
     /// Read the turn statistics in the background: they scan every turn of
     /// every thread.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let threads = crate::leaderboard::threads(self.app.read(cx), None);
         let job = cx.background_executor().spawn(async move {
-            elyra_core::Store::open_read_only(&elyra_core::paths::database_path())?.turn_stats()
+            let db = elyra_core::paths::database_path();
+            let stats = elyra_core::Store::open_read_only(&db)?.turn_stats()?;
+            let agents = crate::leaderboard::load(&db, threads)?;
+            anyhow::Ok((stats, agents))
         });
         cx.spawn(async move |this, cx| {
-            let stats = job.await;
+            let result = job.await;
             let _ = this.update(cx, |this, cx| {
-                match stats {
-                    Ok(stats) => this.stats = stats,
+                match result {
+                    Ok((stats, agents)) => {
+                        this.stats = stats;
+                        this.agents = agents;
+                    }
                     Err(err) => log::warn!("usage statistics: {err:#}"),
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+}
+
+impl StatsView {
+    /// Per agent and model: instructions, checks green on the first try and
+    /// in the end, fixes and cost per instruction.
+    fn render_agents(&self, cx: &App) -> AnyElement {
+        let muted = cx.theme().muted_foreground;
+        if self.agents.is_empty() {
+            return div()
+                .text_sm()
+                .text_color(muted)
+                .child("Nothing yet: this fills up as agents work in projects with checks.")
+                .into_any_element();
+        }
+        let percent = |part: usize, whole: usize| {
+            if whole == 0 {
+                "–".to_string()
+            } else {
+                format!(
+                    "{:.0} % ({part} of {whole})",
+                    part as f64 * 100. / whole as f64
+                )
+            }
+        };
+        let header = h_flex()
+            .gap_2()
+            .py_1()
+            .text_xs()
+            .text_color(muted)
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(div().flex_1().child("Agent"))
+            .child(div().w(px(90.)).child("Instructions"))
+            .child(div().w(px(150.)).child("Green first try"))
+            .child(div().w(px(150.)).child("Green in the end"))
+            .child(div().w(px(90.)).child("Fixes each"))
+            .child(div().w(px(80.)).child("Cost each"));
+        let rows = self.agents.iter().map(|row| {
+            let few = row.checked < crate::leaderboard::MIN_CHECKED;
+            h_flex()
+                .gap_2()
+                .py_1()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .text_sm()
+                .when(few, |this| this.text_color(muted))
+                .child(div().flex_1().child(row.label()))
+                .child(div().w(px(90.)).child(row.instructions.to_string()))
+                .child(div().w(px(150.)).child(percent(row.first_try, row.checked)))
+                .child(div().w(px(150.)).child(percent(row.green, row.checked)))
+                .child(div().w(px(90.)).child(format!(
+                    "{:.1}",
+                    row.fixes as f64 / row.instructions.max(1) as f64
+                )))
+                .child(
+                    div()
+                        .w(px(80.))
+                        .child(crate::thread_session::format_usd(row.cost_each())),
+                )
+        });
+        v_flex()
+            .child(header)
+            .children(rows)
+            .child(div().pt_1().text_xs().text_color(muted).child(format!(
+                "An instruction is a message from you and the automatic fixes after it. \
+                     \"Green\" counts the project's checks after it ran; agents with fewer than {} \
+                     checked instructions are greyed out.",
+                crate::leaderboard::MIN_CHECKED
+            )))
+            .into_any_element()
     }
 }
 
@@ -179,6 +261,13 @@ impl Render for StatsView {
                 .child(h_flex().gap(px(3.)).children(weeks))
                 .child(div().text_sm().font_weight(FontWeight::MEDIUM).child("By provider"))
                 .child(v_flex().children(providers))
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("How the agents do on your code"),
+                )
+                .child(self.render_agents(cx))
                 .child(
                     div()
                         .text_xs()

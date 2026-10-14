@@ -89,6 +89,7 @@ const READ_TOOLS: &[&str] = &[
     "history",
     "intent_board",
     "changes_by_instruction",
+    "who_broke_it",
     "search_threads",
     "list_projects",
     "list_threads",
@@ -153,6 +154,15 @@ fn tools() -> Vec<Tool> {
             "changes_by_instruction",
             "What the current branch does, by the instructions behind it: the lines it adds compared with main (commits and uncommitted changes), grouped by the user message that had an agent write them — any agent in Elyra Workspace, across threads — with the thread, agent, date, whether the checks passed afterwards and the files. Lines no agent wrote form their own group. Use it to write a pull request description that says what was asked for, or to see what a branch contains before reviewing it.",
             json!({ "type": "object", "properties": {
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
+                "thread_id": id
+            } }),
+        ),
+        tool(
+            "who_broke_it",
+            "When the project's checks fail: find the earlier instruction whose turn made them fail. Runs the check command against the state of the folder before each earlier turn (any thread or agent working in the folder) in a temporary checkout — the working tree is not touched — halving the range until the turn where they went from passing to failing, and names that message, its thread and the failing output. Takes a while: each step runs the checks. Use it instead of guessing when something broke earlier than your own changes.",
+            json!({ "type": "object", "properties": {
+                "command": { "type": "string", "description": "The command that fails (default: the project's check command)" },
                 "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
                 "thread_id": id
             } }),
@@ -448,6 +458,8 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         why(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "history" {
         history(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "who_broke_it" {
+        who_broke_it(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "changes_by_instruction" {
         changes_by_instruction(&app, &call, cx)
             .await
@@ -752,6 +764,48 @@ async fn why(app: &Entity<AppState>, call: &Call, cx: &mut AsyncApp) -> Result<S
         });
         crate::provenance::why_text(&format!("{relative}:{line}"), &text, &turns, read, blame)
     }))
+}
+
+async fn who_broke_it(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let (dir, project) = cx.update(|cx| provenance_scope(app, call, cx))?;
+    let (command, threads) = cx.update(|cx| {
+        let state = app.read(cx);
+        let command = call.args["command"]
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| state.project(project).and_then(|p| p.check_command.clone()))
+            .filter(|c| !c.trim().is_empty());
+        (command, crate::bisect::threads_in(state, &dir))
+    });
+    let command = command.ok_or("Give a `command`, or set the project's check command.")?;
+    let run_command = command.clone();
+    let verdict = cx
+        .background_executor()
+        .spawn(async move {
+            let found = (|| {
+                let store = elyra_core::Store::open_read_only(&elyra_core::paths::database_path())?;
+                let steps = crate::bisect::timeline(&store, &threads)?;
+                let root = elyra_git::repo_root(&dir)?;
+                let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                anyhow::Ok(crate::bisect::find(
+                    &root,
+                    &dir,
+                    &run_command,
+                    &steps,
+                    &cancel,
+                    |_| {},
+                ))
+            })();
+            found.unwrap_or_else(|err| elyra_core::BisectVerdict::Failed {
+                error: format!("{err:#}"),
+            })
+        })
+        .await;
+    Ok(crate::bisect::describe(&command, &verdict))
 }
 
 async fn changes_by_instruction(
