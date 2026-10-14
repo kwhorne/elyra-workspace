@@ -11,14 +11,14 @@ and the agents run as the command-line tools you already have installed.
 | Guide | What it covers |
 | --- | --- |
 | [Getting started](getting-started.md) | Installing, first launch, your first project and thread |
-| [Projects and threads](projects-and-threads.md) | The sidebar, tabs, spaces, archiving, forking, side chats, second opinions, best of N, import and export |
+| [Projects and threads](projects-and-threads.md) | The sidebar, tabs, spaces, archiving, forking, side chats, second opinions, best of N, agents working side by side, import and export |
 | [Working with an agent](chat.md) | The composer, attachments, `@` and `/`, models, approvals, plans, checkpoints, while you were away, answering from your phone |
 | [Providers](providers.md) | Claude Code, Codex, Elyra, Pi, Gemini CLI, Cursor, OpenCode and other ACP agents; accounts |
-| [Changes, Git and review](git-and-review.md) | Diffs, staging, commits, branches, worktrees, pull requests, the review inbox |
-| [Files and search](files-and-search.md) | Command palette, file finder, content search, the editor, external editors |
+| [Changes, Git and review](git-and-review.md) | Diffs, staging, commits, branches, worktrees, lines nobody has read, pull requests and what a branch does by instruction, the review inbox |
+| [Files and search](files-and-search.md) | Command palette, file finder, go to symbol, content search, searching every thread, the editor, external editors |
 | [Browser](browser.md) | The built-in browser for your dev servers, page errors, before and after pictures, letting agents look at and use pages, and journeys replayed like tests |
 | [Terminal](terminal.md) | Terminal tabs and splits, search, full-screen programs, copy and paste |
-| [Context, notes and goals](context-and-goals.md) | Notes, pinned messages, recaps, project instructions and rules agents learn, checks after each turn, MCP servers and skills shared with every agent, dev servers, goals, budgets |
+| [Context, notes and goals](context-and-goals.md) | What fills the context window, notes, pinned messages, recaps, project instructions and rules agents learn, checks after each turn and who broke them, how the agents do on your code, MCP servers and skills shared with every agent, dev servers, goals, budgets |
 | [Automations and tasks](automations-and-tasks.md) | Scheduled prompts (also proposed by agents), the task board, and Félagi tasks and time |
 | [Agent gateway and MCP](agent-gateway.md) | Letting agents manage threads, connecting Claude Desktop and Codex |
 | [Settings](settings.md) | Every page of the Settings window |
@@ -43,7 +43,7 @@ Building Elyra Workspace yourself, or contributing? See [Development](developmen
 - **Sidebar** (⌘B): projects and their threads, pinned threads, project spaces, and
   buttons for the task board, automations, code review, new chat and adding a project.
 - **Center**: the open threads as tabs. The task board, automations, the review
-  inbox and usage statistics open here as well.
+  inbox, thread search and usage statistics open here as well.
 - **Tools panel** (⌥⌘B): tools for the active thread.
 
 ## Core ideas
