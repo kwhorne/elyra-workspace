@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.9.0
+
+When the checks fail, find the instruction that broke them in one click, and
+see how each agent does on your own code.
+
+- **Who broke it?** When the checks fail, one click finds the instruction that
+  made them fail: the checks run against the state before each earlier turn in
+  the folder, across threads and agents, in a temporary copy (your working folder
+  isn't touched), halving the range until the turn where they went from green to
+  red. A card names the message, its thread and agent, with the failing output,
+  and sends the failure to that thread on request. Agents can ask with the
+  gateway's new `who_broke_it` tool. See
+  [Who broke it?](docs/context-and-goals.md#who-broke-it).
+- **How the agents do on your code.** Usage statistics shows, per agent and
+  model, how often the checks were green on the first try and in the end, how
+  many automatic fixes it took and what an instruction cost, from your own
+  threads. A new thread shows the same for its project when there's enough to
+  compare. See
+  [How the agents do on your code](docs/context-and-goals.md#how-the-agents-do-on-your-code).
+
 ## 1.8.0
 
 A branch reads as the instructions behind it, and a pull request can say what
