@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.8.0
+
+A branch reads as the instructions behind it, and a pull request can say what
+was asked for without asking a model.
+
+- **What this branch does.** The PR tab shows what a branch adds, grouped by the
+  instruction behind it: each message with its thread, agent, files, whether the
+  checks passed afterwards, what it cost and how many of its lines nobody has
+  read, and the lines no agent wrote last. It works for every agent and across
+  threads, from the record Elyra keeps of which message wrote which lines.
+  **From instructions** turns it into a pull request title and description
+  without a model, and agents get it with the gateway's new
+  `changes_by_instruction` tool. See
+  [What this branch does](docs/git-and-review.md#what-this-branch-does).
+
+### Fixed
+
+- **Checks after a turn that changed nothing.** When a turn ended, recording
+  its lines and deciding whether to run the checks both took a snapshot of the
+  working tree at the same moment, and could pick the same temporary file. One
+  of them then failed, so the checks sometimes ran (and an automatic fix was
+  sent) after a turn that changed nothing, or a line record went missing.
+
 ## 1.7.0
 
 Faster all round, most of all with long threads and agents at work, and Go to
