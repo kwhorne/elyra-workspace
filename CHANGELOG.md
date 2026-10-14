@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.5.1
+
+Gemini CLI as a full member: it gets the project's AGENTS.md and the shared
+skills like the other agents.
+
+- **Gemini CLI gets the project's AGENTS.md.** Gemini CLI reads only GEMINI.md
+  by default, so in projects that keep their agent instructions in AGENTS.md (or
+  CLAUDE.md) Gemini threads missed them. They now get the file along with their
+  instructions, unless the project has a GEMINI.md or your Gemini settings
+  already name the file.
+- **Skills in `.gemini/skills`** are shared with every agent too, and each agent
+  gets only the skills it doesn't find itself: Claude Code now also sees the
+  skills in `.agents/skills` and `.gemini/skills`.
+- **Learned rules go into GEMINI.md** in projects that use it rather than
+  AGENTS.md or CLAUDE.md.
+
 ## 1.5.0
 
 See what fills an agent's context and what it costs, and full support for ACP
