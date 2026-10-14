@@ -623,6 +623,36 @@ def an_instruction_can_be_taken_back(world, project):
     expect(len(cards) == 2 and cards[0]["reverted"] == ["b.txt"] and cards[1]["kept"] == ["a.txt"], cards)
 
 
+@scenario(files={"f.txt": "start\n"})
+def conflicts_say_what_each_side_was_for(world, project):
+    path = world.projects[project]["path"]
+    git = lambda *args: subprocess.run(["git", "-c", "user.email=s@s", "-c", "user.name=s", *args],
+                                       cwd=path, check=True, capture_output=True, text=True).stdout
+    main = git("rev-parse", "--abbrev-ref", "HEAD").strip()
+    one = world.new_thread(project, "[write f.txt] rounded after the discount")
+    world.wait(one, 30)
+    world.tool("set_thread_title", thread_id=one, title="Round after discount")
+    time.sleep(1.5)
+    git("commit", "-qam", "one")
+    git("checkout", "-q", "-b", "two", "HEAD~1")
+    two = world.new_thread(project, "[write f.txt] member price first")
+    world.wait(two, 30)
+    world.tool("set_thread_title", thread_id=two, title="Member price")
+    time.sleep(1.5)
+    git("commit", "-qam", "two")
+    git("checkout", "-q", main)
+    subprocess.run(["git", "merge", "two"], cwd=path, capture_output=True)
+    text = world.tool("conflict_context", project=project)
+    expect("### `f.txt`, line 2" in text, text)
+    ours = text.find("Ours (HEAD)")
+    theirs = text.find("Theirs (two)")
+    expect(-1 < ours < theirs, text)
+    expect("“[write f.txt] rounded after the discount” (thread “Round after discount”" in text[ours:theirs], text)
+    expect("“[write f.txt] member price first” (thread “Member price”" in text[theirs:], text)
+    git("merge", "--abort")
+    expect("no merge conflicts" in world.tool("conflict_context", project=project), "none after the abort")
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

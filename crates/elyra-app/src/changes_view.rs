@@ -1266,6 +1266,70 @@ impl ChangesView {
             .into_any_element()
     }
 
+    /// Explain the merge conflicts to the agent: each side with the
+    /// instruction behind it. The message lands in the composer.
+    fn resolve_conflicts(&mut self, cx: &mut Context<Self>) {
+        let (Some((_, project)), Some(root)) = (self.provenance(cx), self.root.clone()) else {
+            return;
+        };
+        self.busy = Some("Reading the conflicts…");
+        cx.notify();
+        let job = cx.background_executor().spawn(async move {
+            crate::conflicts::explain(&root, project, &elyra_core::paths::database_path())
+        });
+        cx.spawn(async move |this, cx| {
+            let explained = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.busy = None;
+                match explained {
+                    Ok(Some(text)) => cx.emit(ChangesEvent::Comment(text)),
+                    Ok(None) => this.message = Some(("No conflicts left.".into(), false)),
+                    Err(err) => this.message = Some((format!("{err:#}"), true)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// A bar over the files when the merge left conflicts.
+    fn render_conflicts(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let count = self
+            .areas
+            .iter()
+            .filter(|a| a.change.kind == ChangeKind::Conflicted)
+            .count();
+        (count > 0 && self.scope == Scope::WorkingTree).then(|| {
+            h_flex()
+                .px_2()
+                .py_1()
+                .gap_2()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().danger.opacity(0.08))
+                .text_xs()
+                .child(
+                    Icon::new(IconName::TriangleAlert)
+                        .xsmall()
+                        .text_color(cx.theme().danger),
+                )
+                .child(div().flex_1().child(format!(
+                    "{count} file{} with merge conflicts",
+                    if count == 1 { "" } else { "s" }
+                )))
+                .child(
+                    Button::new("resolve-conflicts")
+                        .xsmall()
+                        .primary()
+                        .label("Resolve, knowing why")
+                        .tooltip("Put the conflicts in the message box, with the instruction behind each side, for the agent to resolve")
+                        .disabled(self.busy.is_some() || self.provenance(cx).is_none())
+                        .on_click(cx.listener(|this, _, _, cx| this.resolve_conflicts(cx))),
+                )
+                .into_any_element()
+        })
+    }
+
     fn render_files(&self, cx: &Context<Self>) -> AnyElement {
         let visible = self.visible_changes();
         let mut list = v_flex().p_1();
@@ -1829,6 +1893,7 @@ impl Render for ChangesView {
             }))
             .child(header)
             .child(scope)
+            .children(self.render_conflicts(cx))
             .child(files)
             .child(diff)
             .child(commit)

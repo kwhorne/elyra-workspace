@@ -85,6 +85,18 @@ The scope menu chooses what the diff compares:
   **Commit** says what to fix if it doesn't.
 - **Commit and push** (⌃⌘P, from anywhere) commits and pushes in one go.
 
+### Merge conflicts
+
+When a merge, a pull or **Use this one** in Best of N leaves conflicts, a bar
+over the files says how many. **Resolve, knowing why** puts a message for the
+agent in the thread's message box: each conflict with both sides, and for each
+side the instruction that had an agent write those lines (the message, its
+thread and agent), from the record Elyra keeps. The agent then resolves it so
+that what both sides were asked to do still holds, instead of picking one block
+of text. Read it, add to it if you like, and send it. Lines no agent wrote are
+marked as such. Agents can ask for the same with the gateway's `conflict_context`
+tool.
+
 ### Conventional Commits
 
 Commit messages (their first line) and pull request titles are written as
@@ -166,6 +178,24 @@ an agent committed on its own. Each group shows:
 Lines no agent in Elyra Workspace wrote, by hand or before the record started,
 are listed last. Agents get the same with the gateway's `changes_by_instruction`
 tool, for instance to write the pull request themselves.
+
+### Review step by step
+
+**Review step by step** (below the groups, or **Review this branch step by step**
+in the command palette) goes through the branch one instruction at a time,
+oldest first, starting at the first one with something unread:
+
+- **What was asked**: the message, with its thread, agent, date, cost and
+  whether the checks passed after it.
+- **What the agent said**: its reply at the end of that turn, its own account of
+  what it did and why.
+- **The lines it wrote**, per file with their line numbers as they are now; the
+  ones nobody has read have a dot.
+
+**Mark as read and next** marks the step's lines as read (as **Mark as read** in
+Changes does) and moves on; **Open thread** shows the conversation. The list on
+the left shows every instruction, with a check when it's read. The lines no
+agent wrote come last.
 
 When the branch has a pull request, the tab is labelled **PR #n** and shows:
 

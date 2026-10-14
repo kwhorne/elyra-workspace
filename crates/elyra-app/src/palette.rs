@@ -211,6 +211,12 @@ fn commands() -> Vec<Command> {
             actions::ShowStats
         ),
         command!(
+            "Review this branch step by step",
+            "",
+            IconName::ListChecks,
+            actions::ReviewBranch
+        ),
+        command!(
             "Search threads",
             "⌥⌘F",
             IconName::TextSearch,

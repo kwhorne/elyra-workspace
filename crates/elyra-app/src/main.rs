@@ -10,6 +10,7 @@ mod browser_view;
 mod changes_view;
 mod checks;
 mod composer;
+mod conflicts;
 mod context_report;
 mod context_view;
 mod conventional;
@@ -58,6 +59,7 @@ mod transcript;
 mod undo;
 mod updater;
 mod updates;
+mod walkthrough;
 mod webview;
 mod workspace;
 

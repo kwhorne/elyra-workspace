@@ -39,6 +39,20 @@ pub struct Group {
     pub checks: Option<bool>,
     /// What the turn cost.
     pub cost: Option<f64>,
+    /// What the agent said at the end of the turn.
+    pub reply: String,
+    /// The lines themselves, per file in the order of the files above:
+    /// (line number in the file now, text, whether a person has read it).
+    pub detail: Vec<(String, Vec<Line>)>,
+}
+
+/// A line the branch adds, where it is now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Line {
+    pub number: usize,
+    pub text: String,
+    pub read: bool,
+    pub hash: i64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -89,6 +103,13 @@ pub fn load(root: &Path, project: ProjectId, db: &Path) -> anyhow::Result<Overvi
     let (base, sha) = elyra_git::branch_base(root)
         .ok_or_else(|| anyhow::anyhow!("no main or master branch to compare with"))?;
     let added = elyra_git::checkpoint::added_lines(root, &sha)?;
+    let mut added_by_file: HashMap<String, Vec<String>> = HashMap::new();
+    for (path, text) in &added {
+        added_by_file
+            .entry(path.clone())
+            .or_default()
+            .push(text.clone());
+    }
     let store = Store::open_read_only(db)?;
     // The newest turn that wrote each line of each file.
     let mut known: HashMap<String, HashMap<i64, Origin>> = HashMap::new();
@@ -119,6 +140,7 @@ pub fn load(root: &Path, project: ProjectId, db: &Path) -> anyhow::Result<Overvi
         lines.push((path, origin));
     }
     let mut groups = group(&lines);
+    attach_lines(root, &added_by_file, &known, &mut groups);
     let mut transcripts: HashMap<ThreadId, Vec<elyra_core::TranscriptItem>> = HashMap::new();
     for group in &mut groups {
         let Some((thread, item)) = group.turn else {
@@ -137,6 +159,52 @@ pub fn load(root: &Path, project: ProjectId, db: &Path) -> anyhow::Result<Overvi
         describe_turn(group, items, item);
     }
     Ok(Overview { base, groups })
+}
+
+/// Find each group's lines in the files as they are now: the lines the
+/// branch adds, in file order, with their numbers.
+fn attach_lines(
+    root: &Path,
+    added: &HashMap<String, Vec<String>>,
+    known: &HashMap<String, HashMap<i64, Origin>>,
+    groups: &mut [Group],
+) {
+    let mut paths: Vec<&String> = added.keys().collect();
+    paths.sort();
+    for path in paths {
+        let Ok(content) = std::fs::read_to_string(root.join(path)) else {
+            continue;
+        };
+        // How many times each text was added (a line can repeat).
+        let mut pending: HashMap<&str, usize> = HashMap::new();
+        for text in &added[path] {
+            *pending.entry(text.as_str()).or_default() += 1;
+        }
+        for (index, text) in content.lines().enumerate() {
+            let Some(left) = pending.get_mut(text).filter(|n| **n > 0) else {
+                continue;
+            };
+            *left -= 1;
+            let Some(hash) = elyra_core::line_hash(text) else {
+                continue;
+            };
+            let origin = known.get(path).and_then(|o| o.get(&hash)).copied();
+            let turn = origin.map(|o| (o.thread, o.item));
+            let Some(group) = groups.iter_mut().find(|g| g.turn == turn) else {
+                continue;
+            };
+            let line = Line {
+                number: index + 1,
+                text: text.to_string(),
+                read: origin.is_some_and(|o| o.read),
+                hash,
+            };
+            match group.detail.iter_mut().find(|(p, _)| p == path) {
+                Some((_, lines)) => lines.push(line),
+                None => group.detail.push((path.clone(), vec![line])),
+            }
+        }
+    }
 }
 
 /// The message, and the checks and cost of the turn it started (through the
@@ -159,6 +227,10 @@ fn describe_turn(group: &mut Group, items: &[elyra_core::TranscriptItem], item: 
                 cost_usd: Some(spent),
                 ..
             } => *cost.get_or_insert(0.0) += spent,
+            ItemContent::Assistant {
+                text,
+                parent_tool_use_id: None,
+            } if !text.trim().is_empty() => group.reply = text.trim().to_string(),
             _ => {}
         }
     }
@@ -255,8 +327,71 @@ pub fn pull_request(overview: &Overview, issue: Option<&str>) -> (String, String
 
 #[cfg(test)]
 mod tests {
-    use super::{Group, Origin, Overview, group, markdown, pull_request};
+    use super::{Group, Origin, Overview, attach_lines, group, markdown, pull_request};
     use chrono::{Duration, Utc};
+    use std::collections::HashMap;
+
+    #[test]
+    fn finds_each_instructions_lines_where_they_are_now() {
+        let dir = std::env::temp_dir().join(format!("elyra-lines-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("cart.rs"),
+            "fn total() {}\nlet a = discount(1);\nunchanged line\nlet b = shipping(2);\n",
+        )
+        .unwrap();
+        let (thread, first, second) = (
+            elyra_core::new_id(),
+            elyra_core::new_id(),
+            elyra_core::new_id(),
+        );
+        let origin = |item, read| Origin {
+            thread,
+            item,
+            at: Utc::now(),
+            read,
+        };
+        let hash = |text: &str| elyra_core::line_hash(text).unwrap();
+        let known = HashMap::from([(
+            "cart.rs".to_string(),
+            HashMap::from([
+                (hash("let a = discount(1);"), origin(first, true)),
+                (hash("let b = shipping(2);"), origin(second, false)),
+            ]),
+        )]);
+        let added = HashMap::from([(
+            "cart.rs".to_string(),
+            vec![
+                "let a = discount(1);".to_string(),
+                "let b = shipping(2);".to_string(),
+            ],
+        )]);
+        let mut groups = vec![
+            Group {
+                turn: Some((thread, first)),
+                ..Default::default()
+            },
+            Group {
+                turn: Some((thread, second)),
+                ..Default::default()
+            },
+        ];
+        attach_lines(&dir, &added, &known, &mut groups);
+        let lines = |group: &Group| {
+            group.detail[0]
+                .1
+                .iter()
+                .map(|l| (l.number, l.read))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(lines(&groups[0]), [(2, true)]);
+        assert_eq!(
+            lines(&groups[1]),
+            [(4, false)],
+            "the unchanged line isn't added"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn groups_lines_by_the_instruction_behind_them() {

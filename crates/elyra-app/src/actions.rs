@@ -63,6 +63,7 @@ gpui_kit::actions!(
         ShowTasks,
         ShowStats,
         SearchThreads,
+        ReviewBranch,
         ExportThread,
         OpenDocumentation,
         ShowBrowser,
@@ -240,6 +241,14 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ShowAutomations
     ),
     shortcut!("stats", "Panels", "Usage statistics", "", WS, ShowStats),
+    shortcut!(
+        "review_branch",
+        "Panels",
+        "Review this branch step by step",
+        "",
+        WS,
+        ReviewBranch
+    ),
     shortcut!(
         "search_threads",
         "Panels",

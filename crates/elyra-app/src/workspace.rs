@@ -73,6 +73,8 @@ pub(crate) enum Panel {
     Stats,
     Race,
     Search,
+    /// Reviewing the active thread's branch one instruction at a time.
+    Walkthrough,
 }
 
 pub struct Workspace {
@@ -121,6 +123,7 @@ pub struct Workspace {
     /// The title last given to the window (set only when it changes).
     window_title: String,
     search: Option<Entity<crate::thread_search::ThreadSearch>>,
+    walkthrough: Option<Entity<crate::walkthrough::Walkthrough>>,
     pub(crate) sidebar_open: bool,
     pub(crate) right_open: bool,
     pub(crate) collapsed: HashSet<ProjectId>,
@@ -242,6 +245,7 @@ impl Workspace {
             stats: None,
             window_title: String::new(),
             search: None,
+            walkthrough: None,
             sidebar_open,
             right_open,
             right_tab,
@@ -297,6 +301,7 @@ impl Workspace {
             Ok("automations") => Some(Panel::Automations),
             Ok("stats") => Some(Panel::Stats),
             Ok("search") => Some(Panel::Search),
+            Ok("walkthrough") => Some(Panel::Walkthrough),
             Ok("review") => Some(Panel::Review),
             _ => None,
         };
@@ -712,6 +717,9 @@ impl Workspace {
         if self.panel != Some(Panel::Stats) {
             self.stats = None;
         }
+        if self.panel != Some(Panel::Walkthrough) {
+            self.walkthrough = None;
+        }
     }
 
     /// Show (or hide) a full-width panel instead of the chat.
@@ -765,6 +773,19 @@ impl Workspace {
                     self.race = Some(cx.new(|cx| crate::race::RaceView::new(app, workspace, cx)))
                 }
             },
+            Panel::Walkthrough => {
+                // The active thread's folder, read afresh each time.
+                let dir = self.active_cwd(cx);
+                let project = dir
+                    .as_ref()
+                    .and_then(|dir| crate::provenance::project_of(self.app.read(cx), dir));
+                self.walkthrough = match (dir, project) {
+                    (Some(dir), Some(project)) => Some(cx.new(|cx| {
+                        crate::walkthrough::Walkthrough::new(app, workspace, dir, project, cx)
+                    })),
+                    _ => None,
+                };
+            }
             Panel::Search => match &self.search {
                 // Threads may have changed since: search again.
                 Some(search) => search.update(cx, |search, cx| {
@@ -808,6 +829,13 @@ impl Workspace {
 
     fn on_show_stats(&mut self, _: &ShowStats, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_panel(Panel::Stats, window, cx);
+    }
+
+    fn on_review_branch(&mut self, _: &ReviewBranch, window: &mut Window, cx: &mut Context<Self>) {
+        if self.panel == Some(Panel::Walkthrough) {
+            self.panel = None;
+        }
+        self.toggle_panel(Panel::Walkthrough, window, cx);
     }
 
     fn on_search_threads(
@@ -2616,6 +2644,7 @@ impl Render for Workspace {
             Some(Panel::Stats) => self.stats.as_ref().map(cached),
             Some(Panel::Race) => self.race.as_ref().map(cached),
             Some(Panel::Search) => self.search.as_ref().map(cached),
+            Some(Panel::Walkthrough) => self.walkthrough.as_ref().map(cached),
             None => None,
         };
         let panel_open = panel.is_some();
@@ -2700,6 +2729,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_tasks))
             .on_action(cx.listener(Self::on_show_stats))
             .on_action(cx.listener(Self::on_search_threads))
+            .on_action(cx.listener(Self::on_review_branch))
             .on_action(cx.listener(Self::on_show_browser))
             .on_action(cx.listener(Self::on_best_of_n))
             .on_action(cx.listener(Self::on_todays_work))

@@ -89,6 +89,7 @@ const READ_TOOLS: &[&str] = &[
     "history",
     "intent_board",
     "changes_by_instruction",
+    "conflict_context",
     "who_broke_it",
     "search_threads",
     "list_projects",
@@ -153,6 +154,14 @@ fn tools() -> Vec<Tool> {
         tool(
             "changes_by_instruction",
             "What the current branch does, by the instructions behind it: the lines it adds compared with main (commits and uncommitted changes), grouped by the user message that had an agent write them — any agent in Elyra Workspace, across threads — with the thread, agent, date, whether the checks passed afterwards and the files. Lines no agent wrote form their own group. Use it to write a pull request description that says what was asked for, or to see what a branch contains before reviewing it.",
+            json!({ "type": "object", "properties": {
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
+                "thread_id": id
+            } }),
+        ),
+        tool(
+            "conflict_context",
+            "When a merge, rebase or pull left conflicts: each conflict in the folder with both sides, and for each side the instruction (user message, thread, agent) that had an agent in Elyra Workspace write those lines. Call it before resolving, so the result keeps what both sides were asked to do instead of picking one block of text.",
             json!({ "type": "object", "properties": {
                 "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
                 "thread_id": id
@@ -466,6 +475,8 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         why(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "history" {
         history(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "conflict_context" {
+        conflict_context(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "undo_instruction" {
         undo_instruction(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "who_broke_it" {
@@ -774,6 +785,23 @@ async fn why(app: &Entity<AppState>, call: &Call, cx: &mut AsyncApp) -> Result<S
         });
         crate::provenance::why_text(&format!("{relative}:{line}"), &text, &turns, read, blame)
     }))
+}
+
+async fn conflict_context(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let (dir, project) = cx.update(|cx| provenance_scope(app, call, cx))?;
+    let explained = cx
+        .background_executor()
+        .spawn(async move {
+            let root = elyra_git::repo_root(&dir)?;
+            crate::conflicts::explain(&root, project, &elyra_core::paths::database_path())
+        })
+        .await
+        .map_err(|err| format!("{err:#}"))?;
+    Ok(explained.unwrap_or_else(|| "There are no merge conflicts in this folder.".into()))
 }
 
 async fn undo_instruction(

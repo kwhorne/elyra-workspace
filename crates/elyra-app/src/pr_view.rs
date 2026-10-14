@@ -341,6 +341,21 @@ impl PrView {
                     })),
             )
             .child(content)
+            .when(
+                matches!(&self.overview, Some(Ok(o)) if o.groups.iter().any(|g| g.turn.is_some())),
+                |this| {
+                    this.child(
+                        Button::new("review-step-by-step")
+                            .small()
+                            .icon(IconName::ListChecks)
+                            .label("Review step by step")
+                            .tooltip("Go through the branch one instruction at a time")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(crate::actions::ReviewBranch), cx)
+                            }),
+                    )
+                },
+            )
             .into_any_element()
     }
 

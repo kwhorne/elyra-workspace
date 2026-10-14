@@ -56,6 +56,17 @@ pub fn repo_root(path: &Path) -> Result<PathBuf> {
     ))
 }
 
+/// Files with unresolved merge conflicts (paths from the repository).
+pub fn conflicted_files(repo: &Path) -> Result<Vec<String>> {
+    Ok(
+        run_ok(repo, &["diff", "--name-only", "--diff-filter=U", "-z"])?
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+}
+
 /// Where the current branch left the default branch: the first of
 /// `origin/main`, `origin/master`, `main` and `master` that exists, and the
 /// commit HEAD shares with it. None on a repository without one of those.
