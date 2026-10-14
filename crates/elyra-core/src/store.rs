@@ -114,6 +114,37 @@ const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE line_origins ADD COLUMN reviewed_at TEXT;
 "#,
+    // Full-text search over messages, tool calls and (the start of) tool
+    // output, kept in step with the transcript by triggers.
+    r#"
+    CREATE VIRTUAL TABLE transcript_search USING fts5(
+        text,
+        thread_id UNINDEXED,
+        item_id UNINDEXED,
+        kind UNINDEXED,
+        tokenize = 'unicode61 remove_diacritics 2'
+    );
+    INSERT INTO transcript_search (rowid, text, thread_id, item_id, kind)
+        SELECT rowid, CASE json_extract(content, '$.kind') WHEN 'user' THEN json_extract(content, '$.text') WHEN 'assistant' THEN json_extract(content, '$.text') WHEN 'tool_use' THEN json_extract(content, '$.name') || ' ' || coalesce(json_extract(content, '$.input'), '') WHEN 'tool_result' THEN substr(json_extract(content, '$.content'), 1, 8000) END, thread_id, id, json_extract(content, '$.kind')
+        FROM transcript_items
+        WHERE CASE json_extract(content, '$.kind') WHEN 'user' THEN json_extract(content, '$.text') WHEN 'assistant' THEN json_extract(content, '$.text') WHEN 'tool_use' THEN json_extract(content, '$.name') || ' ' || coalesce(json_extract(content, '$.input'), '') WHEN 'tool_result' THEN substr(json_extract(content, '$.content'), 1, 8000) END IS NOT NULL;
+    CREATE TRIGGER transcript_search_insert AFTER INSERT ON transcript_items BEGIN
+        INSERT INTO transcript_search (rowid, text, thread_id, item_id, kind)
+            SELECT new.rowid, CASE json_extract(new.content, '$.kind') WHEN 'user' THEN json_extract(new.content, '$.text') WHEN 'assistant' THEN json_extract(new.content, '$.text') WHEN 'tool_use' THEN json_extract(new.content, '$.name') || ' ' || coalesce(json_extract(new.content, '$.input'), '') WHEN 'tool_result' THEN substr(json_extract(new.content, '$.content'), 1, 8000) END, new.thread_id, new.id,
+                json_extract(new.content, '$.kind')
+            WHERE CASE json_extract(new.content, '$.kind') WHEN 'user' THEN json_extract(new.content, '$.text') WHEN 'assistant' THEN json_extract(new.content, '$.text') WHEN 'tool_use' THEN json_extract(new.content, '$.name') || ' ' || coalesce(json_extract(new.content, '$.input'), '') WHEN 'tool_result' THEN substr(json_extract(new.content, '$.content'), 1, 8000) END IS NOT NULL;
+    END;
+    CREATE TRIGGER transcript_search_update AFTER UPDATE OF content ON transcript_items BEGIN
+        DELETE FROM transcript_search WHERE rowid = old.rowid;
+        INSERT INTO transcript_search (rowid, text, thread_id, item_id, kind)
+            SELECT new.rowid, CASE json_extract(new.content, '$.kind') WHEN 'user' THEN json_extract(new.content, '$.text') WHEN 'assistant' THEN json_extract(new.content, '$.text') WHEN 'tool_use' THEN json_extract(new.content, '$.name') || ' ' || coalesce(json_extract(new.content, '$.input'), '') WHEN 'tool_result' THEN substr(json_extract(new.content, '$.content'), 1, 8000) END, new.thread_id, new.id,
+                json_extract(new.content, '$.kind')
+            WHERE CASE json_extract(new.content, '$.kind') WHEN 'user' THEN json_extract(new.content, '$.text') WHEN 'assistant' THEN json_extract(new.content, '$.text') WHEN 'tool_use' THEN json_extract(new.content, '$.name') || ' ' || coalesce(json_extract(new.content, '$.input'), '') WHEN 'tool_result' THEN substr(json_extract(new.content, '$.content'), 1, 8000) END IS NOT NULL;
+    END;
+    CREATE TRIGGER transcript_search_delete AFTER DELETE ON transcript_items BEGIN
+        DELETE FROM transcript_search WHERE rowid = old.rowid;
+    END;
+"#,
 ];
 
 const PROJECT_COLUMNS: &str =
@@ -400,34 +431,66 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Threads whose messages contain `query` (case-insensitive), newest first.
+    /// Threads whose conversation matches `query`, best match first, one
+    /// row per thread with a snippet (plain text).
     pub fn search_messages(&self, query: &str, limit: usize) -> Result<Vec<(ThreadId, String)>> {
-        let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
-        let mut stmt = self.conn.prepare(
-            "SELECT thread_id, content FROM transcript_items
-             WHERE content LIKE ?1 ESCAPE '\\'
-               AND (json_extract(content, '$.kind') IN ('user', 'assistant'))
-             ORDER BY created_at DESC LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![pattern, limit as i64], |row| {
-            let content: String = row.get(1)?;
-            Ok((parse_uuid(row, 0)?, content))
-        })?;
+        let mut seen = Vec::new();
         let mut results = Vec::new();
-        for row in rows {
-            let (thread, content) = row?;
-            let text = serde_json::from_str::<ItemContent>(&content)
-                .ok()
-                .and_then(|c| match c {
-                    ItemContent::User { text, .. } | ItemContent::Assistant { text, .. } => {
-                        Some(text)
-                    }
-                    _ => None,
-                })
-                .unwrap_or_default();
-            results.push((thread, snippet(&text, query)));
+        for hit in self.search_transcripts(query, &SearchFilter::default(), limit * 4)? {
+            if !seen.contains(&hit.thread) {
+                seen.push(hit.thread);
+                results.push((hit.thread, hit.plain_snippet()));
+            }
+            if results.len() == limit {
+                break;
+            }
         }
         Ok(results)
+    }
+
+    /// Full-text search over every thread's messages, tool calls and tool
+    /// output, best match first. Words match as prefixes and all must occur;
+    /// "quoted words" match as a phrase.
+    pub fn search_transcripts(
+        &self,
+        query: &str,
+        filter: &SearchFilter,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>> {
+        let Some(query) = fts_query(query) else {
+            return Ok(Vec::new());
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT s.thread_id, s.item_id, s.kind,
+                    snippet(transcript_search, 0, char(2), char(3), '…', 16), i.created_at
+             FROM transcript_search s
+             JOIN transcript_items i ON i.rowid = s.rowid
+             JOIN threads t ON t.id = s.thread_id
+             WHERE transcript_search MATCH ?1
+               AND (?2 IS NULL OR t.project_id = ?2)
+               AND (?3 OR t.archived = 0)
+               AND (?4 OR s.kind IN ('user', 'assistant'))
+             ORDER BY bm25(transcript_search) LIMIT ?5",
+        )?;
+        let rows = stmt.query_map(
+            params![
+                query,
+                filter.project.map(|p| p.to_string()),
+                filter.archived,
+                !filter.messages_only,
+                limit as i64
+            ],
+            |row| {
+                Ok(SearchHit {
+                    thread: parse_uuid(row, 0)?,
+                    item: parse_uuid(row, 1)?,
+                    kind: row.get(2)?,
+                    snippet: row.get(3)?,
+                    at: parse_time(row, 4)?,
+                })
+            },
+        )?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
     pub fn delete_thread(&self, id: ThreadId) -> Result<()> {
@@ -843,22 +906,60 @@ fn parse_time(row: &Row, index: usize) -> rusqlite::Result<DateTime<Utc>> {
 }
 
 /// The part of `text` around the first match of `query`.
-fn snippet(text: &str, query: &str) -> String {
-    let lower = text.to_lowercase();
-    let position = lower.find(&query.to_lowercase()).unwrap_or(0);
-    let start = text[..position.min(text.len())]
-        .char_indices()
-        .rev()
-        .nth(40)
-        .map(|(i, _)| i)
-        .unwrap_or(0);
-    let excerpt: String = text[start..].chars().take(120).collect();
-    let excerpt = excerpt.replace('\n', " ");
-    if start > 0 {
-        format!("…{excerpt}")
-    } else {
-        excerpt
+/// What to search in.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SearchFilter {
+    /// Only this project's threads.
+    pub project: Option<ProjectId>,
+    /// Archived threads too.
+    pub archived: bool,
+    /// Only what was said, not tool calls and output.
+    pub messages_only: bool,
+}
+
+/// One matching transcript entry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SearchHit {
+    pub thread: ThreadId,
+    pub item: ItemId,
+    /// `user`, `assistant`, `tool_use` or `tool_result`.
+    pub kind: String,
+    /// An excerpt with the matches between `\u{2}` and `\u{3}`.
+    pub snippet: String,
+    pub at: DateTime<Utc>,
+}
+
+impl SearchHit {
+    /// The excerpt on one line, without match marks.
+    pub fn plain_snippet(&self) -> String {
+        self.snippet
+            .replace(['\u{2}', '\u{3}'], "")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
+}
+
+/// An FTS5 query for what someone typed: each word a prefix that must occur,
+/// "quoted words" a phrase. None when nothing is left to search for.
+pub fn fts_query(input: &str) -> Option<String> {
+    let mut terms = Vec::new();
+    for (index, part) in input.split('"').enumerate() {
+        let phrase = index % 2 == 1;
+        if phrase {
+            let words = part.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !words.is_empty() {
+                terms.push(format!("\"{words}\""));
+            }
+        } else {
+            terms.extend(
+                part.split_whitespace()
+                    .filter(|word| word.chars().any(char::is_alphanumeric))
+                    .map(|word| format!("\"{word}\"*")),
+            );
+        }
+    }
+    (!terms.is_empty()).then(|| terms.join(" "))
 }
 
 fn parse_optional_time(row: &Row, index: usize) -> rusqlite::Result<Option<DateTime<Utc>>> {
@@ -973,6 +1074,7 @@ mod tests {
         0x3228_ebaa_3834_b92a,
         0x42f8_ac9c_0227_c9c2,
         0x86b0_2911_ef91_5665,
+        0x8e8e_b15f_8c2e_10fd,
     ];
 
     #[test]
@@ -1364,6 +1466,146 @@ mod tests {
             ("claude", Some(1200), Some(0.5))
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn searches_every_thread() {
+        let store = Store::open_in_memory().unwrap();
+        let project = store.add_project(&std::env::temp_dir()).unwrap();
+        let thread = |title: &str| {
+            let mut thread = store
+                .create_thread(
+                    project.id,
+                    ProviderKind::Claude,
+                    None,
+                    PermissionMode::Ask,
+                    Environment::Local,
+                )
+                .unwrap();
+            thread.title = title.into();
+            store.update_thread(&thread).unwrap();
+            thread
+        };
+        let (cart, deploy) = (thread("Cart"), thread("Deploy"));
+        store
+            .append_items(
+                cart.id,
+                vec![
+                    (
+                        ItemContent::User {
+                            text: "Why is the cart total wrong for discounts?".into(),
+                            checkpoint: None,
+                        },
+                        None,
+                    ),
+                    (
+                        ItemContent::ToolResult {
+                            tool_use_id: "t1".into(),
+                            content: "FAILED Tests\\CartTest > applies the discount".into(),
+                            is_error: true,
+                        },
+                        None,
+                    ),
+                ],
+            )
+            .unwrap();
+        store
+            .append_items(
+                deploy.id,
+                vec![(
+                    ItemContent::Assistant {
+                        text: "Deployed with Forge; the discount banner is live.".into(),
+                        parent_tool_use_id: None,
+                    },
+                    None,
+                )],
+            )
+            .unwrap();
+        let all = SearchFilter::default();
+        let hits = store.search_transcripts("discount", &all, 10).unwrap();
+        assert_eq!(hits.len(), 3, "a prefix of discounts too: {hits:?}");
+        assert!(
+            hits.iter()
+                .any(|h| h.kind == "user" && h.snippet.contains("\u{2}discounts\u{3}"))
+        );
+        // Every word must occur; "quotes" make a phrase.
+        let both = store.search_transcripts("cart discount", &all, 10).unwrap();
+        assert!(both.iter().all(|h| h.thread == cart.id));
+        assert!(
+            store
+                .search_transcripts("\"total wrong\"", &all, 10)
+                .unwrap()
+                .len()
+                == 1
+        );
+        assert!(
+            store
+                .search_transcripts("\"wrong total\"", &all, 10)
+                .unwrap()
+                .is_empty()
+        );
+        // Messages only leaves tool output out.
+        let said = SearchFilter {
+            messages_only: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            store
+                .search_transcripts("discount", &said, 10)
+                .unwrap()
+                .len(),
+            2
+        );
+        // Archived threads only when asked; edits and deletions follow.
+        let mut archived = deploy.clone();
+        archived.archived = true;
+        store.update_thread(&archived).unwrap();
+        assert_eq!(
+            store.search_transcripts("forge", &all, 10).unwrap().len(),
+            0
+        );
+        let with_archived = SearchFilter {
+            archived: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            store
+                .search_transcripts("forge", &with_archived, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        store.delete_thread(deploy.id).unwrap();
+        assert!(
+            store
+                .search_transcripts("forge", &with_archived, 10)
+                .unwrap()
+                .is_empty()
+        );
+        let mut first = store.transcript(cart.id).unwrap().remove(0);
+        first.content = ItemContent::User {
+            text: "Rounding in the checkout".into(),
+            checkpoint: None,
+        };
+        store.update_item(&first).unwrap();
+        assert!(
+            store
+                .search_transcripts("rounding", &all, 10)
+                .unwrap()
+                .len()
+                == 1
+        );
+        assert_eq!(
+            store.search_messages("discount", 5).unwrap().len(),
+            1,
+            "the tool output"
+        );
+        assert_eq!(fts_query("  \" "), None);
+        assert_eq!(
+            fts_query("cart \"total wrong\""),
+            Some("\"cart\"* \"total wrong\"".into())
+        );
+        assert_eq!(fts_query("a.b -x"), Some("\"a.b\"* \"-x\"*".into()));
     }
 
     #[test]

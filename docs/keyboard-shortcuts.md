@@ -40,6 +40,7 @@ Press **⌘/** in the app to see all shortcuts, including any you changed.
 | ⌘O | Open in external editor |
 | ⌘P | Find file |
 | ⇧⌘F | Search in files |
+| ⌥⌘F | Search threads |
 | ⌘S | Save (Files tab) |
 
 ## Panels

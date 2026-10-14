@@ -48,6 +48,7 @@ mod tasks;
 mod terminal_view;
 mod themes;
 mod thread_access;
+mod thread_search;
 mod thread_session;
 mod thread_view;
 mod transcript;
@@ -221,6 +222,7 @@ fn menus() -> Vec<Menu> {
                 MenuItem::action("Task Board", actions::ShowTasks),
                 MenuItem::action("Automations", actions::ShowAutomations),
                 MenuItem::action("Usage Statistics", actions::ShowStats),
+                MenuItem::action("Search Threads", actions::SearchThreads),
                 MenuItem::separator(),
                 MenuItem::action("Split Chat", actions::ToggleSplit),
                 MenuItem::action("Back", actions::GoBack),

@@ -532,6 +532,24 @@ def gemini_gets_the_agents_md_it_wouldnt_read(world, project):
            "Gemini gets AGENTS.md: " + given[:300])
 
 
+@scenario()
+def agents_find_earlier_threads(world, project):
+    old = world.new_thread(project, "[say] The flaky checkout test was a timezone bug in the Rabatt model.")
+    world.wait(old, 30)
+    world.tool("set_thread_title", thread_id=old, title="Flaky checkout test")
+    other = world.new_thread(project, "[say] Nothing to see here.")
+    world.wait(other, 30)
+    # Every word must match (as a prefix), across messages and replies.
+    found = world.tool("search_threads", query="timezone rabat")
+    expect("“Flaky checkout test”" in found and old in found and other not in found, found)
+    expect(world.tool("search_threads", query="\"bug in the\"").count("thread_id") == 1, "a phrase")
+    expect("Nothing in any thread" in world.tool("search_threads", query="kubernetes"), "no match")
+    # An agent asks from its own thread.
+    asking = world.new_thread(project, '[call search_threads {"query": "flaky checkout"}]')
+    reply = world.wait(asking, 30)
+    expect("Flaky checkout test" in reply, "the agent finds it: " + reply[-300:])
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

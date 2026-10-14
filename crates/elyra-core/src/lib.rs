@@ -7,5 +7,5 @@ pub mod store;
 
 pub use model::*;
 pub use orchestration::*;
-pub use store::Store;
+pub use store::{SearchFilter, SearchHit, Store, fts_query};
 pub mod shell_env;

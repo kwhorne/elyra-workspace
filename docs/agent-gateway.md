@@ -17,6 +17,7 @@ token, and every call is written to an audit log. The address is shown in
 | `why` | Why a line is there: the thread and message that had an agent write it, when, what the agent said afterwards, and whether a person has read it, plus git blame | ✓ |
 | `history` | The turns that wrote a file or a symbol (thread, message, agent, date), newest first, plus the file's git log | ✓ |
 | `intent_board` | What other agents changed in the same repository during the last hour: thread, agent, same folder or another branch, file and the functions they changed (see [Agents side by side](projects-and-threads.md#agents-side-by-side)) | ✓ |
+| `search_threads` | Full-text search over every thread's messages, tool calls and tool output, best match first and grouped by thread, optionally for one project or with archived threads ([Search threads](files-and-search.md#search-threads-f)) | ✓ |
 | `list_projects` | Projects with id, name and path | ✓ |
 | `list_threads` | Threads with status, optionally for one project and including archived ones | ✓ |
 | `read_thread` | The conversation of a thread (most recent part) | ✓ |

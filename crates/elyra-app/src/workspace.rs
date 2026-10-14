@@ -63,6 +63,7 @@ pub(crate) enum Panel {
     Tasks,
     Stats,
     Race,
+    Search,
 }
 
 pub struct Workspace {
@@ -108,6 +109,7 @@ pub struct Workspace {
     automations: Option<Entity<crate::automations::AutomationsView>>,
     tasks: Option<Entity<crate::tasks::TasksView>>,
     stats: Option<Entity<crate::stats::StatsView>>,
+    search: Option<Entity<crate::thread_search::ThreadSearch>>,
     pub(crate) sidebar_open: bool,
     pub(crate) right_open: bool,
     pub(crate) collapsed: HashSet<ProjectId>,
@@ -227,6 +229,7 @@ impl Workspace {
             automations: None,
             tasks: None,
             stats: None,
+            search: None,
             sidebar_open,
             right_open,
             right_tab,
@@ -281,6 +284,7 @@ impl Workspace {
             Ok("tasks") => Some(Panel::Tasks),
             Ok("automations") => Some(Panel::Automations),
             Ok("stats") => Some(Panel::Stats),
+            Ok("search") => Some(Panel::Search),
             Ok("review") => Some(Panel::Review),
             _ => None,
         };
@@ -712,6 +716,18 @@ impl Workspace {
                     self.race = Some(cx.new(|cx| crate::race::RaceView::new(app, workspace, cx)))
                 }
             },
+            Panel::Search => match &self.search {
+                // Threads may have changed since: search again.
+                Some(search) => search.update(cx, |search, cx| {
+                    search.focus(window, cx);
+                    search.search(cx);
+                }),
+                None => {
+                    self.search = Some(cx.new(|cx| {
+                        crate::thread_search::ThreadSearch::new(app, workspace, window, cx)
+                    }))
+                }
+            },
         }
         cx.notify();
     }
@@ -742,6 +758,32 @@ impl Workspace {
 
     fn on_show_stats(&mut self, _: &ShowStats, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_panel(Panel::Stats, window, cx);
+    }
+
+    fn on_search_threads(
+        &mut self,
+        _: &SearchThreads,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_panel(Panel::Search, window, cx);
+    }
+
+    /// Leave a panel and show a thread scrolled to one of its entries.
+    pub(crate) fn open_thread_at(
+        &mut self,
+        id: ThreadId,
+        item: elyra_core::ItemId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_thread_from_panel(id, window, cx);
+        // After the thread's view has laid out its transcript.
+        cx.defer_in(window, move |this, _, cx| {
+            if let Some(view) = this.thread_views.get(&id) {
+                view.update(cx, |view, cx| view.reveal(item, cx));
+            }
+        });
     }
 
     /// Save a thread as a ZIP chosen by the user.
@@ -2511,6 +2553,7 @@ impl Render for Workspace {
             Some(Panel::Tasks) => self.tasks.clone().map(|v| v.into_any_element()),
             Some(Panel::Stats) => self.stats.clone().map(|v| v.into_any_element()),
             Some(Panel::Race) => self.race.clone().map(|v| v.into_any_element()),
+            Some(Panel::Search) => self.search.clone().map(|v| v.into_any_element()),
             None => None,
         };
         let panel_open = panel.is_some();
@@ -2593,6 +2636,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_show_automations))
             .on_action(cx.listener(Self::on_show_tasks))
             .on_action(cx.listener(Self::on_show_stats))
+            .on_action(cx.listener(Self::on_search_threads))
             .on_action(cx.listener(Self::on_show_browser))
             .on_action(cx.listener(Self::on_best_of_n))
             .on_action(cx.listener(Self::on_todays_work))

@@ -200,6 +200,12 @@ fn commands() -> Vec<Command> {
             actions::ShowStats
         ),
         command!(
+            "Search threads",
+            "⌥⌘F",
+            IconName::TextSearch,
+            actions::SearchThreads
+        ),
+        command!(
             "Show context and notes",
             "⇧⌘I",
             IconName::NotebookPen,

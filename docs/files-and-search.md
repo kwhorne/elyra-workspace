@@ -5,13 +5,37 @@
 The palette searches everything at once:
 
 - **Threads** by title. With no search text, your eight most recent threads are
-  listed. From three characters, matching **message text** is searched too.
+  listed. From three characters, the threads' **conversations** are searched too
+  (best match first, like [Search threads](#search-threads-f)), with an excerpt.
 - **Commands**: every action in the app, with its shortcut.
 - **New thread in…**: start a thread in a project.
 - **Theme: …**: switch color theme.
 
 Use **↑/↓** (or **⌃N / ⌃P**) to move, **Enter** to pick, **Escape** or a click
 outside to close. Matching is fuzzy: `nwthr` finds *New thread*.
+
+## Search threads (⌥⌘F)
+
+Searches every thread at once: your messages, the agents' replies, their tool
+calls and the start of what the tools printed (the first 8,000 characters of
+each result). Use it to find how something was solved before, an error you've
+seen, or the thread where a decision was made.
+
+- Type words: each must occur, and each matches the start of a word, so
+  `deploy` also finds *deployment* and *deployed*. Case and accents don't matter.
+- Put words in double quotes for an exact phrase: `"rounding error"`.
+- Hits are grouped by thread, best match first. Each row says what the hit is
+  in (**You**, **Agent**, **Tool**, **Output**), shows an excerpt with the
+  matching words marked, and the date. Click one to open the thread scrolled to
+  that entry.
+- **Tool output** (on by default) includes tool calls and their output; switch it
+  off to search only what was said. **Archived** includes archived threads. The
+  project menu limits the search to one project.
+
+The search is fast also with many threads: Elyra keeps a full-text index of the
+conversations in its database and updates it as threads change. Agents can
+search the same way with the gateway's `search_threads` tool
+([Agent gateway](agent-gateway.md)).
 
 ## Find a file (⌘P)
 

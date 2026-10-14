@@ -52,6 +52,7 @@ SCENES = [
     ("panel-automations", (1100, 720), "1,1,changes", "rich", {"ELYRA_OPEN_PANEL": "automations"}, {}),
     ("panel-stats", (1100, 720), "1,1,changes", "rich", {"ELYRA_OPEN_PANEL": "stats"}, {}),
     ("panel-review", (1100, 720), "1,1,changes", "rich", {"ELYRA_OPEN_PANEL": "review"}, {}),
+    ("panel-search", (1100, 720), "1,1,changes", "rich", {"ELYRA_OPEN_PANEL": "search"}, {}),
 ]
 
 

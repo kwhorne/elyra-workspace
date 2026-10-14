@@ -88,6 +88,7 @@ const READ_TOOLS: &[&str] = &[
     "why",
     "history",
     "intent_board",
+    "search_threads",
     "list_projects",
     "list_threads",
     "read_thread",
@@ -146,6 +147,17 @@ fn tools() -> Vec<Tool> {
                 "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
                 "thread_id": id
             } }),
+        ),
+        tool(
+            "search_threads",
+            "Full-text search over every thread in Elyra Workspace: what was asked, what the agents replied, their tool calls and the start of tool output, best match first, grouped by thread with the thread id (read more with read_thread). Use it to find how something was solved or decided before, or an earlier error and its fix. Words match as prefixes and must all occur; put words in double quotes for an exact phrase.",
+            json!({ "type": "object", "properties": {
+                "query": { "type": "string", "description": "Words to find, or \"an exact phrase\"" },
+                "project": { "type": "string", "description": "Only this project (id, name or path)" },
+                "messages_only": { "type": "boolean", "description": "Leave tool calls and output out (default: false)" },
+                "archived": { "type": "boolean", "description": "Include archived threads (default: false)" },
+                "limit": { "type": "integer", "description": "Most matches (default: 20, at most 100)" }
+            }, "required": ["query"] }),
         ),
         tool(
             "list_projects",
@@ -897,9 +909,83 @@ fn status_name(status: ThreadStatus) -> &'static str {
     }
 }
 
+/// `search_threads`: matches grouped by thread, best thread first.
+fn search_threads(state: &AppState, args: &Value) -> Result<String, String> {
+    let query = arg(args, "query")?;
+    let project = match args["project"].as_str().map(str::to_lowercase) {
+        Some(wanted) => Some(
+            state
+                .projects
+                .iter()
+                .find(|p| {
+                    p.id.to_string() == wanted
+                        || p.name.to_lowercase() == wanted
+                        || p.path.display().to_string().to_lowercase() == wanted
+                })
+                .map(|p| p.id)
+                .ok_or_else(|| format!("no project matches “{wanted}” (see list_projects)"))?,
+        ),
+        None => None,
+    };
+    let filter = elyra_core::SearchFilter {
+        project,
+        archived: args["archived"].as_bool().unwrap_or(false),
+        messages_only: args["messages_only"].as_bool().unwrap_or(false),
+    };
+    let limit = args["limit"].as_u64().unwrap_or(20).clamp(1, 100) as usize;
+    let hits = state
+        .store
+        .search_transcripts(query, &filter, limit)
+        .map_err(|err| format!("{err:#}"))?;
+    if hits.is_empty() {
+        return Ok(format!("Nothing in any thread matches “{query}”."));
+    }
+    let archived = state.archived_threads();
+    let mut groups: Vec<(ThreadId, Vec<&elyra_core::SearchHit>)> = Vec::new();
+    for hit in &hits {
+        match groups.iter_mut().find(|(thread, _)| *thread == hit.thread) {
+            Some((_, list)) => list.push(hit),
+            None => groups.push((hit.thread, vec![hit])),
+        }
+    }
+    let mut out = format!(
+        "{} match{} in {} thread{}, best first:\n",
+        hits.len(),
+        if hits.len() == 1 { "" } else { "es" },
+        groups.len(),
+        if groups.len() == 1 { "" } else { "s" }
+    );
+    for (id, list) in groups {
+        let thread = state
+            .thread(id)
+            .or_else(|| archived.iter().find(|t| t.id == id));
+        let title = thread.map(|t| t.title.as_str()).unwrap_or("Thread");
+        let project = thread
+            .and_then(|t| state.project(t.project_id))
+            .map(|p| p.name.as_str())
+            .unwrap_or("");
+        out.push_str(&format!("\n“{title}” · {project} · thread_id {id}\n"));
+        for hit in list {
+            let who = match hit.kind.as_str() {
+                "user" => "User",
+                "assistant" => "Agent",
+                "tool_use" => "Tool call",
+                _ => "Tool output",
+            };
+            out.push_str(&format!(
+                "  {who}, {}: {}\n",
+                hit.at.format("%Y-%m-%d"),
+                hit.plain_snippet()
+            ));
+        }
+    }
+    Ok(out)
+}
+
 fn run_tool(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String, String> {
     let args = &call.args;
     match call.tool.as_str() {
+        "search_threads" => search_threads(app.read(cx), args),
         "list_projects" => {
             let projects: Vec<Value> = app
                 .read(cx)

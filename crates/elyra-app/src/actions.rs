@@ -61,6 +61,7 @@ gpui_kit::actions!(
         ShowAutomations,
         ShowTasks,
         ShowStats,
+        SearchThreads,
         ExportThread,
         OpenDocumentation,
         ShowBrowser,
@@ -238,6 +239,14 @@ pub const SHORTCUTS: &[Shortcut] = &[
         ShowAutomations
     ),
     shortcut!("stats", "Panels", "Usage statistics", "", WS, ShowStats),
+    shortcut!(
+        "search_threads",
+        "Panels",
+        "Search threads",
+        "cmd-alt-f",
+        WS,
+        SearchThreads
+    ),
     shortcut!("best_of_n", "Threads", "Best of N", "", WS, BestOfN),
     shortcut!("todays_work", "Panels", "Today's work", "", WS, TodaysWork),
     shortcut!(
