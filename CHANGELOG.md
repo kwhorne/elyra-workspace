@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.5.0
+
+See what fills an agent's context and what it costs, and full support for ACP
+agents such as Gemini CLI: they now get the project's instructions, and side
+chats, forks and plan mode behave as they do with the other agents.
+
+- **What's in the context.** The Context tab starts with what fills the agent's
+  context window: the agent's own setup, your messages, its replies, tool calls
+  and tool results, with sizes, shares and about what each cost in the last
+  turn. It lists the largest entries (click one to find it in the conversation),
+  says when a single tool result takes up a lot of room, and has **Compact** and
+  **Clear** at hand. Click the context meter to open it. See
+  [In the context](docs/context-and-goals.md#in-the-context).
+
+### Fixed
+
+- **ACP agents get the instructions.** Gemini CLI, Cursor Agent, OpenCode and
+  other ACP agents never received the project instructions, debug mode or the
+  shared skills. They now lead the first message of each new session.
+- **ACP side chats no longer share their parent's session.** A side chat on an
+  agent that can't branch a session continued the main thread's own session,
+  so the two wrote into one conversation. It now starts its own, with the
+  conversation so far.
+- **Codex forks natively.** Fork branched the Codex thread only for side chats;
+  it now does for **Fork** too, instead of sending the conversation as text.
+- **Plan mode doesn't write through ACP.** An ACP agent could still write files
+  in *Plan only* by calling Elyra's file API directly. Those writes are refused,
+  and relative paths resolve in the thread's folder.
+- **Titles, commit messages and recaps respect Settings.** They used the
+  agent found on `PATH` and ignored a custom executable, its environment and the
+  thread's account, and fell back to switched-off agents. They now use the same
+  settings as threads, skip disabled agents, and can fall back to Codex and
+  Gemini CLI too.
+- **Compact only where it works.** The Context tab's **Compact** is disabled for
+  agents Elyra can't ask to compact.
+
 ## 1.4.0
 
 Agents that know about each other, and code you know you've read: parallel
