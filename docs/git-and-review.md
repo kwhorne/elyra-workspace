@@ -46,6 +46,24 @@ Workspace wrote the line, a second line says which thread (*Written by the agent
 chat**. The comment and the line's location are added to the thread's message
 box, so you can collect several and send them to the agent together.
 
+### Ask why
+
+When an agent wrote the line, **Ask why** asks that agent about it. Type your
+question in the comment field first, or leave it empty for *Why is this line the
+way it is?*. A side chat opens with the same agent and model that wrote it,
+picked up where the turn that wrote it ended:
+
+- It has that thread's conversation up to the end of that turn, and nothing that
+  came after, so it answers from what it knew and decided then.
+- It sees what that turn changed in the file and the code around the line as it
+  is now, so it can say whether it would do it differently today.
+- It is read-only (plan mode): asking doesn't change any files. The side chat's
+  buttons put its answer in your thread's message box, or open it as a thread of
+  its own.
+
+Agents can do the same with the gateway's `ask_author` tool before they change
+code they don't understand.
+
 ### Lines nobody has read
 
 Elyra Workspace remembers which lines agents wrote, so it can also show which of

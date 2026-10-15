@@ -11,6 +11,7 @@ What it does depends on a tag in the prompt:
   [mcp]    reply with the names of the MCP servers Elyra gave it
   [ask]    ask permission to run a command, and say what the answer was
   [say] X  reply X, changing nothing
+  a question about a line it wrote (Ask why): reply with the whole prompt
   [stream N]  reply N lines slowly, with a tool call midway (for trying
            the view while an agent writes)
   [write PATH] TEXT  append TEXT as a line to PATH
@@ -95,6 +96,9 @@ def prompt(rid, params):
     text = "".join(block.get("text", "") for block in blocks)
     with open(os.path.join(state["cwd"], "prompts.log"), "a") as log:
         log.write(text.replace("\n", " ")[:400] + "\n")
+    if "Someone is asking you about it." in text:
+        say(sid, text[:8000])
+        return end(rid)
     edit = re.search(r"\[edit ([^\]]+)\] (.*)", text, re.S)
     if edit:
         path = os.path.join(state["cwd"], edit.group(1))

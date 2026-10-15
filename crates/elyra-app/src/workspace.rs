@@ -510,11 +510,19 @@ impl Workspace {
                         &view,
                         window,
                         move |this, _, event: &crate::changes_view::ChangesEvent, window, cx| {
-                            let crate::changes_view::ChangesEvent::Comment(text) = event;
-                            if let Some(thread) = this.thread_views.get(&id) {
-                                thread.update(cx, |thread, cx| {
-                                    thread.append_to_composer(text, window, cx)
-                                });
+                            match event {
+                                crate::changes_view::ChangesEvent::Comment(text) => {
+                                    if let Some(thread) = this.thread_views.get(&id) {
+                                        thread.update(cx, |thread, cx| {
+                                            thread.append_to_composer(text, window, cx)
+                                        });
+                                    }
+                                }
+                                crate::changes_view::ChangesEvent::Asked(chat) => {
+                                    if this.thread_view(*chat, window, cx).is_some() {
+                                        this.show_right_tab(RightTab::SideChat, window, cx);
+                                    }
+                                }
                             }
                         },
                     ));

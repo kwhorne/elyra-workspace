@@ -2,6 +2,7 @@ mod about;
 mod actions;
 mod app_icon;
 mod app_state;
+mod ask_line;
 mod automations;
 mod away;
 mod bisect;

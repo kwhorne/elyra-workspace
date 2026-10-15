@@ -243,6 +243,11 @@ pub fn diff_text(repo: &Path, from: &str, to: &str) -> Result<String> {
     run_ok(repo, &["diff", "--no-color", "--find-renames", from, to])
 }
 
+/// What changed in one file between two commits, as a unified diff.
+pub fn diff_text_of(repo: &Path, from: &str, to: &str, path: &str) -> Result<String> {
+    run_ok(repo, &["diff", "--no-color", from, to, "--", path])
+}
+
 /// Stage everything and commit. Returns the new commit's short SHA.
 pub fn commit_all(repo: &Path, message: &str) -> Result<String> {
     if message.trim().is_empty() {

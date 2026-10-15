@@ -271,6 +271,52 @@ impl AppState {
         Ok(session)
     }
 
+    /// A read-only chat with the agent that wrote a line: the provider and
+    /// model of the thread `author`, the conversation up to that turn's end
+    /// (`context`), in the folder of `parent` (a side chat of it), or of the
+    /// author's thread when there is no parent.
+    pub fn create_line_chat(
+        &mut self,
+        parent_id: Option<ThreadId>,
+        author: ThreadId,
+        title: String,
+        context: String,
+        cx: &mut Context<Self>,
+    ) -> Result<Entity<ThreadSession>> {
+        let author = self
+            .thread(author)
+            .cloned()
+            .or_else(|| self.store.thread(author).ok().flatten())
+            .ok_or_else(|| anyhow::anyhow!("the thread that wrote it no longer exists"))?;
+        let place = match parent_id {
+            Some(id) => self
+                .thread(id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("thread not found"))?,
+            None => author.clone(),
+        };
+        let mut thread = self.store.create_thread(
+            place.project_id,
+            author.provider,
+            author.model.clone(),
+            elyra_core::PermissionMode::Plan,
+            place.environment.clone(),
+        )?;
+        thread.title = title;
+        thread.effort = author.effort.clone();
+        thread.account = author.account.clone();
+        thread.parent_id = parent_id;
+        thread.fork_context = Some(context);
+        self.store.update_thread(&thread)?;
+        let id = thread.id;
+        self.threads.insert(0, thread);
+        let session = self
+            .session(id, cx)
+            .ok_or_else(|| anyhow::anyhow!("could not start the chat"))?;
+        cx.notify();
+        Ok(session)
+    }
+
     /// Copy a thread into a new one that continues on its own. Providers that
     /// can branch a session do so natively; others get the conversation so
     /// far as context with the first message.

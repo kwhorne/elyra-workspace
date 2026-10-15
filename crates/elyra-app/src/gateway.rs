@@ -135,6 +135,17 @@ fn tools() -> Vec<Tool> {
             }, "required": ["path", "line"] }),
         ),
         tool(
+            "ask_author",
+            "Ask the agent that wrote a line why, before you change code whose intent you don't know. Elyra starts a read-only chat with that agent (same provider and model) picked up where the turn that wrote the line ended: it has that conversation, what the turn changed in the file and the code around the line now, and answers from what it knew and decided then. Waits for the answer and returns it. Use `why` first for the quick facts; use this when the reason isn't in them.",
+            json!({ "type": "object", "properties": {
+                "path": { "type": "string", "description": "File, relative to your folder" },
+                "line": { "type": "integer", "description": "1-based line number" },
+                "question": { "type": "string", "description": "What you want to know (default: why the line is the way it is)" },
+                "timeout_seconds": { "type": "integer", "description": "How long to wait for the answer (default 300, at most 3600)" },
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" }
+            }, "required": ["path", "line"] }),
+        ),
+        tool(
             "history",
             "Which earlier turns wrote a file or a symbol (function, class, method): thread, message, agent and date, newest first, plus the file's git log. Use it to learn what was tried before and why.",
             json!({ "type": "object", "properties": {
@@ -482,6 +493,8 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         symbols(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "why" {
         why(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "ask_author" {
+        ask_author(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "history" {
         history(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "conflict_context" {
@@ -1438,6 +1451,25 @@ async fn wait_for_thread(
     not_self(&call.caller, id, "wait for")?;
     let timeout =
         Duration::from_secs(call.args["timeout_seconds"].as_u64().unwrap_or(600)).min(MAX_WAIT);
+    Ok(if settle(app, id, timeout, cx).await {
+        cx.update(|cx| thread_report(app, id, cx))
+    } else {
+        format!(
+            "Still running after {} s.\n\n{}",
+            timeout.as_secs(),
+            cx.update(|cx| thread_report(app, id, cx))
+        )
+    })
+}
+
+/// Wait until the thread's turn is over (or it waits for approval); false
+/// when it is still running after `timeout`.
+async fn settle(
+    app: &Entity<AppState>,
+    id: ThreadId,
+    timeout: Duration,
+    cx: &mut AsyncApp,
+) -> bool {
     let deadline = Instant::now() + timeout;
     loop {
         let settled = cx.update(|cx| {
@@ -1452,19 +1484,85 @@ async fn wait_for_thread(
                 || status == Some(ThreadStatus::NeedsApproval)
         });
         if settled {
-            return Ok(cx.update(|cx| thread_report(app, id, cx)));
+            return true;
         }
         if Instant::now() >= deadline {
-            return Ok(format!(
-                "Still running after {} s.\n\n{}",
-                timeout.as_secs(),
-                cx.update(|cx| thread_report(app, id, cx))
-            ));
+            return false;
         }
         cx.background_executor()
             .timer(Duration::from_millis(500))
             .await;
     }
+}
+
+/// Ask the agent that wrote a line (see `ask_line`) and wait for its answer.
+async fn ask_author(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let path = arg(&call.args, "path")?.to_string();
+    let line = call.args["line"]
+        .as_u64()
+        .filter(|l| *l > 0)
+        .ok_or("Give the 1-based `line`.")? as u32;
+    let question = call.args["question"]
+        .as_str()
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+        .unwrap_or(crate::ask_line::DEFAULT_QUESTION)
+        .to_string();
+    let timeout =
+        Duration::from_secs(call.args["timeout_seconds"].as_u64().unwrap_or(300)).min(MAX_WAIT);
+    let (dir, _) = cx.update(|cx| provenance_scope(app, call, cx))?;
+    let (root, relative, text) = cx
+        .background_executor()
+        .spawn(async move {
+            let (root, relative) = crate::provenance::repo_relative(&dir, &path)
+                .ok_or_else(|| format!("{path} isn't in a Git repository."))?;
+            let content = std::fs::read_to_string(root.join(&relative))
+                .map_err(|err| format!("{relative}: {err}"))?;
+            let text = content
+                .lines()
+                .nth(line as usize - 1)
+                .ok_or_else(|| format!("{relative} has fewer than {line} lines."))?
+                .to_string();
+            Ok::<_, String>((root, relative, text))
+        })
+        .await?;
+    let request = crate::ask_line::Request {
+        parent: match call.caller {
+            Caller::Thread(id) => Some(id),
+            Caller::Client { .. } => None,
+        },
+        root,
+        path: relative.clone(),
+        line: Some(line),
+        text,
+        question,
+    };
+    let chat = crate::ask_line::ask(app, request, cx)
+        .await
+        .map_err(|err| format!("{relative}:{line}: {err:#}"))?;
+    let id = cx.update(|cx| chat.read(cx).thread.id);
+    let done = settle(app, id, timeout, cx).await;
+    let reply = cx.update(|cx| chat.read(cx).last_reply());
+    Ok(format!(
+        "{}The agent that wrote {relative}:{line} answered (thread {id}):\n\n{}",
+        if done {
+            String::new()
+        } else {
+            format!(
+                "Still answering after {} s; this is its reply so far. ",
+                timeout.as_secs()
+            )
+        },
+        if reply.trim().is_empty() {
+            "(no answer)".to_string()
+        } else {
+            reply.trim().to_string()
+        }
+    ))
 }
 
 #[cfg(test)]

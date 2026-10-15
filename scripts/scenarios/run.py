@@ -484,6 +484,37 @@ def lines_lead_back_to_the_message_that_wrote_them(world, project):
     expect(by_symbol.startswith("discount: lib.rs:2") and "Add the discount" in by_symbol, by_symbol)
 
 
+@scenario(files={"lib.rs": "// written by hand before any agent\n"})
+def the_agent_that_wrote_a_line_says_why(world, project):
+    author = world.new_thread(project, "[write lib.rs] fn discount(amount: u32) -> u32 { amount * 9 / 10 }")
+    world.wait(author, 30)
+    world.tool("send_message", thread_id=author, text="[write lib.rs] fn shipping() -> u32 { 49 }")
+    world.wait(author, 30)
+    # The other-agents note names it by title; keep the messages' tags out of it.
+    world.tool("set_thread_title", thread_id=author, title="Discount and shipping")
+    time.sleep(1.5)  # the turn's lines are recorded after it ends
+    asker = world.new_thread(
+        project, '[call ask_author {"path": "lib.rs", "line": 2, "question": "Why nine tenths?"}]')
+    reply = world.wait(asker, 90)
+    expect("The agent that wrote lib.rs:2 answered" in reply, reply[-600:])
+    expect("<earlier-conversation>" in reply and "[write lib.rs] fn discount" in reply,
+           "it has the conversation that wrote it: " + reply[-1500:])
+    expect("[write lib.rs] fn shipping" not in reply, "but not what came after: " + reply[-1500:])
+    expect("What that turn changed in the file:" in reply and "+fn discount" in reply,
+           "and what that turn changed: " + reply[-1500:])
+    expect("fn shipping() -> u32 { 49 }" in reply and ">    2  fn discount" in reply,
+           "and the code as it is now: " + reply[-1500:])
+    expect(reply.rstrip().endswith("Question: Why nine tenths?"), reply[-300:])
+    with world.db() as db:
+        chat = db.execute("SELECT title, parent_id, permission_mode FROM threads WHERE title LIKE 'Why%'").fetchone()
+    expect(chat is not None and chat[0] == "Why · lib.rs:2" and chat[1] == asker and chat[2] == "plan",
+           f"a read-only side chat of the asking thread: {chat}")
+    by_hand = world.call_raw({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "ask_author", "arguments": {"path": "lib.rs", "line": 1, "project": project}}})
+    text = by_hand["result"]["content"][0]["text"]
+    expect(by_hand["result"]["isError"] and "no agent in Elyra Workspace is recorded" in text, text)
+
+
 @scenario(files={"lib.rs": RUST})
 def parallel_agents_see_what_the_others_change(world, project):
     first = world.new_thread(project, "[edit lib.rs] fn member_discount(total: u32) -> u32 { total * 85 / 100 }")

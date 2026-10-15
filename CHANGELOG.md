@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Ask why.** Click a line an agent wrote in the Changes tab and press **Ask
+  why**. A read-only side chat opens with the agent that wrote it, picked up
+  where that turn ended: it has that conversation and nothing after it, what the
+  turn changed in the file and the code around the line now. So it answers from
+  what it knew and decided then, and says if it would do it differently today.
+  Agents can ask too, with the gateway's new `ask_author` tool. See
+  [Ask why](docs/git-and-review.md#ask-why).
+
 ## 1.12.1
 
 A clearer sidebar.

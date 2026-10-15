@@ -29,6 +29,8 @@ const MAX_GENERATION_DIFF: usize = 14_000;
 pub enum ChangesEvent {
     /// A review comment for the agent, ready to drop into the composer.
     Comment(String),
+    /// A chat asking the agent that wrote a line why (a side chat).
+    Asked(elyra_core::ThreadId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -939,6 +941,54 @@ impl ChangesView {
         cx.notify();
     }
 
+    /// Ask the agent that wrote the selected line about it, in a side chat
+    /// that starts where that turn ended; the comment field is the question.
+    fn ask_why(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(line), Some(selected), Some(root)) =
+            (&self.selected_line, &self.selected, self.root.clone())
+        else {
+            return;
+        };
+        let Some(session) = self.session.as_ref().and_then(|s| s.upgrade()) else {
+            return;
+        };
+        let Some(app) = session.read(cx).app_entity() else {
+            return;
+        };
+        let question = self.comment_input.read(cx).value().trim().to_string();
+        let request = crate::ask_line::Request {
+            parent: Some(session.read(cx).thread.id),
+            root,
+            path: selected.change.path.clone(),
+            line: line.number,
+            text: line.text.clone(),
+            question: if question.is_empty() {
+                crate::ask_line::DEFAULT_QUESTION.into()
+            } else {
+                question
+            },
+        };
+        self.comment_input
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.selected_line = None;
+        self.message = Some(("Asking the agent that wrote it…".into(), false));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = crate::ask_line::ask(&app, request, cx).await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(chat) => {
+                        this.message = None;
+                        cx.emit(ChangesEvent::Asked(chat.read(cx).thread.id));
+                    }
+                    Err(err) => this.message = Some((format!("Could not ask: {err:#}"), true)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn send_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.comment_input.read(cx).value().trim().to_string();
         let (Some(line), Some(selected)) = (&self.selected_line, &self.selected) else {
@@ -1622,6 +1672,16 @@ impl ChangesView {
                             .flex_1()
                             .child(Input::new(&self.comment_input).small()),
                     )
+                    .when(self.origin.is_some(), |this| {
+                        this.child(
+                            Button::new("ask-why")
+                                .small()
+                                .icon(IconName::MessagesSquare)
+                                .label("Ask why")
+                                .tooltip("Ask the agent that wrote this line, as it was when it wrote it (the field is the question)")
+                                .on_click(cx.listener(|this, _, window, cx| this.ask_why(window, cx))),
+                        )
+                    })
                     .child(
                         Button::new("send-comment")
                             .small()
