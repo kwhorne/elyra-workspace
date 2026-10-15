@@ -1169,7 +1169,9 @@ impl Render for PrView {
                         .text_color(cx.theme().muted_foreground)
                         .child(reason.clone()),
                 )
-                .when(self.overview.is_some(), |this| this.child(self.render_overview(cx)))
+                .when(self.overview.is_some(), |this| {
+                    this.child(self.render_overview(cx))
+                })
                 .into_any_element(),
             PrState::NoPr { branch, dirty } => self.render_create(branch, *dirty, cx),
             PrState::Pr(pr, inline) => self.render_pr(pr, inline, cx),

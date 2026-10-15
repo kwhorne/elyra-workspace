@@ -332,14 +332,17 @@ impl Workspace {
             .id(SharedString::from(format!("thread-{id}")))
             .group("thread-row")
             .w_full()
-            .when(indent, |this| this.pl_5())
-            .when(!indent, |this| this.pl_2())
+            .pl_2()
             .pr_1()
             .py_1()
             .gap_2()
             .rounded_md()
             .cursor_pointer()
             .text_sm()
+            // Under a project: softer than the project's own row.
+            .when(indent && !selected && !unread, |this| {
+                this.text_color(cx.theme().muted_foreground)
+            })
             .when(selected, |this| {
                 this.bg(cx.theme().sidebar_accent)
                     .text_color(cx.theme().sidebar_accent_foreground)
@@ -441,7 +444,8 @@ impl Workspace {
             .rounded_md()
             .cursor_pointer()
             .text_sm()
-            .font_weight(FontWeight::MEDIUM)
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(cx.theme().sidebar_foreground)
             .hover(|this| this.bg(cx.theme().sidebar_accent.opacity(0.4)))
             .child(
                 Icon::new(if collapsed {
@@ -515,14 +519,22 @@ impl Workspace {
                 )
             });
 
-        let mut section = v_flex().gap_0p5().child(header);
+        // The project's threads hang off it, along a guide line.
+        let mut rows = v_flex()
+            .gap_0p5()
+            .ml(px(11.))
+            .pl_1()
+            .border_l_1()
+            .border_color(cx.theme().sidebar_border);
+        let mut has_rows = false;
         if !collapsed {
-            section = section.children(active.iter().map(|t| self.thread_row(t, true, cx)));
+            has_rows = !active.is_empty() || !done.is_empty();
+            rows = rows.children(active.iter().map(|t| self.thread_row(t, true, cx)));
             if !done.is_empty() {
-                section = section.child(
+                rows = rows.child(
                     div()
                         .id(SharedString::from(format!("done-{id}")))
-                        .pl_5()
+                        .pl_2()
                         .py_0p5()
                         .text_xs()
                         .cursor_pointer()
@@ -541,11 +553,15 @@ impl Workspace {
                         })),
                 );
                 if show_done {
-                    section = section.children(done.iter().map(|t| self.thread_row(t, true, cx)));
+                    rows = rows.children(done.iter().map(|t| self.thread_row(t, true, cx)));
                 }
             }
         }
-        section.into_any_element()
+        v_flex()
+            .gap_0p5()
+            .child(header)
+            .when(has_rows, |this| this.child(rows))
+            .into_any_element()
     }
 
     pub(crate) fn render_sidebar(&self, cx: &Context<Self>) -> AnyElement {
