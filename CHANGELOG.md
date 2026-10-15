@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.13.0
+
+Ask the agent that wrote a line why, and Laravel Boost made part of the workspace: one
+setup for every agent, one rule book, and app errors that lead back to the
+instruction behind them.
 
 - **Ask why.** Click a line an agent wrote in the Changes tab and press **Ask
   why**. A read-only side chat opens with the agent that wrote it, picked up
