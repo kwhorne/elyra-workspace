@@ -1,5 +1,6 @@
 mod about;
 mod actions;
+mod app_errors;
 mod app_icon;
 mod app_state;
 mod ask_line;
@@ -49,6 +50,7 @@ mod settings_window;
 mod shared_setup;
 mod shortcuts;
 mod sidebar;
+mod stack;
 mod stats;
 mod tasks;
 mod terminal_view;
@@ -64,6 +66,7 @@ mod updates;
 mod walkthrough;
 mod webview;
 mod workspace;
+mod worktree_setup;
 
 use app_state::AppState;
 use gpui_kit::component::TitleBar;

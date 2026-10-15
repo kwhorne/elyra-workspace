@@ -538,19 +538,30 @@ impl ThreadSession {
         let job = {
             let (dest, branch) = (dest.clone(), branch.clone());
             cx.background_executor().spawn(async move {
-                if let Some(site) = grove_site {
-                    match crate::grove::start_try(&site.name, &branch) {
-                        Ok(record) => return Ok((record.path.clone(), Some(record), None)),
-                        Err(err) => {
-                            let note = format!(
-                                "Grove couldn't run this branch ({err:#}), so it has a plain worktree without its own site or database."
-                            );
-                            elyra_git::create_worktree(&repo, &dest, &branch)?;
-                            return Ok((dest, None, Some(note)));
+                let (path, record, note) = 'made: {
+                    if let Some(site) = grove_site {
+                        match crate::grove::start_try(&site.name, &branch) {
+                            Ok(record) => break 'made (record.path.clone(), Some(record), None),
+                            Err(err) => {
+                                let note = format!(
+                                    "Grove couldn't run this branch ({err:#}), so it has a plain worktree without its own site or database."
+                                );
+                                elyra_git::create_worktree(&repo, &dest, &branch)?;
+                                break 'made (dest, None, Some(note));
+                            }
                         }
                     }
-                }
-                elyra_git::create_worktree(&repo, &dest, &branch).map(|()| (dest, None, None))
+                    elyra_git::create_worktree(&repo, &dest, &branch)?;
+                    (dest, None, None)
+                };
+                // What Git leaves out: .env, the agents' setup, vendor/.
+                let (copied, missing) = crate::worktree_setup::prepare(&repo, &path);
+                let notes: Vec<String> = note
+                    .into_iter()
+                    .chain(crate::worktree_setup::describe(&copied))
+                    .chain(missing)
+                    .collect();
+                anyhow::Ok((path, record, notes))
             })
         };
         cx.spawn(async move |this, cx| {
@@ -558,10 +569,10 @@ impl ThreadSession {
             let _ = this.update(cx, |this, cx| {
                 this.preparing = None;
                 match result {
-                    Ok((path, record, note)) => {
+                    Ok((path, record, notes)) => {
                         this.thread.environment = Environment::Worktree { path, branch };
                         this.save_thread(cx);
-                        if let Some(note) = note {
+                        for note in notes {
                             this.notice(note, false, cx);
                         }
                         if let Some(record) = record {
@@ -2238,11 +2249,18 @@ impl ThreadSession {
     }
 
     /// Show a rule the agent learned, for the user to keep or dismiss.
-    pub fn propose_rule(&mut self, rule: String, reason: String, cx: &mut Context<Self>) {
+    pub fn propose_rule(
+        &mut self,
+        rule: String,
+        reason: String,
+        paths: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         self.append(
             ItemContent::RuleProposal {
                 rule,
                 reason,
+                paths,
                 outcome: None,
             },
             cx,
@@ -2250,13 +2268,15 @@ impl ThreadSession {
         cx.notify();
     }
 
-    /// The rule a proposal item holds.
-    pub fn proposed_rule(&self, item: ItemId) -> Option<String> {
+    /// The rule a proposal item holds, and the files it applies to.
+    pub fn proposed_rule(&self, item: ItemId) -> Option<(String, Option<String>)> {
         self.items
             .iter()
             .find(|i| i.id == item)
             .and_then(|i| match &i.content {
-                ItemContent::RuleProposal { rule, .. } => Some(rule.clone()),
+                ItemContent::RuleProposal { rule, paths, .. } => {
+                    Some((rule.clone(), paths.clone()))
+                }
                 _ => None,
             })
     }

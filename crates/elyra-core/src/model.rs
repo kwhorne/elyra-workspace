@@ -362,6 +362,10 @@ pub enum ItemContent {
         rule: String,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         reason: String,
+        /// The files it applies to, as a glob (`app/Http/Controllers/**`),
+        /// for projects that keep rules per area (Boost's `.ai/rules`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        paths: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         outcome: Option<RuleOutcome>,
     },

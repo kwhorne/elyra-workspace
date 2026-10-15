@@ -264,6 +264,7 @@ mod tests {
             ItemContent::RuleProposal {
                 rule: "Use Pest.".into(),
                 reason: String::new(),
+                paths: None,
                 outcome: None,
             },
             2,

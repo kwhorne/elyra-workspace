@@ -86,6 +86,7 @@ struct GatewayHandler {
 const READ_TOOLS: &[&str] = &[
     "symbols",
     "why",
+    "error_origin",
     "history",
     "intent_board",
     "changes_by_instruction",
@@ -133,6 +134,15 @@ fn tools() -> Vec<Tool> {
                 "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
                 "thread_id": id
             }, "required": ["path", "line"] }),
+        ),
+        tool(
+            "error_origin",
+            "Where the Laravel app's latest errors come from: the errors in storage/logs (newest last), each with the line in the app's own code it failed on and the instruction (thread, agent, message) that had an agent write that line. Use it when something fails at runtime, before guessing at a fix; then ask_author on that line if the reason isn't clear.",
+            json!({ "type": "object", "properties": {
+                "limit": { "type": "integer", "description": "How many of the latest errors (default 3, at most 10)" },
+                "project": { "type": "string", "description": "Project id, name or path (for callers outside a thread)" },
+                "thread_id": id
+            } }),
         ),
         tool(
             "ask_author",
@@ -290,10 +300,11 @@ fn tools() -> Vec<Tool> {
         ),
         tool(
             "propose_rule",
-            "When the user corrects how you work in this project (a convention, a command to use, something to avoid) and it will matter in later tasks too, propose it as a rule: one short imperative sentence. It appears as a card in this thread; the user adds it to AGENTS.md or the project's instructions, or dismisses it. Only agents working in a thread can propose.",
+            "When the user corrects how you work in this project (a convention, a command to use, something to avoid) and it will matter in later tasks too, propose it as a rule: one short imperative sentence. It appears as a card in this thread; the user adds it to the project's rules (AGENTS.md, or Laravel Boost's .ai/rules for the files it applies to) or the project's instructions, or dismisses it. Use this instead of Boost's record-rule tool: the user decides. Only agents working in a thread can propose.",
             json!({ "type": "object", "properties": {
                 "rule": { "type": "string", "description": "e.g. Validate requests with Form Requests, not in controllers." },
-                "reason": { "type": "string", "description": "What the user said that taught it" }
+                "reason": { "type": "string", "description": "What the user said that taught it" },
+                "paths": { "type": "string", "description": "The files it applies to, as a glob relative to the project (e.g. app/Http/Controllers/**); leave out for the whole project" }
             }, "required": ["rule"] }),
         ),
         tool(
@@ -493,6 +504,8 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         symbols(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "why" {
         why(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "error_origin" {
+        error_origin(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "ask_author" {
         ask_author(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "history" {
@@ -1318,11 +1331,21 @@ fn run_tool(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String,
                 return Err("A rule is one short sentence; this is too long.".into());
             }
             let reason = args["reason"].as_str().unwrap_or("").trim().to_string();
+            let paths = args["paths"]
+                .as_str()
+                .map(|p| p.trim().trim_start_matches("./").to_string())
+                .filter(|p| !p.is_empty() && p != "**" && p != "**/*");
+            if paths
+                .as_deref()
+                .is_some_and(|p| p.starts_with('/') || p.split('/').any(|part| part == ".."))
+            {
+                return Err("`paths` is a glob inside the project, like app/Models/**.".into());
+            }
             let session = app
                 .update(cx, |app, cx| app.session(thread_id, cx))
                 .ok_or("could not open the thread")?;
             session.update(cx, |session, cx| {
-                session.propose_rule(rule.clone(), reason, cx)
+                session.propose_rule(rule.clone(), reason, paths, cx)
             });
             Ok(format!(
                 "Proposed the rule \u{201c}{rule}\u{201d} as a card in this thread; it is kept only if the user accepts it. Follow it for the rest of this task anyway."
@@ -1493,6 +1516,43 @@ async fn settle(
             .timer(Duration::from_millis(500))
             .await;
     }
+}
+
+/// The app's latest logged errors, traced to the instructions behind them.
+async fn error_origin(
+    app: &Entity<AppState>,
+    call: &Call,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    let limit = call.args["limit"].as_u64().unwrap_or(3).clamp(1, 10) as usize;
+    let (dir, _) = cx.update(|cx| provenance_scope(app, call, cx))?;
+    let (root, found) = cx
+        .background_executor()
+        .spawn(async move {
+            let root = elyra_git::repo_root(&dir).unwrap_or_else(|_| dir.clone());
+            let found: Vec<_> = crate::app_errors::latest(&dir, limit)
+                .into_iter()
+                .map(|error| {
+                    let culprit = crate::app_errors::culprit(&root, &error);
+                    (error, culprit)
+                })
+                .collect();
+            (root, found)
+        })
+        .await;
+    if found.is_empty() {
+        return Ok("No errors in the app's log (storage/logs/laravel*.log).".into());
+    }
+    Ok(cx.update(|cx| {
+        let state = app.read(cx);
+        found
+            .into_iter()
+            .map(|(error, culprit)| {
+                crate::app_errors::describe(&crate::app_errors::trace(state, &root, error, culprit))
+            })
+            .collect::<Vec<_>>()
+            .join("\n---\n\n")
+    }))
 }
 
 /// Ask the agent that wrote a line (see `ask_line`) and wait for its answer.

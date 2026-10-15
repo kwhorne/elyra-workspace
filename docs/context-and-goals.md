@@ -97,6 +97,13 @@ propose that as a rule: a card in the thread with the rule and what taught it.
 get it; commit it with your changes. **Add to project instructions** keeps it in
 Elyra only. **Dismiss** drops it.
 
+In a project with [Laravel Boost](#laravel-boost)'s project rules, the rule goes
+to `.ai/rules` instead, where Boost keeps them: the agent says which files it
+applies to (*app/Http/Controllers/\*\**), the card shows it, and the rule is added
+to that area's file (`.ai/rules/controllers.md`, with the globs in its
+frontmatter) and to `.ai/rules/index.md`, the index Boost tells agents to read
+before they edit. So there is one rule book, whichever tool wrote the rule.
+
 ## Checks after each turn
 
 *Done means green.* Give the project a check command (tests, lint, or both,
@@ -177,9 +184,12 @@ agents) too, so switching agents keeps the same tools.
 - **MCP servers in `.mcp.json`** (Claude Code's format: `command`, `args`, `env`,
   or `url` and `headers`; `${VAR}` and `${VAR:-default}` are filled in from the
   environment). The file comes with the repository and its commands run on your
-  Mac, so they're only passed on after **Allow for every agent**. If the file
-  changes, allow it again. **Stop sharing** takes it back. Agents get the change
-  from their next message.
+  Mac, so they're only passed on after **Allow for every agent**. Allowing
+  remembers each server as it was: when the file changes (`php artisan
+  boost:update` writes it again, for example), the servers that stayed the same
+  are still shared, and new or changed ones are marked and wait until you allow
+  the file again. **Stop sharing** takes it back. Agents get the change from
+  their next message.
 - **Skills** in `.claude/skills/<name>/SKILL.md`, `.agents/skills/…` and
   `.gemini/skills/…`, in the project and in your home folder. Each agent gets a
   list (name, description, path) of the skills it doesn't find itself, and reads
@@ -190,6 +200,41 @@ agents) too, so switching agents keeps the same tools.
   a project without one, Gemini threads get the project's `AGENTS.md` (or
   `CLAUDE.md`) along with their instructions, unless your Gemini settings
   (`context.fileName`) already name that file.
+
+### Laravel Boost
+
+In a Laravel project, the Context tab says whether
+[Laravel Boost](https://laravel.com/docs/boost) is set up: without it, which
+command installs it; with it, whether its MCP server is in `.mcp.json`. Once it
+is, every agent gets Boost's tools (the app's database schema, its logs and
+errors, the Laravel docs for your versions), its guidelines in AGENTS.md or
+CLAUDE.md and its skills, and:
+
+- **Worktrees get what Git leaves out.** Boost suggests keeping `.mcp.json`,
+  its guideline files and `boost.json` out of Git, and `.env` and `vendor/`
+  aren't in Git either. A new worktree gets them copied from the project folder
+  when it lacks them (`vendor/` as an APFS clone, which takes no extra space
+  until it changes), so `php artisan`, and Boost with it, work there too. The
+  thread says what was copied.
+- **Rules go to `.ai/rules`** (see [Rules agents learn](#rules-agents-learn)).
+- **App errors lead to the instruction behind them.** When the app logs an
+  error in `storage/logs/laravel.log`, the thread working in that folder shows
+  it above the message box with the line in the app's own code it failed on and
+  the thread that wrote that line (*Undefined array key "price" —
+  app/Http/Controllers/CartController.php:42, written in "Cart prices" ·
+  Claude Code*). **Ask why** asks that agent about the line in a
+  [side chat](git-and-review.md#ask-why), and **Add to message** gives your
+  agent the error with where it came from. Agents can look it up with the
+  gateway's `error_origin` tool. Paths logged from a container
+  (`/var/www/html/...`) are matched to the project's files.
+- **Reviews use the tools.** A second opinion is told about Boost's tools, so
+  it checks the changes against the real schema and errors.
+- **The context shows Boost's share.** Under *Agent setup*, the context
+  inspector says how much of it Boost's guidelines take.
+
+An Elyra Framework app (`elyra.toml`) gets the same from `rata ai:install`: the
+framework's guidelines and skills, and its MCP server (`rata mcp dev`) in
+`.mcp.json`.
 
 ## Local servers
 

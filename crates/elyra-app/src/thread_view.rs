@@ -88,6 +88,11 @@ pub struct ThreadView {
     server_errors: Vec<crate::grove::Request>,
     /// The newest Grove request id already looked at.
     server_seen: Option<u64>,
+    /// Errors the Laravel app logged since, traced to the instruction that
+    /// wrote the failing line; not yet added to a message or dismissed.
+    app_errors: Vec<crate::app_errors::Traced>,
+    /// How far the app's log was read.
+    log_seen: Option<crate::app_errors::Seen>,
     _grove_watch: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -153,17 +158,36 @@ impl ThreadView {
                 if !recent {
                     continue;
                 }
-                let requests = cx
+                let Ok(seen) = this.update(cx, |this, _| this.log_seen.clone()) else {
+                    break;
+                };
+                let (requests, (seen, logged)) = cx
                     .background_executor()
                     .spawn(async move {
-                        let site = crate::grove::app_for(&dir)?;
-                        crate::grove::requests(&site.name, 30).ok()
+                        // The app's own log, and the line each error failed on.
+                        let (seen, errors) = crate::app_errors::new_errors(&dir, seen);
+                        let logged: Vec<_> = errors
+                            .into_iter()
+                            .rev()
+                            .take(MAX_SERVER_ERRORS)
+                            .map(|error| {
+                                let culprit = elyra_git::repo_root(&dir).ok().and_then(|root| {
+                                    crate::app_errors::culprit(&root, &error).map(|c| (root, c))
+                                });
+                                (error, culprit)
+                            })
+                            .collect();
+                        let requests = crate::grove::app_for(&dir)
+                            .and_then(|site| crate::grove::requests(&site.name, 30).ok());
+                        (requests, (seen, logged))
                     })
                     .await;
                 let alive = this.update(cx, |this, cx| {
                     if let Some(requests) = requests {
                         this.saw_requests(requests, cx);
                     }
+                    this.log_seen = seen;
+                    this.saw_app_errors(logged, cx);
                 });
                 if alive.is_err() {
                     break;
@@ -200,6 +224,8 @@ impl ThreadView {
             browser: None,
             server_errors: Vec::new(),
             server_seen: None,
+            app_errors: Vec::new(),
+            log_seen: None,
             _grove_watch: grove_watch,
             warmed_up: false,
             _subscriptions: subscriptions,
@@ -724,14 +750,14 @@ impl ThreadView {
                 session.project.clone(),
             )
         };
-        let (Some(rule), Some(app)) = (rule, app) else {
+        let (Some((rule, paths)), Some(app)) = (rule, app) else {
             return;
         };
         let note = if in_file {
-            match crate::rules::add_to_file(&dir, &rule) {
+            match crate::rules::add_to_file(&dir, &rule, paths.as_deref()) {
                 Ok(path) => format!(
                     "Added to {}; commit it with your changes.",
-                    path.file_name().unwrap_or_default().to_string_lossy()
+                    path.strip_prefix(&dir).unwrap_or(&path).display()
                 ),
                 Err(err) => {
                     window.push_notification(
@@ -1854,6 +1880,79 @@ impl ThreadView {
         .detach();
     }
 
+    /// Errors the app logged, with the instruction behind the failing line.
+    fn saw_app_errors(
+        &mut self,
+        logged: Vec<(
+            crate::app_errors::AppError,
+            Option<(std::path::PathBuf, crate::app_errors::Culprit)>,
+        )>,
+        cx: &mut Context<Self>,
+    ) {
+        if logged.is_empty() {
+            return;
+        }
+        let Some(app) = self.session.read(cx).app_entity() else {
+            return;
+        };
+        let state = app.read(cx);
+        let dir = self.session.read(cx).working_dir();
+        for (error, culprit) in logged.into_iter().rev() {
+            let (root, culprit) = match culprit {
+                Some((root, culprit)) => (root, Some(culprit)),
+                None => (dir.clone(), None),
+            };
+            self.app_errors
+                .push(crate::app_errors::trace(state, &root, error, culprit));
+        }
+        let keep = self.app_errors.len().saturating_sub(MAX_SERVER_ERRORS);
+        self.app_errors.drain(..keep);
+        cx.notify();
+    }
+
+    /// Ask the agent that wrote the line the newest app error failed on.
+    fn ask_about_app_error(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(traced) = self.app_errors.last().cloned() else {
+            return;
+        };
+        let (Some(culprit), Some(app)) =
+            (traced.culprit.clone(), self.session.read(cx).app_entity())
+        else {
+            return;
+        };
+        let Ok(root) = elyra_git::repo_root(&self.session.read(cx).working_dir()) else {
+            return;
+        };
+        let request = crate::ask_line::Request {
+            parent: Some(self.session.read(cx).thread.id),
+            root,
+            path: culprit.path.clone(),
+            line: Some(culprit.line),
+            text: culprit.text.clone(),
+            question: format!(
+                "The app now fails on this line: {} ({}). What was the line meant to handle, and which assumption of yours doesn't hold? Say how you would fix it.",
+                traced.error.message, traced.error.level
+            ),
+        };
+        self.app_errors.pop();
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = crate::ask_line::ask(&app, request, cx).await;
+            let _ = this.update_in(cx, |_, window, cx| match result {
+                Ok(chat) => {
+                    let id = chat.read(cx).thread.id;
+                    if let Some(hub) = cx.try_global::<crate::browser_tools::BrowserHub>() {
+                        let workspace = hub.workspace.clone();
+                        let _ =
+                            workspace.update(cx, |this, cx| this.show_side_chat(id, window, cx));
+                    }
+                }
+                Err(err) => window.push_notification(format!("Could not ask: {err:#}"), cx),
+            });
+        })
+        .detach();
+    }
+
     /// New server errors among Grove's latest requests for the app.
     fn saw_requests(&mut self, requests: Vec<crate::grove::Request>, cx: &mut Context<Self>) {
         let (seen, fresh) = crate::grove::new_server_errors(self.server_seen, requests);
@@ -1872,6 +1971,13 @@ impl ThreadView {
             self.attachments.push(Attachment::Context {
                 title,
                 content,
+                replay: None,
+            });
+        }
+        for traced in std::mem::take(&mut self.app_errors) {
+            self.attachments.push(Attachment::Context {
+                title: format!("App error: {}", traced.error.message),
+                content: crate::app_errors::describe(&traced),
                 replay: None,
             });
         }
@@ -1932,6 +2038,19 @@ impl ThreadView {
             [one] => parts.push(format!("server error: {}", one.line())),
             many => parts.push(format!("{} server errors", many.len())),
         }
+        match self.app_errors.as_slice() {
+            [] => {}
+            [one] => parts.push(crate::app_errors::summary(one)),
+            many => parts.push(format!(
+                "{} app errors, newest: {}",
+                many.len(),
+                crate::app_errors::summary(&many[many.len() - 1])
+            )),
+        }
+        let can_ask = self
+            .app_errors
+            .last()
+            .is_some_and(|t| t.written_for.is_some());
         if parts.is_empty() {
             return None;
         }
@@ -1950,7 +2069,18 @@ impl ThreadView {
                         .xsmall()
                         .text_color(cx.theme().danger),
                 )
-                .child(div().flex_1().child(parts.join(" · ")))
+                .child(div().flex_1().min_w_0().whitespace_normal().child(parts.join(" · ")))
+                .when(can_ask, |this| {
+                    this.child(
+                        Button::new("ask-app-error")
+                            .xsmall()
+                            .ghost()
+                            .icon(IconName::MessagesSquare)
+                            .label("Ask why")
+                            .tooltip("Ask the agent that wrote the failing line, as it was when it wrote it")
+                            .on_click(cx.listener(|this, _, window, cx| this.ask_about_app_error(window, cx))),
+                    )
+                })
                 .when(!self.server_errors.is_empty() && felagi_can_write(cx), |this| {
                     this.child(
                         Button::new("file-server-error")
@@ -1979,6 +2109,7 @@ impl ThreadView {
                                 browser.update(cx, |browser, cx| browser.dismiss_errors(cx));
                             }
                             this.server_errors.clear();
+                            this.app_errors.clear();
                             cx.notify();
                         })),
                 )

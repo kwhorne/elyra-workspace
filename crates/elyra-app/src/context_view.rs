@@ -125,6 +125,10 @@ pub struct ContextView {
     /// The project's .mcp.json and skills, shared with every agent.
     mcp_json: Option<crate::shared_setup::McpJson>,
     skills: Vec<crate::shared_setup::Skill>,
+    stack: crate::stack::Stack,
+    /// Framework guidelines in the instructions the agent reads, and their
+    /// size.
+    guidelines: Vec<(String, u64)>,
     /// The project's saved browser journeys.
     journeys: Vec<(std::path::PathBuf, Result<crate::journeys::Journey, String>)>,
     goal: Entity<TextareaState>,
@@ -235,6 +239,8 @@ impl ContextView {
             check_suggestion,
             mcp_json: None,
             skills: Vec::new(),
+            stack: Default::default(),
+            guidelines: Vec::new(),
             journeys: Vec::new(),
             goal,
             budget,
@@ -358,6 +364,15 @@ impl ContextView {
                 "Agent setup: system prompt, tools, instructions".into(),
                 setup,
             ));
+            for (what, tokens) in &self.guidelines {
+                legend = legend.child(
+                    div()
+                        .pl_5()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("of which {what}: about {}", format_tokens(*tokens))),
+                );
+            }
         }
         for (index, kind) in Kind::ALL.iter().enumerate() {
             let (tokens, count) = report.kinds[index];
@@ -485,6 +500,11 @@ impl ContextView {
         let path = self.session.read(cx).project.path.clone();
         self.mcp_json = crate::shared_setup::mcp_json(&path);
         self.skills = crate::shared_setup::skills(&path);
+        self.stack = crate::stack::detect(&path);
+        self.guidelines = crate::stack::guidelines(
+            &self.session.read(cx).working_dir(),
+            self.session.read(cx).thread.provider,
+        );
         self.journeys = crate::journeys::load_all(&self.session.read(cx).working_dir());
         cx.notify();
     }
@@ -608,12 +628,10 @@ impl ContextView {
     /// Give the project's .mcp.json servers to every agent, or stop.
     fn share_mcp_json(&mut self, share: bool, cx: &mut Context<Self>) {
         let project = self.session.read(cx).project.id;
-        let fingerprint = self.mcp_json.as_ref().map(|f| f.fingerprint.clone());
+        let file = self.mcp_json.clone();
         self.app.update(cx, |app, cx| {
-            match (share, fingerprint) {
-                (true, Some(fingerprint)) => {
-                    crate::shared_setup::allow(&app.store, project, &fingerprint)
-                }
+            match (share, file) {
+                (true, Some(file)) => crate::shared_setup::allow(&app.store, project, &file),
                 _ => crate::shared_setup::revoke(&app.store, project),
             }
             app.restart_agents_in(project, cx);
@@ -632,6 +650,8 @@ impl ContextView {
         let project = self.session.read(cx).project.id;
         let allowed = crate::shared_setup::allowed(&self.app.read(cx).store, project)
             .filter(|f| !f.is_empty());
+        let allowed_servers =
+            crate::shared_setup::allowed_servers(&self.app.read(cx).store, project);
         let mut section = v_flex()
             .gap_2()
             .child(
@@ -656,6 +676,17 @@ impl ContextView {
                 Ok(servers) => {
                     let shared = allowed.as_deref() == Some(file.fingerprint.as_str());
                     let changed = allowed.is_some() && !shared;
+                    let still_shared = servers
+                        .iter()
+                        .filter(|server| {
+                            crate::shared_setup::is_allowed(
+                                file,
+                                server,
+                                allowed.as_deref(),
+                                &allowed_servers,
+                            )
+                        })
+                        .count();
                     section = section.child(
                         div()
                             .text_sm()
@@ -663,6 +694,13 @@ impl ContextView {
                             .child(format!("MCP servers in .mcp.json ({})", servers.len())),
                     );
                     for server in servers {
+                        let waiting = changed
+                            && !crate::shared_setup::is_allowed(
+                                file,
+                                server,
+                                allowed.as_deref(),
+                                &allowed_servers,
+                            );
                         section = section.child(
                             h_flex()
                                 .gap_2()
@@ -672,6 +710,13 @@ impl ContextView {
                                         .font_weight(FontWeight::MEDIUM)
                                         .child(server.name.clone()),
                                 )
+                                .when(waiting, |this| {
+                                    this.child(
+                                        div()
+                                            .text_color(cx.theme().warning)
+                                            .child("new or changed"),
+                                    )
+                                })
                                 .child(
                                     div()
                                         .flex_1()
@@ -702,7 +747,13 @@ impl ContextView {
                     } else {
                         v_flex()
                             .gap_1()
-                            .child(muted(if changed {
+                            .child(muted(if changed && still_shared > 0 {
+                                format!(
+                                    "The file changed since you allowed it. The {still_shared} server{} that stayed the same {} still shared; allow the file to share the new or changed ones too.",
+                                    if still_shared == 1 { "" } else { "s" },
+                                    if still_shared == 1 { "is" } else { "are" }
+                                )
+                            } else if changed {
                                 "The file changed since you allowed it. Allow it again to keep sharing it.".into()
                             } else {
                                 "These commands come with the repository and run on this Mac. Allow them only if you trust it.".into()
@@ -732,6 +783,9 @@ impl ContextView {
                 names.join(", ")
             )
         }));
+        for hint in stack_hints(&self.stack) {
+            section = section.child(muted(hint));
+        }
         section.into_any_element()
     }
 
@@ -1357,8 +1411,53 @@ struct GroveInfo {
     mail: usize,
 }
 
+/// What to set up for the project's stack, or what is set up, in sentences.
+fn stack_hints(stack: &crate::stack::Stack) -> Vec<String> {
+    let mut hints = Vec::new();
+    if stack.laravel && !stack.boost {
+        hints.push("Laravel without Laravel Boost. Boost gives every agent the app's schema, logs and the Laravel docs for your versions: composer require laravel/boost --dev, then php artisan boost:install.".to_string());
+    } else if stack.boost && !stack.boost_mcp {
+        hints.push("Laravel Boost is installed, but its MCP server isn't in .mcp.json: run php artisan boost:install and choose Claude Code, and Elyra shares it with the other agents.".to_string());
+    }
+    if stack.boost_rules {
+        hints.push("Rules agents learn are kept in .ai/rules, Boost's project rules, for the files they apply to and shared with your team.".to_string());
+    }
+    if stack.elyra_app && !stack.elyra_mcp {
+        hints.push("An Elyra Framework app: rata ai:install adds the framework's guidelines, skills and its MCP server (rata mcp dev) for every agent.".to_string());
+    }
+    hints
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn says_what_to_set_up_for_the_stack() {
+        use crate::stack::Stack;
+        let laravel = Stack {
+            laravel: true,
+            ..Default::default()
+        };
+        assert!(super::stack_hints(&laravel)[0].contains("composer require laravel/boost --dev"));
+        let installed = Stack {
+            laravel: true,
+            boost: true,
+            boost_rules: true,
+            ..Default::default()
+        };
+        let hints = super::stack_hints(&installed);
+        assert!(hints[0].contains("isn't in .mcp.json") && hints[1].contains(".ai/rules"));
+        let done = Stack {
+            boost_mcp: true,
+            ..installed
+        };
+        assert_eq!(super::stack_hints(&done).len(), 1);
+        let elyra = Stack {
+            elyra_app: true,
+            ..Default::default()
+        };
+        assert!(super::stack_hints(&elyra)[0].contains("rata ai:install"));
+    }
+
     use super::parse_lsof;
 
     #[test]

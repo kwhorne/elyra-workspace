@@ -727,16 +727,18 @@ fn render_item(
         ItemContent::RuleProposal {
             rule,
             reason,
+            paths,
             outcome,
         } => {
             use elyra_core::RuleOutcome;
             let pending = outcome.is_none();
-            let file = crate::rules::instructions_file(&session.working_dir());
+            let dir = session.working_dir();
+            let file = crate::rules::destination(&dir, paths.as_deref());
             let file_name = file
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .into_owned();
+                .strip_prefix(&dir)
+                .unwrap_or(&file)
+                .display()
+                .to_string();
             let title = match outcome {
                 None => "Proposed rule".to_string(),
                 Some(RuleOutcome::File) => format!("Rule added to {file_name}"),
@@ -775,6 +777,15 @@ fn render_item(
                             .whitespace_normal()
                             .text_color(cx.theme().muted_foreground)
                             .child(format!("Learned from: {reason}")),
+                    )
+                })
+                .when_some(paths.clone(), |this, paths| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .child(format!("Applies to {paths}")),
                     )
                 });
             if pending {

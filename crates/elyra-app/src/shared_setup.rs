@@ -8,8 +8,11 @@
 //!
 //! `.mcp.json` comes with the repository and starts commands, so its servers
 //! are only passed on once the user allowed them for the project (Context
-//! tab); when the file changes, it has to be allowed again. Skills are only
-//! listed (name, description, path) for the agent to read when they apply.
+//! tab). Allowing remembers each server as it was: when the file changes
+//! (`php artisan boost:update` writes it again), the servers that are still
+//! the same stay shared and only new or changed ones wait to be allowed.
+//! Skills are only listed (name, description, path) for the agent to read
+//! when they apply.
 
 use elyra_core::{ProjectId, ProviderKind, Store};
 use elyra_provider::McpServer;
@@ -20,6 +23,9 @@ use std::path::{Path, PathBuf};
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectServer {
     pub name: String,
+    /// Of its name and its entry as written in the file, so a server that
+    /// stays the same when the file changes stays allowed.
+    pub fingerprint: String,
     /// The command line or address, for the user to judge.
     pub summary: String,
     pub server: McpServer,
@@ -81,6 +87,7 @@ fn parse_mcp_json(text: &str) -> Result<Vec<ProjectServer>, String> {
             server.env = pairs(&spec["env"]);
             out.push(ProjectServer {
                 name: name.clone(),
+                fingerprint: server_fingerprint(name, spec),
                 summary: std::iter::once(command)
                     .chain(args)
                     .collect::<Vec<_>>()
@@ -91,6 +98,7 @@ fn parse_mcp_json(text: &str) -> Result<Vec<ProjectServer>, String> {
             let url = expand(url);
             out.push(ProjectServer {
                 name: name.clone(),
+                fingerprint: server_fingerprint(name, spec),
                 summary: url.clone(),
                 server: McpServer::http(name, url, pairs(&spec["headers"])),
             });
@@ -98,6 +106,11 @@ fn parse_mcp_json(text: &str) -> Result<Vec<ProjectServer>, String> {
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+fn server_fingerprint(name: &str, spec: &Value) -> String {
+    // serde_json's maps are sorted, so the order in the file doesn't matter.
+    fingerprint(&format!("{name}\0{spec}"))
 }
 
 /// `${VAR}` and `${VAR:-default}` from the environment, as Claude Code does.
@@ -131,21 +144,70 @@ fn allowed_key(project: ProjectId) -> String {
     format!("mcp_json_allowed:{project}")
 }
 
+fn servers_key(project: ProjectId) -> String {
+    format!("mcp_json_servers:{project}")
+}
+
 /// The fingerprint of the `.mcp.json` the user allowed, if any.
 pub fn allowed(store: &Store, project: ProjectId) -> Option<String> {
     store.setting(&allowed_key(project)).ok().flatten()
 }
 
-pub fn allow(store: &Store, project: ProjectId, fingerprint: &str) {
-    if let Err(err) = store.set_setting(&allowed_key(project), fingerprint) {
+/// The fingerprints of the servers the user allowed.
+pub fn allowed_servers(store: &Store, project: ProjectId) -> Vec<String> {
+    store
+        .setting(&servers_key(project))
+        .ok()
+        .flatten()
+        .map(|list| {
+            list.split(',')
+                .filter(|f| !f.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Allow the file as it is now, and each of its servers.
+pub fn allow(store: &Store, project: ProjectId, file: &McpJson) {
+    let servers = file
+        .servers
+        .as_ref()
+        .map(|servers| {
+            servers
+                .iter()
+                .map(|s| s.fingerprint.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let saved = store
+        .set_setting(&allowed_key(project), &file.fingerprint)
+        .and_then(|()| store.set_setting(&servers_key(project), &servers));
+    if let Err(err) = saved {
         log::warn!("allowing .mcp.json: {err:#}");
     }
 }
 
 pub fn revoke(store: &Store, project: ProjectId) {
-    if let Err(err) = store.set_setting(&allowed_key(project), "") {
+    let saved = store
+        .set_setting(&allowed_key(project), "")
+        .and_then(|()| store.set_setting(&servers_key(project), ""));
+    if let Err(err) = saved {
         log::warn!("revoking .mcp.json: {err:#}");
     }
+}
+
+/// Whether the user allowed this server: the whole file as it is, or the
+/// server as it was when they allowed an earlier version of it.
+pub fn is_allowed(
+    file: &McpJson,
+    server: &ProjectServer,
+    allowed_file: Option<&str>,
+    allowed_servers: &[String],
+) -> bool {
+    allowed_file.is_some_and(|f| !f.is_empty() && f == file.fingerprint)
+        || allowed_servers.contains(&server.fingerprint)
 }
 
 /// The `.mcp.json` servers to give agents other than Claude Code: only when
@@ -154,12 +216,13 @@ pub fn servers_for(store: &Store, project: ProjectId, project_dir: &Path) -> Vec
     let Some(file) = mcp_json(project_dir) else {
         return Vec::new();
     };
-    if allowed(store, project).as_deref() != Some(file.fingerprint.as_str()) {
-        return Vec::new();
-    }
+    let allowed_file = allowed(store, project);
+    let allowed_servers = allowed_servers(store, project);
     file.servers
+        .clone()
         .unwrap_or_default()
         .into_iter()
+        .filter(|s| is_allowed(&file, s, allowed_file.as_deref(), &allowed_servers))
         .map(|s| s.server)
         .collect()
 }
@@ -381,6 +444,40 @@ mod tests {
         assert_eq!(expand("a ${UNSET_FOR_TEST} b ${"), "a  b ${");
         assert_eq!(fingerprint("x"), fingerprint("x"));
         assert_ne!(fingerprint("x"), fingerprint("y"));
+    }
+
+    #[test]
+    fn servers_that_stay_the_same_stay_allowed() {
+        let file = |text: &str| super::McpJson {
+            fingerprint: fingerprint(text),
+            servers: parse_mcp_json(text),
+        };
+        let boost = r#""laravel-boost": {"command": "php", "args": ["artisan", "boost:mcp"]}"#;
+        let first = file(&format!(r#"{{"mcpServers": {{{boost}}}}}"#));
+        let allowed: Vec<String> = first
+            .servers
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|s| s.fingerprint.clone())
+            .collect();
+        // boost:update writes the file again, with another server added.
+        let second = file(&format!(
+            r#"{{"mcpServers": {{"herd": {{"command": "herd", "args": ["mcp"]}}, {boost}}}}}"#
+        ));
+        let servers = second.servers.as_ref().unwrap();
+        let ok =
+            |i: usize| super::is_allowed(&second, &servers[i], Some(&first.fingerprint), &allowed);
+        assert_eq!(servers[0].name, "herd");
+        assert!(!ok(0), "the new server waits");
+        assert!(ok(1), "Boost's stays allowed");
+        assert!(super::is_allowed(
+            &second,
+            &servers[0],
+            Some(&second.fingerprint),
+            &[]
+        ));
+        assert!(!super::is_allowed(&second, &servers[1], Some(""), &[]));
     }
 
     #[test]

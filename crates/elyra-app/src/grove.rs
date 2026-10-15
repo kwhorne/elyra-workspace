@@ -134,10 +134,13 @@ pub fn cached_sites() -> Vec<Site> {
 }
 
 /// The site serving `dir`: the one whose folder is `dir` or holds it.
+/// Sites without a folder (a proxy to a port) serve none: an empty path
+/// would hold every folder.
 pub fn site_for(sites: &[Site], dir: &Path) -> Option<Site> {
     let dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
     sites
         .iter()
+        .filter(|site| site.path.is_absolute())
         .filter(|site| {
             let path = site
                 .path
@@ -274,7 +277,7 @@ pub enum Database {
 }
 
 /// `KEY=value` lines of a `.env` file (quotes removed; comments skipped).
-fn parse_env(text: &str) -> std::collections::HashMap<String, String> {
+pub fn parse_env(text: &str) -> std::collections::HashMap<String, String> {
     text.lines()
         .filter_map(|line| {
             let line = line.trim();
@@ -564,6 +567,9 @@ mod tests {
                 .is_app()
         );
         assert!(site_for(&sites, &PathBuf::from("/elsewhere")).is_none());
+        // A proxy to a port has no folder: it serves none, not every one.
+        let proxy = [site("storyboard", "", "proxy")];
+        assert!(site_for(&proxy, &PathBuf::from("/elsewhere")).is_none());
     }
 
     /// Against the Grove installed on this Mac: `cargo test -p elyra-app live_grove -- --ignored`.

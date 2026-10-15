@@ -9,6 +9,28 @@
   what it knew and decided then, and says if it would do it differently today.
   Agents can ask too, with the gateway's new `ask_author` tool. See
   [Ask why](docs/git-and-review.md#ask-why).
+- **Made for Laravel Boost.** See
+  [Laravel Boost](docs/context-and-goals.md#laravel-boost).
+  - The Context tab says whether Boost is set up, and what to run if it isn't.
+  - `php artisan boost:update` no longer stops sharing `.mcp.json`. Allowing
+    the file remembers each server, so the ones that stayed the same stay
+    shared, and only new or changed ones wait for you.
+  - New worktrees get what Git leaves out: `.env`, `.mcp.json`, the guideline
+    files and skills, and `vendor/` as an APFS clone. So `php artisan` and
+    Boost work there too.
+  - Rules agents learn go to Boost's `.ai/rules`, for the files they apply to,
+    along with its index. There is one rule book for your team.
+- **App errors lead to the instruction behind them.**
+  - When the Laravel app logs an error, the thread shows the line in your code
+    it failed on and the thread that wrote that line.
+  - **Ask why** asks that agent about it.
+  - Agents can look it up with the new `error_origin` tool.
+- **Reviews know the tools.** A second opinion is told about Boost's tools, or
+  `rata mcp dev` in an Elyra Framework app. The context inspector shows how much
+  of the agent's setup Boost's guidelines take.
+- **Fix:** a Grove site without a folder (a proxy to a port) no longer counts as
+  serving every folder. Before, a new worktree in a project outside Grove could
+  be made as a Grove branch of that site.
 
 ## 1.12.1
 

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Scenarios never reach the Grove on this Mac: it would serve, copy
+# databases and make worktrees for real.
+echo '{"ok": false, "error": "Grove is not available in scenarios"}'
+exit 1

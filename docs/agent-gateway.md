@@ -16,6 +16,7 @@ token, and every call is written to an audit log. The address is shown in
 | `symbols` | Where a function, method, class or type is defined and who calls it, from a tree-sitter index of the project (Rust, TypeScript, JavaScript, Python, Go, PHP, C); in the agent's own folder, or a named project or thread | ✓ |
 | `why` | Why a line is there: the thread and message that had an agent write it, when, what the agent said afterwards, and whether a person has read it, plus git blame | ✓ |
 | `ask_author` | Ask the agent that wrote a line why: a read-only side chat with that agent (same provider and model) picked up where the turn that wrote it ended, with what the turn changed and the code around the line now; waits for its answer and returns it ([Ask why](git-and-review.md#ask-why)) | |
+| `error_origin` | The Laravel app's latest logged errors, each with the line in the app's own code it failed on and the instruction that had an agent write it ([Laravel Boost](context-and-goals.md#laravel-boost)) | ✓ |
 | `history` | The turns that wrote a file or a symbol (thread, message, agent, date), newest first, plus the file's git log | ✓ |
 | `intent_board` | What other agents changed in the same repository during the last hour: thread, agent, same folder or another branch, file and the functions they changed (see [Agents side by side](projects-and-threads.md#agents-side-by-side)) | ✓ |
 | `undo_instruction` | Take back one earlier instruction in a thread: what its turn changed is undone, later work stays, and files that changed again are listed ([Undo an instruction](chat.md#undo-an-instruction)) | |
@@ -52,7 +53,7 @@ token, and every call is written to an audit log. The address is shown in
 Projects can be named by id, name or path. A thread can't wait for, interrupt or
 archive itself.
 
-`why`, `history` and `ask_author` work from what Elyra Workspace records after every turn:
+`why`, `history`, `error_origin` and `ask_author` work from what Elyra Workspace records after every turn:
 the lines the turn added, with its thread and message. That covers every agent,
 also when it committed on its own; lines written by hand or before the record
 started have git's blame and log only. The record stays on this Mac (in Elyra

@@ -519,9 +519,7 @@ impl Workspace {
                                     }
                                 }
                                 crate::changes_view::ChangesEvent::Asked(chat) => {
-                                    if this.thread_view(*chat, window, cx).is_some() {
-                                        this.show_right_tab(RightTab::SideChat, window, cx);
-                                    }
+                                    this.show_side_chat(*chat, window, cx);
                                 }
                             }
                         },
@@ -2011,7 +2009,16 @@ impl Workspace {
                 return;
             }
         };
-        let prompt = review_prompt(author.label(), request, diff);
+        let mut prompt = review_prompt(author.label(), request, diff);
+        let (project, dir) = {
+            let session = session.read(cx);
+            (session.project.id, session.project.path.clone())
+        };
+        if let Some(hint) =
+            crate::stack::tools_hint(&self.app.read(cx).store, project, &dir, provider)
+        {
+            prompt.push_str(&format!("\n\n{hint}"));
+        }
         session.update(cx, |session, cx| {
             session.submit(elyra_provider::Prompt::text(prompt), cx)
         });
@@ -2063,6 +2070,18 @@ impl Workspace {
             .filter(|t| t.parent_id == Some(parent))
             .max_by_key(|t| t.created_at)
             .map(|t| t.id)
+    }
+
+    /// Open a side chat that was just made in the side chat tab.
+    pub(crate) fn show_side_chat(
+        &mut self,
+        id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread_view(id, window, cx).is_some() {
+            self.show_right_tab(RightTab::SideChat, window, cx);
+        }
     }
 
     fn on_new_side_chat(&mut self, _: &NewSideChat, window: &mut Window, cx: &mut Context<Self>) {

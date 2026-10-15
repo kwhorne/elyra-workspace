@@ -367,6 +367,51 @@ def an_allowed_mcp_json_reaches_other_agents(world, project):
     expect("probe" in reply and "elyra" in reply, reply[-200:])
 
 
+@scenario(files={".mcp.json": MCP_JSON}, allow_mcp_json=True)
+def servers_that_stay_the_same_stay_allowed(world, project):
+    # Allowing remembers each server; boost:update writing the file again
+    # with one more server keeps the others shared.
+    with world.db() as db:
+        project_id = db.execute("SELECT id FROM projects WHERE name = ?", (project,)).fetchone()[0]
+        spec = json.loads(MCP_JSON)["mcpServers"]["probe"]
+        entry = "probe\0" + json.dumps(spec, separators=(",", ":"), sort_keys=True)
+        db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                   (f"mcp_json_servers:{project_id}", fnv1a(entry.encode())))
+    path = world.projects[project]["path"]
+    servers = json.loads(MCP_JSON)
+    servers["mcpServers"]["fresh"] = {"command": "/bin/echo"}
+    with open(os.path.join(path, ".mcp.json"), "w") as f:
+        json.dump(servers, f, indent=4)
+    thread = world.new_thread(project, "[mcp] Which servers?")
+    reply = world.wait(thread, 30)
+    expect("probe" in reply and "fresh" not in reply, "the unchanged one only: " + reply[-200:])
+
+
+@scenario(files={"composer.json": '{"require": {"laravel/framework": "^13.0"}}', "artisan": ""})
+def a_worktree_gets_what_git_leaves_out(world, project):
+    path = world.projects[project]["path"]
+    with open(os.path.join(path, ".gitignore"), "a") as f:
+        f.write(".env\nvendor/\n")
+    with open(os.path.join(path, ".env"), "w") as f:
+        f.write("APP_ENV=local\n")
+    os.makedirs(os.path.join(path, "vendor"))
+    with open(os.path.join(path, "vendor", "autoload.php"), "w") as f:
+        f.write("<?php\n")
+    subprocess.run(["git", "-c", "user.email=s@s", "-c", "user.name=s", "commit", "-qam", "ignore"],
+                   cwd=path, check=True)
+    text = world.tool("create_thread", project=project, prompt="[talk]", provider="acp", worktree=True)
+    thread = json.loads(text)["thread_id"]
+    world.wait(thread, 60)
+    with world.db() as db:
+        environment = db.execute("SELECT environment FROM threads WHERE id = ?", (thread,)).fetchone()[0]
+    worktree = json.loads(environment).get("path")
+    expect(worktree and worktree != path, f"a worktree: {environment}")
+    expect(os.path.isfile(os.path.join(worktree, ".env")), "the .env came along")
+    expect(os.path.isfile(os.path.join(worktree, "vendor", "autoload.php")), "and vendor/")
+    notices = [i["text"] for i in world.items(thread) if i["kind"] == "notice"]
+    expect(any(n.startswith("Copied into the worktree") and ".env" in n for n in notices), str(notices))
+
+
 @scenario(files={".mcp.json": MCP_JSON})
 def an_mcp_json_nobody_allowed_is_not_passed_on(world, project):
     thread = world.new_thread(project, "[mcp] Which servers?")
@@ -513,6 +558,27 @@ def the_agent_that_wrote_a_line_says_why(world, project):
         "name": "ask_author", "arguments": {"path": "lib.rs", "line": 1, "project": project}}})
     text = by_hand["result"]["content"][0]["text"]
     expect(by_hand["result"]["isError"] and "no agent in Elyra Workspace is recorded" in text, text)
+
+
+@scenario(files={"composer.json": "{}"})
+def app_errors_lead_back_to_the_instruction(world, project):
+    path = world.projects[project]["path"]
+    os.makedirs(os.path.join(path, "app"))
+    os.makedirs(os.path.join(path, "storage", "logs"))
+    thread = world.new_thread(project, "[write app/Cart.php] return $item['price'];")
+    world.wait(thread, 30)
+    world.tool("set_thread_title", thread_id=thread, title="Cart prices")
+    time.sleep(1.5)  # the turn's lines are recorded after it ends
+    log = ('[2026-10-15 12:00:02] local.ERROR: Undefined array key "price" {"exception":"[object] '
+           '(ErrorException(code: 0): Undefined array key \\"price\\" at /var/www/html/app/Cart.php:1)\n'
+           '[stacktrace]\n#0 /var/www/html/vendor/laravel/framework/src/X.php(9): x()\n'
+           '#1 /var/www/html/app/Cart.php(1): y()\n"}\n')
+    with open(os.path.join(path, "storage", "logs", "laravel.log"), "w") as f:
+        f.write(log)
+    text = world.tool("error_origin", project=project)
+    expect('ERROR: Undefined array key "price"' in text, text)
+    expect("Failing line in the app's code: app/Cart.php:1:" in text, "found from the container's path: " + text)
+    expect("Written by the agent in “Cart prices”" in text and "[write app/Cart.php]" in text, text)
 
 
 @scenario(files={"lib.rs": RUST})
