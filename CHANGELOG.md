@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.12.1
+
+A clearer sidebar.
+
+- **Projects and threads tell apart at a glance.** Projects read as headings,
+  and their threads hang off them along a guide line in softer text. Unread
+  threads stay bold and the selected one keeps its highlight.
+
 ## 1.12.0
 
 A branch can read as the story of what was asked: one commit per instruction.
