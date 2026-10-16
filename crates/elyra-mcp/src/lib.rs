@@ -51,9 +51,27 @@ impl From<&str> for Output {
 /// Who is calling, as decided by [`Handler::authorize`].
 pub type Principal = String;
 
+/// How the server introduces itself in `initialize`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ServerInfo {
+    pub name: String,
+    pub version: String,
+    /// Told to the agent: what this server is for.
+    pub instructions: String,
+}
+
 pub trait Handler: Send + Sync + 'static {
     /// Map a bearer token to a caller, or refuse it.
     fn authorize(&self, token: &str) -> Option<Principal>;
+    /// The server's name and instructions; Elyra Workspace's by default.
+    fn info(&self) -> ServerInfo {
+        ServerInfo {
+            name: "elyra-workspace".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            instructions: "Elyra Workspace: list, read, create and steer coding-agent threads."
+                .into(),
+        }
+    }
     fn tools(&self, principal: &Principal) -> Vec<Tool>;
     /// Run a tool. `Ok` text is the result; `Err` text is reported to the
     /// model as a tool error.
@@ -227,12 +245,15 @@ pub fn handle(handler: &dyn Handler, principal: &Principal, message: &Value) -> 
     let id = message.get("id").filter(|id| !id.is_null())?.clone();
     let params = &message["params"];
     let result = match message["method"].as_str().unwrap_or("") {
-        "initialize" => Ok(json!({
-            "protocolVersion": params["protocolVersion"].as_str().unwrap_or(PROTOCOL_VERSION),
-            "capabilities": { "tools": { "listChanged": false } },
-            "serverInfo": { "name": "elyra-workspace", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "Elyra Workspace: list, read, create and steer coding-agent threads."
-        })),
+        "initialize" => {
+            let info = handler.info();
+            Ok(json!({
+                "protocolVersion": params["protocolVersion"].as_str().unwrap_or(PROTOCOL_VERSION),
+                "capabilities": { "tools": { "listChanged": false } },
+                "serverInfo": { "name": info.name, "version": info.version },
+                "instructions": info.instructions
+            }))
+        }
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({
             "tools": handler
@@ -430,6 +451,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(init["result"]["protocolVersion"], "2025-03-26");
+        assert_eq!(init["result"]["serverInfo"]["name"], "elyra-workspace");
         assert_eq!(
             call(
                 &url,
@@ -621,5 +643,36 @@ mod tests {
         let allowed = handle(&handler, &"writer".to_string(), &write).unwrap();
         assert_eq!(allowed["result"]["content"][0]["text"], "write");
         assert_eq!(handler.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_handler_names_itself() {
+        struct Named;
+        impl Handler for Named {
+            fn authorize(&self, _: &str) -> Option<Principal> {
+                Some("p".into())
+            }
+            fn info(&self) -> ServerInfo {
+                ServerInfo {
+                    name: "huskarl".into(),
+                    version: "0.1.0".into(),
+                    instructions: "Your tools.".into(),
+                }
+            }
+            fn tools(&self, _: &Principal) -> Vec<Tool> {
+                Vec::new()
+            }
+            fn call(&self, _: &Principal, _: &str, _: Value) -> Result<Output, String> {
+                Err("none".into())
+            }
+        }
+        let reply = handle(
+            &Named,
+            &"p".to_string(),
+            &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+        )
+        .unwrap();
+        assert_eq!(reply["result"]["serverInfo"]["name"], "huskarl");
+        assert_eq!(reply["result"]["instructions"], "Your tools.");
     }
 }
