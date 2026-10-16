@@ -644,6 +644,7 @@ impl ThreadSession {
                 }
                 servers
             },
+            ..SessionConfig::default()
         };
         let (session, events) = elyra_provider::start_session(self.thread.provider, config)?;
         self.provider = Some(session);

@@ -10,6 +10,7 @@ license = "MIT"
 authors = ["kwhorne <kh@gets.no>"]
 
 [workspace.dependencies]
+elyra-agent-types = { path = "crates/elyra-agent-types" }
 elyra-core = { path = "crates/elyra-core" }
 elyra-provider = { path = "crates/elyra-provider" }
 elyra-git = { path = "crates/elyra-git" }

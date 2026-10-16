@@ -137,9 +137,14 @@ Extend these when an adapter handles new messages.
 crates/
 ├── elyra-core      domain model, SQLite store and migrations, orchestration records
 │                   (automations, tasks, MCP clients, audit log), schedules, data paths
+├── elyra-agent-types  provider kinds, permission modes, questions and approvals,
+│                   shared by elyra-core and elyra-provider (re-exported by elyra-core)
 ├── elyra-provider  AgentSession trait and provider-neutral events; adapters for
 │                   Claude Code, Codex (app-server), Elyra/Pi (RPC) and ACP agents;
-│                   Claude Code and Codex history import
+│                   optional launcher, clean environment and extra arguments per
+│                   session; Claude Code and Codex history import (feature `history`,
+│                   on by default, the only part that needs elyra-core).
+│                   Also used by Huskarl, so it must not depend on elyra-core or GPUI
 ├── elyra-git       git and gh CLI wrappers: status, diffs, staging, branches, sync,
 │                   worktrees, checkpoints, pull requests, review inbox
 ├── elyra-terminal  PTY and VT emulation (alacritty_terminal): snapshots, keys, mouse,

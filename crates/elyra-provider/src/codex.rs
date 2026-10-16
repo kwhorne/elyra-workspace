@@ -17,7 +17,7 @@ use crate::{
     SessionConfig, Usage,
 };
 use anyhow::{Result, anyhow};
-use elyra_core::PermissionMode;
+use elyra_agent_types::PermissionMode;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -258,6 +258,7 @@ impl CodexSession {
             &args,
             &config.cwd,
             &envs,
+            &crate::process::Launch::of(&config),
             move |message| handle_message(message, &reader_state, &reader_writer),
             |_| {},
         )?;
@@ -858,7 +859,7 @@ fn handle_notification(
             if state.plan.as_ref() != Some(&input) {
                 state.plan = Some(input.clone());
                 events.push(ProviderEvent::ToolUse {
-                    tool_use_id: format!("plan-{}", elyra_core::new_id().simple()),
+                    tool_use_id: format!("plan-{}", uuid::Uuid::now_v7().simple()),
                     name: "TodoWrite".into(),
                     input,
                     parent_tool_use_id: None,
@@ -1113,6 +1114,7 @@ mod tests {
                 token: "secret".into(),
                 ..Default::default()
             }],
+            ..SessionConfig::default()
         };
         let (session, rx) = CodexSession::start(config).unwrap();
         session.send(&Prompt::text("run ls")).unwrap();

@@ -12,7 +12,7 @@ use crate::{
     SessionConfig, SlashCommand, Usage,
 };
 use anyhow::{Result, anyhow};
-use elyra_core::PermissionMode;
+use elyra_agent_types::PermissionMode;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -155,6 +155,7 @@ impl ClaudeSession {
             &args,
             &config.cwd,
             &envs,
+            &crate::process::Launch::of(&config),
             move |value| parser.handle(value),
             move |event| match event {
                 ProviderEvent::PermissionRequest(request) => {

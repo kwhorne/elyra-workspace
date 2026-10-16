@@ -12,7 +12,7 @@ use crate::{
     Usage,
 };
 use anyhow::{Result, anyhow};
-use elyra_core::PermissionMode;
+use elyra_agent_types::PermissionMode;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -168,6 +168,7 @@ impl ElyraSession {
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect::<Vec<_>>(),
+            &crate::process::Launch::of(&config),
             move |value| parser.handle(value),
             |_| {},
         )?;

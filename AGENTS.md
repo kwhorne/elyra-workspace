@@ -9,7 +9,8 @@ See docs/development.md for the crate map, checks and the release process.
   `MIGRATIONS` in `store.rs` plus its fingerprint in `RELEASED` (the failing
   test prints it); never edit a released migration.
 - `elyra-provider`: each adapter owns its wire protocol and emits provider-neutral
-  `ProviderEvent`s. Do not leak Claude-specific JSON into the app crate.
+  `ProviderEvent`s. Do not leak Claude-specific JSON into the app crate. Huskarl uses
+  it too: outside the `history` feature it depends only on `elyra-agent-types`.
 - `elyra-git` shells out to `git` so the user's config, hooks and credentials apply.
 - `elyra-terminal` is UI-agnostic; GPUI painting lives in `elyra-app/src/terminal_view.rs`.
 - UI uses `gpui-kit` (GPUI + gpui-component). Reuse its components and theme tokens

@@ -9,6 +9,25 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+/// How an agent process is started beyond its own command line, from
+/// [`crate::SessionConfig`].
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Launch {
+    pub launcher: Option<(PathBuf, Vec<String>)>,
+    pub clear_env: bool,
+    pub extra_args: Vec<String>,
+}
+
+impl Launch {
+    pub(crate) fn of(config: &crate::SessionConfig) -> Self {
+        Self {
+            launcher: config.launcher.clone(),
+            clear_env: config.clear_env,
+            extra_args: config.extra_args.clone(),
+        }
+    }
+}
+
 pub(crate) struct JsonlProcess {
     stdin: Mutex<Option<ChildStdin>>,
     child: Mutex<Child>,
@@ -45,6 +64,7 @@ impl JsonlProcess {
         args: &[String],
         cwd: &Path,
         envs: &[(&str, &str)],
+        launch: &Launch,
         mut parse: P,
         on_event: F,
     ) -> Result<(Arc<Self>, async_channel::Receiver<ProviderEvent>)>
@@ -52,13 +72,24 @@ impl JsonlProcess {
         P: FnMut(&Value) -> Vec<ProviderEvent> + Send + 'static,
         F: Fn(&ProviderEvent) + Send + 'static,
     {
-        let mut command = Command::new(executable);
+        let mut command = match &launch.launcher {
+            Some((launcher, prefix)) => {
+                let mut command = Command::new(launcher);
+                command.args(prefix).arg(executable);
+                command
+            }
+            None => Command::new(executable),
+        };
         command
             .current_dir(cwd)
             .args(args)
+            .args(&launch.extra_args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if launch.clear_env {
+            command.env_clear();
+        }
         for (key, value) in envs {
             command.env(key, value);
         }
@@ -183,5 +214,59 @@ pub(crate) fn text_of(content: &Value) -> String {
             .join("\n"),
         Value::Null => String::new(),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What the child saw, printed as one JSON line by a shell.
+    fn spawn_and_read(launch: &Launch, envs: &[(&str, &str)]) -> Value {
+        let script = r#"printf '{"home":"%s","given":"%s","launched":"%s","args":"%s"}\n' "$HOME" "$GIVEN" "$LAUNCHED" "$*""#;
+        let args = vec!["-c".to_string(), script.to_string(), "sh".to_string()];
+        let (_process, rx) = JsonlProcess::spawn(
+            Path::new("/bin/sh"),
+            &args,
+            Path::new("/"),
+            envs,
+            launch,
+            |value| {
+                vec![ProviderEvent::Notice {
+                    text: value.to_string(),
+                    is_error: false,
+                }]
+            },
+            |_| {},
+        )
+        .unwrap();
+        loop {
+            match rx.recv_blocking().unwrap() {
+                ProviderEvent::Notice { text, .. } => return serde_json::from_str(&text).unwrap(),
+                ProviderEvent::Exited { .. } => panic!("no output"),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn inherits_the_environment_by_default() {
+        let seen = spawn_and_read(&Launch::default(), &[("GIVEN", "yes")]);
+        assert_eq!(seen["given"], "yes");
+        assert_ne!(seen["home"], "", "HOME should be inherited");
+    }
+
+    #[test]
+    fn launcher_wraps_the_agent_with_a_clean_environment_and_extra_args() {
+        let launch = Launch {
+            launcher: Some((PathBuf::from("/usr/bin/env"), vec!["LAUNCHED=1".into()])),
+            clear_env: true,
+            extra_args: vec!["--tools".into(), "a,b".into()],
+        };
+        let seen = spawn_and_read(&launch, &[("GIVEN", "yes")]);
+        assert_eq!(seen["home"], "", "nothing inherited");
+        assert_eq!(seen["given"], "yes");
+        assert_eq!(seen["launched"], "1");
+        assert_eq!(seen["args"], "--tools a,b");
     }
 }

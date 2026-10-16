@@ -4,8 +4,10 @@
 
 pub mod acp;
 pub mod claude;
+#[cfg(feature = "history")]
 pub mod claude_history;
 pub mod codex;
+#[cfg(feature = "history")]
 pub mod codex_history;
 pub mod elyra;
 mod events;
@@ -14,10 +16,10 @@ mod process;
 pub use events::*;
 
 use anyhow::Result;
-use elyra_core::{PermissionMode, ProviderKind};
+use elyra_agent_types::{PermissionMode, ProviderKind};
 use std::path::PathBuf;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SessionConfig {
     pub cwd: PathBuf,
     /// Model id; `None` uses the provider default.
@@ -38,6 +40,15 @@ pub struct SessionConfig {
     pub append_system_prompt: Option<String>,
     /// MCP servers to give the agent (providers that support MCP).
     pub mcp_servers: Vec<McpServer>,
+    /// Arguments added after the adapter's own, for any provider (such as
+    /// Elyra's `--tools`).
+    pub extra_args: Vec<String>,
+    /// Start the agent through another program: `launcher args… <agent>
+    /// <agent args…>`, such as `sandbox-exec -f <profile>`.
+    pub launcher: Option<(PathBuf, Vec<String>)>,
+    /// Start the agent from an empty environment, so only `env` (and what the
+    /// adapter sets) reaches it rather than everything the app inherited.
+    pub clear_env: bool,
 }
 
 /// An MCP server reachable over HTTP, with a stdio bridge command for

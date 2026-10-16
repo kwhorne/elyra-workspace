@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use elyra_core::{Question, QuestionAnswer, QuestionKind, QuestionOption, QuestionRequest};
+pub use elyra_agent_types::{
+    Question, QuestionAnswer, QuestionKind, QuestionOption, QuestionRequest,
+};
 
 /// Provider-neutral events emitted by a running session. Adapters translate
 /// their wire protocol into these; the app never sees provider JSON.

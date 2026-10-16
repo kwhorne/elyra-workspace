@@ -1,0 +1,10 @@
+[package]
+name = "elyra-agent-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Agent kinds, permission modes, questions and approvals shared by Elyra's agent adapters and the apps that use them"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

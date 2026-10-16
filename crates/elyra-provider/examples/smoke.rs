@@ -4,7 +4,7 @@
 //! Prints every provider event; auto-allows permission requests and answers
 //! questions with the first option.
 
-use elyra_core::{PermissionMode, ProviderKind, QuestionAnswer};
+use elyra_agent_types::{PermissionMode, ProviderKind, QuestionAnswer};
 use elyra_provider::{PermissionResponse, Prompt, ProviderEvent, SessionConfig};
 use std::path::PathBuf;
 
@@ -46,6 +46,7 @@ fn main() -> anyhow::Result<()> {
                 }],
                 _ => Vec::new(),
             },
+            ..SessionConfig::default()
         },
     )?;
     session.send(&Prompt::text(prompt))?;

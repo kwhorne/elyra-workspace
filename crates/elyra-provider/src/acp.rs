@@ -15,7 +15,7 @@ use crate::{
     ProviderEvent, QuestionAnswer, SessionConfig, SlashCommand, Usage,
 };
 use anyhow::{Result, anyhow};
-use elyra_core::{PermissionMode, ProviderKind};
+use elyra_agent_types::{PermissionMode, ProviderKind};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -296,6 +296,7 @@ impl AcpSession {
             &args,
             &config.cwd,
             &envs,
+            &crate::process::Launch::of(&config),
             move |message| handle_message(message, &reader_state, &reader_writer),
             |_| {},
         )?;
@@ -896,7 +897,7 @@ fn handle_update(state: &mut State, update: &Value, events: &mut Vec<ProviderEve
                 flush_text(state, events);
                 state.plan = Some(input.clone());
                 events.push(ProviderEvent::ToolUse {
-                    tool_use_id: format!("plan-{}", elyra_core::new_id().simple()),
+                    tool_use_id: format!("plan-{}", uuid::Uuid::now_v7().simple()),
                     name: "TodoWrite".into(),
                     input,
                     parent_tool_use_id: None,
@@ -1157,6 +1158,7 @@ mod tests {
             fork: false,
             append_system_prompt: Some("Use tabs, not spaces.".into()),
             mcp_servers: Vec::new(),
+            ..SessionConfig::default()
         };
         let (session, rx) = AcpSession::start(ProviderKind::CustomAcp, config).unwrap();
         // Prompts sent before the session exists are queued.
