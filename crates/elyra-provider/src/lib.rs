@@ -53,6 +53,10 @@ pub struct SessionConfig {
     /// without `--allow-dangerously-skip-permissions`, so Full access cannot
     /// be switched on later (for hosts that decide every tool themselves).
     pub no_full_access: bool,
+    /// ACP: offer the agent no file access through the client. The adapter
+    /// serves `fs/*` in the host's own process, outside any sandbox the agent
+    /// runs in, so a confined agent must not get it.
+    pub no_client_fs: bool,
 }
 
 /// An MCP server reachable over HTTP, with a stdio bridge command for

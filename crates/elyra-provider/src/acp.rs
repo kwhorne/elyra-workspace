@@ -103,6 +103,8 @@ struct State {
     mcp_servers: Vec<crate::McpServer>,
     /// The agent accepts HTTP MCP servers (else stdio bridges are used).
     mcp_http: bool,
+    /// `fs/*` is offered and served.
+    client_fs: bool,
     /// Elyra's instructions for the agent (project instructions, debug mode,
     /// skills). ACP has no system prompt, so they lead the first prompt of a
     /// new session.
@@ -278,12 +280,14 @@ impl AcpSession {
             plan: None,
             mcp_servers: config.mcp_servers.clone(),
             mcp_http: false,
+            client_fs: !config.no_client_fs,
             instructions: config
                 .append_system_prompt
                 .clone()
                 .filter(|text| !text.trim().is_empty()),
             instructions_due: false,
         }));
+        let client_fs = !config.no_client_fs;
         let writer: Writer = Arc::new(Mutex::new(None));
         let (reader_state, reader_writer) = (state.clone(), writer.clone());
         let envs: Vec<(&str, &str)> = config
@@ -307,7 +311,7 @@ impl AcpSession {
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
                 "clientCapabilities": {
-                    "fs": { "readTextFile": true, "writeTextFile": true },
+                    "fs": { "readTextFile": client_fs, "writeTextFile": client_fs },
                     "terminal": false
                 },
                 "clientInfo": { "name": "elyra-workspace", "version": env!("CARGO_PKG_VERSION") }
@@ -1043,6 +1047,9 @@ fn handle_request(
                 suggestions: Value::Array(options),
             }));
         }
+        "fs/read_text_file" | "fs/write_text_file" if !state.client_fs => {
+            outgoing.push(fail(-32601, format!("{method} is not offered")));
+        }
         "fs/read_text_file" => {
             let file = state.cwd.join(params["path"].as_str().unwrap_or(""));
             let path = file.display();
@@ -1137,6 +1144,42 @@ mod tests {
             Some("bypassPermissions")
         );
         assert_eq!(mode_for(&["code".to_string()], PermissionMode::Plan), None);
+    }
+
+    #[test]
+    fn without_client_fs_the_agent_reads_nothing_through_the_host() {
+        let dir = std::env::temp_dir().join(format!("elyra-acp-nofs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("mock_agent.py");
+        std::fs::write(&script, MOCK_AGENT).unwrap();
+        std::fs::write(dir.join("notes.txt"), "line one\nline two\n").unwrap();
+        let config = SessionConfig {
+            cwd: dir.clone(),
+            executable: Some("python3".into()),
+            args: vec![script.display().to_string()],
+            no_client_fs: true,
+            ..SessionConfig::default()
+        };
+        let (session, rx) = AcpSession::start(ProviderKind::CustomAcp, config).unwrap();
+        session.send(&Prompt::text("read notes")).unwrap();
+        let mut seen = Vec::new();
+        let request = wait_for(&rx, &mut seen, |e| match e {
+            ProviderEvent::PermissionRequest(r) => Some(r.clone()),
+            _ => None,
+        });
+        session
+            .respond_permission(&request.request_id, PermissionResponse::Allow)
+            .unwrap();
+        let reply = wait_for(&rx, &mut seen, |e| match e {
+            ProviderEvent::AssistantText { text, .. } => Some(text.clone()),
+            _ => None,
+        });
+        assert!(
+            reply.starts_with("refused: fs/read_text_file is not offered"),
+            "{reply}"
+        );
+        session.shutdown();
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

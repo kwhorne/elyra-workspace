@@ -66,6 +66,10 @@ def prompt(rid, params):
             update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "failed"})
             return send({"id": rid, "result": {"stopReason": "cancelled"}})
         content = request("fs/read_text_file", {"sessionId": sid, "path": path, "line": 2, "limit": 1})
+        if "error" in content:
+            update(sid, {"sessionUpdate": "agent_message_chunk", "content": {
+                "type": "text", "text": "refused: " + content["error"]["message"]}})
+            return send({"id": rid, "result": {"stopReason": "end_turn"}})
         line = content["result"]["content"]
         update(sid, {"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "completed",
                      "content": [{"type": "content", "content": {"type": "text", "text": "read 1 line"}}]})
