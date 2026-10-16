@@ -91,11 +91,13 @@ impl ClaudeSession {
             "--include-partial-messages",
             "--permission-prompt-tool",
             "stdio",
-            // Makes Full access selectable later without enabling it now.
-            "--allow-dangerously-skip-permissions",
         ]
         .map(str::to_string)
         .into();
+        if !config.no_full_access {
+            // Makes Full access selectable later without enabling it now.
+            args.push("--allow-dangerously-skip-permissions".into());
+        }
         if let Some(model) = config.model.as_deref().filter(|m| !m.is_empty()) {
             args.extend(["--model".into(), model.into()]);
         }

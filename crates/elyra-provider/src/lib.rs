@@ -49,6 +49,10 @@ pub struct SessionConfig {
     /// Start the agent from an empty environment, so only `env` (and what the
     /// adapter sets) reaches it rather than everything the app inherited.
     pub clear_env: bool,
+    /// Never let the session bypass permission checks: Claude Code starts
+    /// without `--allow-dangerously-skip-permissions`, so Full access cannot
+    /// be switched on later (for hosts that decide every tool themselves).
+    pub no_full_access: bool,
 }
 
 /// An MCP server reachable over HTTP, with a stdio bridge command for
