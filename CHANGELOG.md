@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.13.1
+
+Under the hood: the agent adapters now stand on their own, so other Elyra
+apps can use them. Nothing changes in how Elyra Workspace works.
+
+- **Shared with other Elyra apps.** The provider adapters no longer need the
+  workspace's own model: the types they share live in a small crate of their
+  own. A host can start an agent through a launcher (such as a sandbox), give
+  it only the environment it names, keep Claude Code from switching on Full
+  access, or withhold an ACP agent's file access. Elyra Workspace keeps its
+  defaults.
+- **Attachments are kept with a message.** A message can now carry attachments
+  as copies kept with the thread, ready for what comes next.
+
 ## 1.13.0
 
 Ask the agent that wrote a line why, and Laravel Boost made part of the workspace: one
