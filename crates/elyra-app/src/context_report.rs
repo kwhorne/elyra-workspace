@@ -244,6 +244,7 @@ mod tests {
         item(ItemContent::User {
             text: text.into(),
             checkpoint: None,
+            attachments: Vec::new(),
         })
     }
 

@@ -39,6 +39,7 @@ pub fn timeline(
             if let ItemContent::User {
                 text,
                 checkpoint: Some(checkpoint),
+                ..
             } = &item.content
                 && checks::fix_prompt_label(text).is_none()
             {

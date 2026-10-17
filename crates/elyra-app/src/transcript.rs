@@ -464,7 +464,9 @@ fn render_item(
                 })
                 .into_any_element()
         }
-        ItemContent::User { text, checkpoint } => {
+        ItemContent::User {
+            text, checkpoint, ..
+        } => {
             let long = text.lines().count() > COLLAPSE_USER_LINES || text.len() > 2400;
             let open = expanded.contains(&id);
             let shown = if long && !open {
@@ -2254,6 +2256,7 @@ mod tests {
             item(ItemContent::User {
                 text: "Fix it".into(),
                 checkpoint: None,
+                attachments: Vec::new(),
             }),
             call("task", None),
             call("inner", Some("task")),

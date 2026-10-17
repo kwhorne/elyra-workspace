@@ -157,6 +157,7 @@ fn items_for(item: &Value) -> Vec<ItemContent> {
                 vec![ItemContent::User {
                     text,
                     checkpoint: None,
+                    attachments: Vec::new(),
                 }]
             }
         }

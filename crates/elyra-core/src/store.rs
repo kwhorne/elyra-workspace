@@ -1255,7 +1255,8 @@ mod tests {
                 store.transcript(thread).unwrap()[0].content,
                 ItemContent::User {
                     text: "hi".into(),
-                    checkpoint: None
+                    checkpoint: None,
+                    attachments: Vec::new(),
                 },
                 "from version {version}"
             );
@@ -1322,6 +1323,7 @@ mod tests {
                 ItemContent::User {
                     text: "hi".into(),
                     checkpoint: None,
+                    attachments: Vec::new(),
                 },
             )
             .unwrap();
@@ -1558,6 +1560,7 @@ mod tests {
                         ItemContent::User {
                             text: "Why is the cart total wrong for discounts?".into(),
                             checkpoint: None,
+                            attachments: Vec::new(),
                         },
                         None,
                     ),
@@ -1649,6 +1652,7 @@ mod tests {
         first.content = ItemContent::User {
             text: "Rounding in the checkout".into(),
             checkpoint: None,
+            attachments: Vec::new(),
         };
         store.update_item(&first).unwrap();
         assert!(

@@ -173,6 +173,19 @@ pub enum RuleOutcome {
     Dismissed,
 }
 
+/// A file sent with a message, as the copy kept with the thread.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    /// What the file was called.
+    pub name: String,
+    /// Where the copy is.
+    pub path: PathBuf,
+    /// Its media type, like `image/png` or `application/pdf`.
+    pub media_type: String,
+    /// Its size in bytes.
+    pub size: u64,
+}
+
 /// One durable entry in a thread transcript.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -182,6 +195,9 @@ pub enum ItemContent {
         /// Working-tree snapshot taken before this message was sent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         checkpoint: Option<String>,
+        /// Files sent with it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        attachments: Vec<Attachment>,
     },
     Assistant {
         text: String,
@@ -387,4 +403,39 @@ pub fn line_hash(text: &str) -> Option<i64> {
         (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
     });
     Some(hash as i64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_message_without_attachments_reads_and_writes_as_before() {
+        let old: ItemContent = serde_json::from_str(r#"{"kind":"user","text":"hi"}"#).unwrap();
+        assert_eq!(
+            old,
+            ItemContent::User {
+                text: "hi".into(),
+                checkpoint: None,
+                attachments: Vec::new(),
+            }
+        );
+        assert_eq!(
+            serde_json::to_string(&old).unwrap(),
+            r#"{"kind":"user","text":"hi"}"#
+        );
+        let with = ItemContent::User {
+            text: "see".into(),
+            checkpoint: None,
+            attachments: vec![Attachment {
+                name: "faktura.pdf".into(),
+                path: "/tmp/faktura.pdf".into(),
+                media_type: "application/pdf".into(),
+                size: 1234,
+            }],
+        };
+        let back: ItemContent =
+            serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+        assert_eq!(back, with);
+    }
 }

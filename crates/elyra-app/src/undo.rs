@@ -23,6 +23,7 @@ pub fn span(items: &[TranscriptItem], item: ItemId) -> Option<Span> {
     let ItemContent::User {
         text,
         checkpoint: Some(before),
+        ..
     } = &items[start].content
     else {
         return None;
@@ -159,6 +160,7 @@ mod tests {
             item(ItemContent::User {
                 text: text.into(),
                 checkpoint: Some(checkpoint.into()),
+                attachments: Vec::new(),
             })
         };
         let items = vec![

@@ -141,6 +141,7 @@ fn read(path: &Path, with_items: bool) -> Option<ImportedSession> {
                         ItemContent::User {
                             text: text.clone(),
                             checkpoint: None,
+                            attachments: Vec::new(),
                         },
                         when,
                     ));
@@ -161,6 +162,7 @@ fn read(path: &Path, with_items: bool) -> Option<ImportedSession> {
                                 ItemContent::User {
                                     text: text.into(),
                                     checkpoint: None,
+                                    attachments: Vec::new(),
                                 },
                                 when,
                             ));

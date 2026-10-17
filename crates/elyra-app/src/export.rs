@@ -115,6 +115,7 @@ mod tests {
                 item(ItemContent::User {
                     text: "Please fix".into(),
                     checkpoint: None,
+                    attachments: Vec::new(),
                 }),
                 item(ItemContent::Assistant {
                     text: "Done".into(),

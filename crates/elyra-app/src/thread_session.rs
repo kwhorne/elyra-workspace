@@ -289,6 +289,7 @@ impl ThreadSession {
             ItemContent::User {
                 text: user_text(&prompt),
                 checkpoint: None,
+                attachments: Vec::new(),
             },
             cx,
         );
@@ -408,6 +409,7 @@ impl ThreadSession {
                 ItemContent::User {
                     text,
                     checkpoint: Some(sha),
+                    ..
                 } => Some((
                     text.lines()
                         .next()
@@ -492,6 +494,7 @@ impl ThreadSession {
                 ItemContent::User {
                     text: user_text(&prompt),
                     checkpoint: None,
+                    attachments: Vec::new(),
                 },
                 cx,
             ),

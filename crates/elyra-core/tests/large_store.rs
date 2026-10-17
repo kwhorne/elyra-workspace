@@ -26,6 +26,7 @@ fn items(turns: usize, seed: usize) -> Vec<(ItemContent, Option<chrono::DateTime
             ItemContent::User {
                 text: format!("Turn {n}: fix the cart total when a discount over 100 % applies"),
                 checkpoint: Some(format!("{n:040x}")),
+                attachments: Vec::new(),
             },
             None,
         ));
