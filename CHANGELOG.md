@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.14.0
+
+Automations that start when something happens: CI fails, your pull requests
+get comments, an issue is opened, the app logs an error. And agents can come
+back to their own threads later.
 
 - **Automations that start when something happens.** Pick *When something
   happens* as the schedule. See
