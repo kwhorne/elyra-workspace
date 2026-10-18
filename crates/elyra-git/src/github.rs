@@ -524,8 +524,230 @@ pub fn issue_markdown(repo: &Path, number: u64) -> Result<String> {
     Ok(out)
 }
 
+// ---- events -------------------------------------------------------------------
+
+/// A GitHub Actions run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkflowRun {
+    pub id: u64,
+    pub workflow: String,
+    pub title: String,
+    pub branch: String,
+    pub url: String,
+}
+
+fn parse_runs(json: &Value) -> Vec<WorkflowRun> {
+    json.as_array()
+        .into_iter()
+        .flatten()
+        .map(|run| WorkflowRun {
+            id: run["databaseId"].as_u64().unwrap_or(0),
+            workflow: run["workflowName"].as_str().unwrap_or("").into(),
+            title: run["displayTitle"].as_str().unwrap_or("").into(),
+            branch: run["headBranch"].as_str().unwrap_or("").into(),
+            url: run["url"].as_str().unwrap_or("").into(),
+        })
+        .collect()
+}
+
+/// The latest failed workflow runs, newest first (on `branch` when given).
+pub fn failed_runs(repo: &Path, branch: Option<&str>, limit: usize) -> Result<Vec<WorkflowRun>> {
+    let limit = limit.to_string();
+    let mut args = vec![
+        "run",
+        "list",
+        "--status",
+        "failure",
+        "--limit",
+        &limit,
+        "--json",
+        "databaseId,workflowName,displayTitle,headBranch,url",
+    ];
+    if let Some(branch) = branch {
+        args.extend(["--branch", branch]);
+    }
+    let text = gh(repo, &args)?;
+    Ok(parse_runs(&serde_json::from_str(&text)?))
+}
+
+/// The output of a run's failed steps, its last `max` characters.
+pub fn failed_log(repo: &Path, id: u64, max: usize) -> Result<String> {
+    let text = gh(repo, &["run", "view", &id.to_string(), "--log-failed"])?;
+    let count = text.chars().count();
+    Ok(if count > max {
+        format!(
+            "… (the start is cut)\n{}",
+            text.chars().skip(count - max).collect::<String>()
+        )
+    } else {
+        text
+    })
+}
+
+/// An issue as it was opened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenedIssue {
+    pub number: u64,
+    pub title: String,
+    pub author: String,
+    pub url: String,
+    pub body: String,
+}
+
+fn parse_issues(json: &Value) -> Vec<OpenedIssue> {
+    json.as_array()
+        .into_iter()
+        .flatten()
+        .map(|issue| OpenedIssue {
+            number: issue["number"].as_u64().unwrap_or(0),
+            title: issue["title"].as_str().unwrap_or("").into(),
+            author: login(issue),
+            url: issue["url"].as_str().unwrap_or("").into(),
+            body: issue["body"].as_str().unwrap_or("").into(),
+        })
+        .collect()
+}
+
+/// Open issues, newest first (with `label` when given).
+pub fn open_issues(repo: &Path, label: Option<&str>, limit: usize) -> Result<Vec<OpenedIssue>> {
+    let limit = limit.to_string();
+    let mut args = vec![
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        &limit,
+        "--json",
+        "number,title,author,url,body",
+    ];
+    if let Some(label) = label {
+        args.extend(["--label", label]);
+    }
+    let text = gh(repo, &args)?;
+    Ok(parse_issues(&serde_json::from_str(&text)?))
+}
+
+/// A comment or review on one of your pull requests.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrFeedback {
+    pub pr: u64,
+    pub pr_title: String,
+    pub pr_url: String,
+    pub author: String,
+    /// The text; for a review without one, its verdict.
+    pub body: String,
+    /// RFC 3339.
+    pub at: String,
+    /// File and line for an inline comment.
+    pub path: Option<String>,
+    pub line: Option<u64>,
+}
+
+/// Comments and reviews by others on your open pull requests (`me` is your
+/// login; bots are left out), oldest first.
+pub fn feedback_on_my_prs(repo: &Path, me: &str) -> Result<Vec<PrFeedback>> {
+    let text = gh(
+        repo,
+        &[
+            "pr",
+            "list",
+            "--author",
+            "@me",
+            "--state",
+            "open",
+            "--json",
+            "number,title,url",
+        ],
+    )?;
+    let prs: Value = serde_json::from_str(&text)?;
+    let mut out = Vec::new();
+    for pr in prs.as_array().into_iter().flatten() {
+        let number = pr["number"].as_u64().unwrap_or(0);
+        let (title, url) = (
+            pr["title"].as_str().unwrap_or("").to_string(),
+            pr["url"].as_str().unwrap_or("").to_string(),
+        );
+        let feedback = |author: String, body: String, at: String, path, line| PrFeedback {
+            pr: number,
+            pr_title: title.clone(),
+            pr_url: url.clone(),
+            author,
+            body,
+            at,
+            path,
+            line,
+        };
+        let api = |what: &str| -> Result<Value> {
+            let text = gh(repo, &["api", &format!("repos/{{owner}}/{{repo}}/{what}")])?;
+            Ok(serde_json::from_str(&text)?)
+        };
+        for c in api(&format!("issues/{number}/comments"))?
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            out.push(feedback(
+                c["user"]["login"].as_str().unwrap_or("ghost").into(),
+                c["body"].as_str().unwrap_or("").into(),
+                c["created_at"].as_str().unwrap_or("").into(),
+                None,
+                None,
+            ));
+        }
+        for c in review_comments(repo, number)? {
+            out.push(feedback(c.author, c.body, c.created_at, c.path, c.line));
+        }
+        for r in api(&format!("pulls/{number}/reviews"))?
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let body = r["body"].as_str().unwrap_or("").trim().to_string();
+            let state = r["state"].as_str().unwrap_or("");
+            // Inline comments come on their own; an empty "commented" review adds nothing.
+            if body.is_empty() && matches!(state, "COMMENTED" | "PENDING" | "") {
+                continue;
+            }
+            out.push(feedback(
+                r["user"]["login"].as_str().unwrap_or("ghost").into(),
+                if body.is_empty() {
+                    format!("(review: {})", state.to_lowercase().replace('_', " "))
+                } else {
+                    format!(
+                        "(review: {}) {body}",
+                        state.to_lowercase().replace('_', " ")
+                    )
+                },
+                r["submitted_at"].as_str().unwrap_or("").into(),
+                None,
+                None,
+            ));
+        }
+    }
+    out.retain(|f| f.author != me && !f.author.ends_with("[bot]") && !f.at.is_empty());
+    out.sort_by(|a, b| a.at.cmp(&b.at));
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn reads_failed_runs_and_new_issues() {
+        let runs = super::parse_runs(&serde_json::json!([
+            {"databaseId": 101, "workflowName": "CI", "displayTitle": "Round totals", "headBranch": "main", "url": "https://github.com/o/r/actions/runs/101"}
+        ]));
+        assert_eq!(runs[0].id, 101);
+        assert_eq!(
+            (runs[0].workflow.as_str(), runs[0].branch.as_str()),
+            ("CI", "main")
+        );
+        let issues = super::parse_issues(&serde_json::json!([
+            {"number": 7, "title": "Totals are off", "author": {"login": "ada"}, "url": "u", "body": "With a discount."}
+        ]));
+        assert_eq!((issues[0].number, issues[0].author.as_str()), (7, "ada"));
+    }
     use super::*;
     use serde_json::json;
 

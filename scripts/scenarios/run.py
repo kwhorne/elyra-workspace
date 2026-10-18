@@ -7,6 +7,7 @@ agents played by agent.py.
 
 ELYRA_BIN overrides target/debug/elyra. Standard library only.
 """
+import datetime
 import json
 import os
 import shutil
@@ -104,6 +105,7 @@ class World:
             SCENARIO_PATH=os.path.join(HERE, "bin") + os.pathsep + os.environ.get("PATH", ""),
             FAKE_GH_STATE=os.path.join(self.dir, "gh.json"),
             ELYRA_REVIEW_POLL_SECS="2",
+            ELYRA_EVENT_POLL_SECS="1",
         )
         self.app = subprocess.Popen([BIN], env=env, stdout=log, stderr=log)
         deadline = time.time() + 60
@@ -776,6 +778,125 @@ def a_branch_restacks_by_instruction(world, project):
              text.find("- chore: [write notes.md]"), text.find("- chore: other changes")]
     expect(all(i >= 0 for i in order) and order == sorted(order), "in the order asked: " + text)
     expect("It replaces the branch's 1 commit since" in text, text)
+
+
+def wait_for(what, condition, seconds=40):
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        value = condition()
+        if value:
+            return value
+        time.sleep(0.5)
+    raise Failure("timed out waiting for " + what)
+
+
+def add_automation(world, project, name, prompt, schedule):
+    """An automation as the editor saves it, for the scripted agent."""
+    with world.db() as db:
+        project_id = db.execute("SELECT id FROM projects WHERE name = ?", (project,)).fetchone()[0]
+        automation_id = str(uuid.uuid4())
+        db.execute("INSERT INTO automations (id, data) VALUES (?, ?)", (automation_id, json.dumps({
+            "id": automation_id, "name": name, "project_id": project_id, "provider": "custom_acp",
+            "permission_mode": "accept_edits", "prompt": prompt, "schedule": schedule,
+            "enabled": True, "created_at": "2026-10-18T08:00:00Z"})))
+    return automation_id
+
+
+def automation(world, automation_id):
+    with world.db() as db:
+        row = db.execute("SELECT data FROM automations WHERE id = ?", (automation_id,)).fetchone()
+    return json.loads(row[0])
+
+
+@scenario()
+def a_failing_ci_run_starts_an_automation(world, project):
+    gh = os.path.join(world.dir, "gh.json")
+    run = lambda n: {"databaseId": n, "workflowName": "CI", "displayTitle": "Round totals",
+                     "headBranch": "main", "url": f"https://github.com/o/r/actions/runs/{n}"}
+    with open(gh, "w") as f:
+        json.dump({"login": "kh", "runs": [run(100)]}, f)
+    automation_id = add_automation(world, project, "Fix CI", "[say] On it.",
+                                   {"kind": "on", "event": {"kind": "ci_failed", "branch": "main"}})
+    wait_for("the baseline", lambda: automation(world, automation_id).get("event_cursor") == "100")
+    with open(gh, "w") as f:
+        json.dump({"login": "kh", "runs": [run(101), run(100)],
+                   "logs": {"101": "test cart::rounds_after_discount ... FAILED"}}, f)
+
+    def started():
+        with world.db() as db:
+            return db.execute("SELECT id FROM threads WHERE title = 'Fix CI · CI failed'").fetchone()
+    thread = wait_for("a thread for the failure", started)[0]
+    world.wait(thread, 30)
+    prompt = next(i["text"] for i in world.items(thread) if i["kind"] == "user")
+    expect(prompt.startswith("[say] On it.\n\nWhat happened (from outside Elyra Workspace"), prompt[:200])
+    expect("“CI” failed on main for “Round totals”" in prompt
+           and "test cart::rounds_after_discount ... FAILED" in prompt, "the failure and its log: " + prompt)
+    expect(automation(world, automation_id)["event_cursor"] == "101", "it starts once")
+    with world.db() as db:
+        runs = db.execute("SELECT COUNT(*) FROM threads WHERE title LIKE 'Fix CI%'").fetchone()[0]
+    expect(runs == 1, f"one run, not {runs}")
+
+
+@scenario()
+def comments_on_my_pull_request_start_an_automation(world, project):
+    gh = os.path.join(world.dir, "gh.json")
+    pr = {"number": 12, "title": "Round totals", "url": "https://github.com/o/r/pull/12"}
+    with open(gh, "w") as f:
+        json.dump({"login": "kh", "my_prs": [pr], "comments": [], "reviews": []}, f)
+    automation_id = add_automation(world, project, "Answer reviews", "Address the review comments.",
+                                   {"kind": "on", "event": {"kind": "pr_comment"}})
+    wait_for("the baseline", lambda: automation(world, automation_id).get("event_cursor"))
+    later = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    comments = [
+        {"user": {"login": "kh"}, "body": "My own note", "created_at": later},
+        {"user": {"login": "dependabot[bot]"}, "body": "Bump", "created_at": later},
+        {"user": {"login": "ada"}, "body": "Round after the discount, please.", "created_at": later,
+         "path": "src/cart.rs", "line": 3},
+    ]
+    with open(gh, "w") as f:
+        json.dump({"login": "kh", "my_prs": [pr], "comments": comments, "reviews": []}, f)
+
+    def started():
+        with world.db() as db:
+            return db.execute("SELECT id FROM threads WHERE title = 'Answer reviews · PR #12 comments'").fetchone()
+    thread = wait_for("a thread for the comments", started)[0]
+    prompt = next(i["text"] for i in world.items(thread) if i["kind"] == "user")
+    expect("New comments on your pull request #12 “Round totals”" in prompt
+           and "ada on src/cart.rs:3" in prompt and "Round after the discount, please." in prompt, prompt)
+    expect("My own note" not in prompt and "Bump" not in prompt, "not yours, not bots': " + prompt)
+
+
+@scenario()
+def an_agent_comes_back_to_its_thread(world, project):
+    thread = world.new_thread(
+        project, '[call schedule_followup {"message": "Check whether the deploy is done.", "in_minutes": 30}]')
+    reply = world.wait(thread, 30)
+    expect("Scheduled:" in reply, reply[-300:])
+    notices = [i["text"] for i in world.items(thread) if i["kind"] == "notice"]
+    expect(any("will come back to this thread" in n for n in notices), str(notices))
+    with world.db() as db:
+        row = db.execute("SELECT id, data FROM automations WHERE data LIKE ?", (f"%{thread}%",)).fetchone()
+        data = json.loads(row[1])
+        expect(data["follow_up_of"] == thread and data["run_mode"] == "same_thread", str(data))
+        # Time passes.
+        data["next_run_at"] = "2026-01-01T00:00:00Z"
+        db.execute("UPDATE automations SET data = ? WHERE id = ?", (json.dumps(data), row[0]))
+    wait_for("the follow-up", lambda: any(i["kind"] == "user" and i["text"] == "Check whether the deploy is done."
+                                          for i in world.items(thread)), 60)
+    world.wait(thread, 30)
+    replies = [i["text"] for i in world.items(thread) if i["kind"] == "assistant"]
+    expect(replies[-1].startswith("Bumped value.txt"), f"the agent took it up: {replies[-1:]}")
+    expect(not automation(world, row[0])["enabled"], "it runs once")
+    too_many = world.new_thread(project, "[talk]")
+    world.wait(too_many, 30)
+    for _ in range(3):
+        world.tool("send_message", thread_id=too_many,
+                   text='[call schedule_followup {"message": "Look again", "in_minutes": 60}]')
+        world.wait(too_many, 30)
+    world.tool("send_message", thread_id=too_many,
+               text='[call schedule_followup {"message": "Look again", "in_minutes": 60}]')
+    reply = world.wait(too_many, 30)
+    expect("3 follow-ups waiting" in reply, "at most three: " + reply[-300:])
 
 
 def main():

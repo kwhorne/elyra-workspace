@@ -54,6 +54,44 @@ pub enum Schedule {
         expr: String,
         tz: String,
     },
+    /// When something happens, not at a time.
+    On {
+        event: Trigger,
+    },
+}
+
+/// What starts an event automation. Watched while the app is open; what
+/// happened goes into the run's prompt.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Trigger {
+    /// A GitHub Actions run failed (on `branch`, or any branch when empty).
+    CiFailed {
+        #[serde(default)]
+        branch: String,
+    },
+    /// Someone else commented on or reviewed one of your open pull requests.
+    PrComment,
+    /// A new issue was opened (with `label`, or any when empty).
+    IssueOpened {
+        #[serde(default)]
+        label: String,
+    },
+    /// The project's Laravel app logged an error.
+    AppError,
+}
+
+impl Trigger {
+    pub fn describe(&self) -> String {
+        match self {
+            Trigger::CiFailed { branch } if branch.is_empty() => "When CI fails".into(),
+            Trigger::CiFailed { branch } => format!("When CI fails on {branch}"),
+            Trigger::PrComment => "When your pull requests get comments".into(),
+            Trigger::IssueOpened { label } if label.is_empty() => "When an issue is opened".into(),
+            Trigger::IssueOpened { label } => format!("When an issue labelled {label} is opened"),
+            Trigger::AppError => "When the app logs an error".into(),
+        }
+    }
 }
 
 impl Schedule {
@@ -80,6 +118,15 @@ impl Schedule {
                     .ok()
                     .map(|t| t.with_timezone(&Utc))
             }
+            Schedule::On { .. } => None,
+        }
+    }
+
+    /// What starts it, for an automation that waits for an event.
+    pub fn trigger(&self) -> Option<&Trigger> {
+        match self {
+            Schedule::On { event } => Some(event),
+            _ => None,
         }
     }
 
@@ -111,6 +158,7 @@ impl Schedule {
                 )
             }
             Schedule::Cron { expr, tz } => format!("cron {expr} ({tz})"),
+            Schedule::On { event } => event.describe(),
         }
     }
 
@@ -215,6 +263,13 @@ pub struct Automation {
     #[serde(default)]
     pub runs: u32,
     pub created_at: DateTime<Utc>,
+    /// For an event automation: how far the watcher got (the last run id,
+    /// issue number or comment time it saw), so nothing starts twice.
+    #[serde(default)]
+    pub event_cursor: Option<String>,
+    /// A follow-up an agent scheduled for itself in this thread.
+    #[serde(default)]
+    pub follow_up_of: Option<ThreadId>,
 }
 
 impl Automation {
@@ -244,6 +299,8 @@ impl Automation {
             enabled: true,
             runs: 0,
             created_at: now,
+            event_cursor: None,
+            follow_up_of: None,
         }
     }
 
@@ -460,6 +517,38 @@ mod tests {
             daily.next_after(after_dst),
             Some(utc("2026-10-26T08:30:00Z"))
         );
+    }
+
+    #[test]
+    fn event_automations_wait_for_their_event() {
+        let schedule: Schedule =
+            serde_json::from_str(r#"{"kind":"on","event":{"kind":"ci_failed","branch":"main"}}"#)
+                .unwrap();
+        assert_eq!(
+            schedule.trigger(),
+            Some(&Trigger::CiFailed {
+                branch: "main".into()
+            })
+        );
+        assert_eq!(schedule.next_after(Utc::now()), None);
+        assert_eq!(schedule.describe(), "When CI fails on main");
+        assert!(schedule.validate().is_ok());
+        let issue: Schedule =
+            serde_json::from_str(r#"{"kind":"on","event":{"kind":"issue_opened"}}"#).unwrap();
+        assert_eq!(issue.describe(), "When an issue is opened");
+        // Automations saved before events read as before.
+        let mut old = serde_json::to_value(Automation::new(
+            "n".into(),
+            crate::model::new_id(),
+            ProviderKind::Claude,
+            "p".into(),
+            Schedule::Interval { minutes: 5 },
+        ))
+        .unwrap();
+        old.as_object_mut().unwrap().remove("event_cursor");
+        old.as_object_mut().unwrap().remove("follow_up_of");
+        let read: Automation = serde_json::from_value(old).unwrap();
+        assert_eq!((read.event_cursor, read.follow_up_of), (None, None));
     }
 
     #[test]

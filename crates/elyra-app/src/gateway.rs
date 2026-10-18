@@ -285,18 +285,27 @@ fn tools() -> Vec<Tool> {
         ),
         tool(
             "propose_automation",
-            "Propose an automation (a prompt an agent runs on a schedule, e.g. nightly dependency checks) to the user. It appears as a card in this thread with Create, Edit and Dismiss; nothing is scheduled unless the user accepts. Only agents working in a thread can propose.",
+            "Propose an automation (a prompt an agent runs on a schedule, e.g. nightly dependency checks, or when something happens, e.g. CI fails) to the user. It appears as a card in this thread with Create, Edit and Dismiss; nothing is scheduled unless the user accepts. Only agents working in a thread can propose.",
             json!({ "type": "object", "properties": {
                 "name": { "type": "string" },
                 "prompt": { "type": "string", "description": "What the agent does on each run" },
                 "schedule": {
                     "type": "object",
-                    "description": "One of: {\"kind\":\"daily\",\"time\":\"02:00\"}, {\"kind\":\"weekdays\",\"time\":\"08:30\"}, {\"kind\":\"weekly\",\"weekday\":0,\"time\":\"09:00\"} (0 = Monday), {\"kind\":\"interval\",\"minutes\":60}, {\"kind\":\"cron\",\"expr\":\"0 3 * * 1-5\"}, {\"kind\":\"once\",\"at\":\"2026-01-31T09:00:00Z\"}. Times are local unless \"tz\" (IANA) is given."
+                    "description": "One of: {\"kind\":\"daily\",\"time\":\"02:00\"}, {\"kind\":\"weekdays\",\"time\":\"08:30\"}, {\"kind\":\"weekly\",\"weekday\":0,\"time\":\"09:00\"} (0 = Monday), {\"kind\":\"interval\",\"minutes\":60}, {\"kind\":\"cron\",\"expr\":\"0 3 * * 1-5\"}, {\"kind\":\"once\",\"at\":\"2026-01-31T09:00:00Z\"}. Times are local unless \"tz\" (IANA) is given. Or on an event: {\"kind\":\"on\",\"event\":{\"kind\":\"ci_failed\",\"branch\":\"main\"}} (branch optional), {\"kind\":\"on\",\"event\":{\"kind\":\"pr_comment\"}} (comments on the user's open pull requests), {\"kind\":\"on\",\"event\":{\"kind\":\"issue_opened\",\"label\":\"bug\"}} (label optional), {\"kind\":\"on\",\"event\":{\"kind\":\"app_error\"}} (the Laravel app logs an error); what happened is added to the prompt of each run."
                 },
                 "project": { "type": "string", "description": "Project id, name or path; default: this thread's" },
                 "provider": { "type": "string", "enum": ProviderKind::ALL.map(|k| k.as_str()) },
                 "model": { "type": "string" }
             }, "required": ["name", "prompt", "schedule"] }),
+        ),
+        tool(
+            "schedule_followup",
+            "Come back to this thread later: at the time you give, Elyra sends your message to this thread as a new turn (for example \"check whether the deploy finished and the error rate is back to normal\"). Use it when something has to wait (a deploy, a CI run, a review) instead of asking the user to remind you. At most 3 waiting per thread, between 5 minutes and 7 days ahead. The user sees it in the thread and in Automations, and can cancel it.",
+            json!({ "type": "object", "properties": {
+                "message": { "type": "string", "description": "What to do then, written to yourself" },
+                "in_minutes": { "type": "integer", "description": "How long from now (5 to 10080)" },
+                "at": { "type": "string", "description": "Or a time, RFC 3339 (e.g. 2026-10-19T09:00:00+02:00)" }
+            }, "required": ["message"] }),
         ),
         tool(
             "propose_rule",
@@ -641,6 +650,91 @@ fn parse_schedule(value: &Value) -> Result<elyra_core::Schedule, String> {
     serde_json::from_value(value).map_err(|err| format!("`schedule`: {err}"))
 }
 
+/// Follow-ups a thread may have waiting at once, and how far ahead.
+const MAX_FOLLOW_UPS: usize = 3;
+const FOLLOW_UP_RANGE: (i64, i64) = (5, 7 * 24 * 60);
+
+fn schedule_followup(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String, String> {
+    let Caller::Thread(thread_id) = call.caller else {
+        return Err("Only an agent working in a thread can schedule a follow-up.".into());
+    };
+    let args = &call.args;
+    let message = arg(args, "message")?.trim().to_string();
+    if message.is_empty() || message.chars().count() > 2_000 {
+        return Err("Write the follow-up message (at most 2000 characters).".into());
+    }
+    let now = chrono::Utc::now();
+    let at = match (args["in_minutes"].as_i64(), args["at"].as_str()) {
+        (Some(minutes), _) => now + chrono::Duration::minutes(minutes),
+        (None, Some(at)) => chrono::DateTime::parse_from_rfc3339(at)
+            .map_err(|_| "`at` must be an RFC 3339 time, like 2026-10-19T09:00:00+02:00")?
+            .with_timezone(&chrono::Utc),
+        (None, None) => return Err("Give `in_minutes` or `at`.".into()),
+    };
+    let ahead = (at - now).num_minutes();
+    if ahead < FOLLOW_UP_RANGE.0 - 1 || ahead > FOLLOW_UP_RANGE.1 {
+        return Err("A follow-up is between 5 minutes and 7 days from now.".into());
+    }
+    let state = app.read(cx);
+    let thread = state.thread(thread_id).cloned().ok_or("no such thread")?;
+    let waiting = state
+        .store
+        .automations()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|a| a.enabled && a.follow_up_of == Some(thread_id))
+        .count();
+    if waiting >= MAX_FOLLOW_UPS {
+        return Err(format!(
+            "This thread already has {waiting} follow-ups waiting; that's the most it can have."
+        ));
+    }
+    let headline: String = message
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(50)
+        .collect();
+    let mut automation = elyra_core::Automation::new(
+        format!("Follow-up: {headline}"),
+        thread.project_id,
+        thread.provider,
+        message,
+        elyra_core::Schedule::Once { at },
+    );
+    automation.model = thread.model.clone();
+    automation.permission_mode = thread.permission_mode;
+    automation.run_mode = elyra_core::RunMode::SameThread;
+    automation.thread_id = Some(thread_id);
+    automation.follow_up_of = Some(thread_id);
+    automation.max_runs = Some(1);
+    state
+        .store
+        .save_automation(&automation)
+        .map_err(|err| format!("{err:#}"))?;
+    let when = at
+        .with_timezone(&chrono::Local)
+        .format("%a %d.%m %H:%M")
+        .to_string();
+    let session = app
+        .update(cx, |app, cx| app.session(thread_id, cx))
+        .ok_or("could not open the thread")?;
+    session.update(cx, |session, cx| {
+        session.notice(
+            format!(
+                "The agent will come back to this thread {when}: “{headline}”. Cancel it in Automations."
+            ),
+            false,
+            cx,
+        )
+    });
+    app.update(cx, |_, cx| cx.notify());
+    Ok(format!(
+        "Scheduled: {when}, your message is sent to this thread as a new turn."
+    ))
+}
+
 fn propose_automation(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String, String> {
     let Caller::Thread(thread_id) = call.caller else {
         return Err("Only an agent working in a thread can propose an automation; the user creates them in the Automations panel.".into());
@@ -674,7 +768,7 @@ fn propose_automation(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Resu
         None if provider == thread.provider => thread.model.clone(),
         None => None,
     };
-    if automation.next_run_at.is_none() {
+    if automation.next_run_at.is_none() && automation.schedule.trigger().is_none() {
         return Err("That schedule never runs (is the time in the past?).".into());
     }
     let summary = format!(
@@ -1322,6 +1416,7 @@ fn run_tool(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String,
             ))
         }
         "propose_automation" => propose_automation(app, call, cx),
+        "schedule_followup" => schedule_followup(app, call, cx),
         "propose_rule" => {
             let Caller::Thread(thread_id) = call.caller else {
                 return Err("Only an agent working in a thread can propose a rule.".into());

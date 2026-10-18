@@ -2,8 +2,10 @@
 
 ## Automations
 
-An automation sends a prompt to an agent on a schedule: nightly test runs,
-dependency updates, a weekly summary of open issues. Open **Automations** with
+An automation sends a prompt to an agent on a schedule (nightly test runs,
+dependency updates, a weekly summary of open issues) or
+[when something happens](#when-something-happens): CI fails, someone comments
+on your pull request, an issue is opened, the app logs an error. Open **Automations** with
 **⌥⌘A** or the calendar button at the top of the sidebar.
 
 > Automations run while Elyra Workspace is open. A run that was due while the app
@@ -48,6 +50,52 @@ Press **New** and fill in:
 
 Times are in your Mac's time zone, which is saved with the automation, so
 daylight-saving changes are handled.
+
+### When something happens
+
+Pick **When something happens** as the schedule, and what it waits for:
+
+| When | What the run gets |
+| --- | --- |
+| **CI fails** (optionally on one branch) | The workflow, branch and commit title, the link, and the output of the failed steps |
+| **My pull requests get comments** | The pull request, and each new comment or review by someone else (with file and line for inline ones); your own comments and bots' are left out |
+| **An issue is opened** (optionally with a label) | The issue's number, title, author, link and text |
+| **The app logs an error** | The errors a Laravel app logs, each with the line it failed on and the thread that wrote it (see [Laravel Boost](context-and-goals.md#laravel-boost)) |
+
+What happened is added below the prompt, marked as coming from outside, so the
+agent treats it as data and not as instructions. Each run's thread is named
+after it (*Fix CI · CI failed*, *Answer reviews · PR #12 comments*).
+
+- GitHub is asked through the `gh` CLI, as you, about every two minutes; the
+  app's log is read every few seconds. Like schedules, events are only noticed
+  while Elyra Workspace is open.
+- An automation starts from what happens after you create or change it: the
+  first look only notes where things stand.
+- Each event starts one run. If CI fails again while a run is still working on
+  it, the next run gets the newest failure once the first is done. Issues each
+  get their own run; new comments on one pull request come together.
+- Errors the app logs while a run works on them don't start another run.
+
+> Issues and comments come from anyone who can open them. Their text reaches the
+> agent as data, but keep such automations at *Ask* or *Plan* unless you trust
+> everyone who can comment. The editor says so too.
+
+Agents can propose event automations as well, for example *"when CI fails on
+main, find out why and fix it"*.
+
+### Follow-ups agents schedule
+
+An agent can come back to its own thread later, for example to check that a
+deploy finished or a CI run passed, instead of asking you to remind it. With the
+[agent gateway](agent-gateway.md) on, it schedules a follow-up with a message
+to itself; at that time the message is sent to the thread as a new turn.
+
+- The thread says when the agent will come back. The follow-up is listed in
+  **Automations** as *Follow-up: …*, where you can switch it off or delete it.
+- A thread can have at most three follow-ups waiting, each between 5 minutes
+  and 7 days ahead.
+- If the thread is busy when it is due, the follow-up waits five minutes and
+  tries again.
 
 ### Running and history
 

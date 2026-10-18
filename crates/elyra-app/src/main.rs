@@ -19,6 +19,7 @@ mod conventional;
 mod day_summary;
 mod dialogs;
 mod editors;
+mod events;
 mod export;
 mod felagi;
 mod felagi_board;
@@ -138,6 +139,7 @@ fn main() {
             .spawn(async { grove::sites() })
             .detach();
         automations::init(app.clone(), cx);
+        events::init(app.clone(), cx);
         cx.set_menus(menus());
 
         // Development: open in the background without taking focus.

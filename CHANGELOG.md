@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- **Automations that start when something happens.** Pick *When something
+  happens* as the schedule. See
+  [When something happens](docs/automations-and-tasks.md#when-something-happens).
+  - Events: CI fails (optionally on one branch), your pull requests get
+    comments, an issue is opened (optionally with a label), or the Laravel app
+    logs an error.
+  - The run gets what happened: the output of the failed steps, the new
+    comments with file and line, the issue's text, or the error with the
+    instruction behind the line it failed on. It comes marked as data from
+    outside.
+  - Each event starts one run, from what happens after you create the
+    automation. Agents can propose event automations too.
+- **Agents come back to their threads.** With the gateway's new
+  `schedule_followup`, an agent schedules a message to itself, for example to
+  check that a deploy finished. At most three wait per thread, 5 minutes to
+  7 days ahead. They are listed in Automations, where you can cancel them. See
+  [Follow-ups](docs/automations-and-tasks.md#follow-ups-agents-schedule).
+
 ## 1.13.1
 
 Under the hood: the agent adapters now stand on their own, so other Elyra

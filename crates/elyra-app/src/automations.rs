@@ -1,6 +1,7 @@
-//! Automations: prompts that run on a schedule, each run in a new thread or
-//! continuing the same one, with stop conditions, run limits, a failure
-//! policy and run history. Runs while the app is open.
+//! Automations: prompts that run on a schedule or when something happens
+//! (see `events`), each run in a new thread or continuing the same one, with
+//! stop conditions, run limits, a failure policy and run history. Runs while
+//! the app is open.
 
 use crate::app_state::AppState;
 use crate::thread_session::SessionEvent;
@@ -69,11 +70,11 @@ fn tick(app: &Entity<AppState>, cx: &mut App) {
         .filter(|a| a.enabled && a.next_run_at.is_some_and(|t| t <= now))
         .collect();
     for automation in due {
-        start_run(app, automation, false, false, cx);
+        start_run(app, automation, false, false, None, cx);
     }
 }
 
-fn is_active(id: AutomationId, cx: &App) -> bool {
+pub(crate) fn is_active(id: AutomationId, cx: &App) -> bool {
     cx.try_global::<Scheduler>()
         .is_some_and(|s| s.active.contains_key(&id))
 }
@@ -88,11 +89,22 @@ pub fn run_now(app: &Entity<AppState>, id: AutomationId, cx: &mut App) {
         .into_iter()
         .find(|a| a.id == id);
     if let Some(automation) = automation {
-        start_run(app, automation, true, false, cx);
+        start_run(app, automation, true, false, None, cx);
     }
 }
 
-fn save(app: &Entity<AppState>, automation: &Automation, cx: &mut App) {
+/// Start an event automation's run for what happened.
+pub fn start_event_run(
+    app: &Entity<AppState>,
+    mut automation: Automation,
+    event: crate::events::Event,
+    cx: &mut App,
+) {
+    automation.event_cursor = Some(event.cursor.clone());
+    start_run(app, automation, false, false, Some(event), cx);
+}
+
+pub(crate) fn save(app: &Entity<AppState>, automation: &Automation, cx: &mut App) {
     if let Err(err) = app.read(cx).store.save_automation(automation) {
         log::error!("saving automation: {err:#}");
     }
@@ -111,10 +123,12 @@ fn start_run(
     mut automation: Automation,
     manual: bool,
     retry: bool,
+    event: Option<crate::events::Event>,
     cx: &mut App,
 ) {
     let now = Utc::now();
-    if !manual && !retry {
+    // Event automations have no next time; they wait for the next event.
+    if !manual && !retry && automation.schedule.trigger().is_none() {
         automation.next_run_at = automation.schedule.next_after(now);
         if automation.next_run_at.is_none() {
             automation.enabled = false;
@@ -137,7 +151,8 @@ fn start_run(
         save(app, &automation, cx);
         return;
     }
-    let session = match prepare_thread(app, &mut automation, cx) {
+    let title = event.as_ref().map(|e| e.title.clone());
+    let session = match prepare_thread(app, &mut automation, title, cx) {
         Ok(session) => session,
         Err(err) => {
             run.status = RunStatus::Failed;
@@ -159,6 +174,13 @@ fn start_run(
         )
     };
     run.thread_id = Some(thread_id);
+    if busy && automation.follow_up_of.is_some() && !manual {
+        // A follow-up waits for the thread's turn to end instead of being lost.
+        automation.next_run_at = Some(now + chrono::Duration::minutes(5));
+        automation.enabled = true;
+        save(app, &automation, cx);
+        return;
+    }
     if busy {
         run.status = RunStatus::Skipped;
         run.finished_at = Some(now);
@@ -187,7 +209,10 @@ fn start_run(
             },
         );
     });
-    let prompt = automation.prompt.clone();
+    let prompt = match &event {
+        Some(event) => crate::events::prompt(&automation.prompt, event),
+        None => automation.prompt.clone(),
+    };
     session.update(cx, |session, cx| session.submit(Prompt::text(prompt), cx));
 }
 
@@ -195,6 +220,7 @@ fn start_run(
 fn prepare_thread(
     app: &Entity<AppState>,
     automation: &mut Automation,
+    event: Option<String>,
     cx: &mut App,
 ) -> Result<Entity<crate::thread_session::ThreadSession>, String> {
     if automation.run_mode == RunMode::SameThread
@@ -211,9 +237,10 @@ fn prepare_thread(
     let thread = app
         .update(cx, |app, cx| app.create_thread(automation.project_id, cx))
         .map_err(|e| format!("{e:#}"))?;
-    let title = match automation.run_mode {
-        RunMode::SameThread => automation.name.clone(),
-        RunMode::NewThread => format!(
+    let title = match (automation.run_mode, event) {
+        (RunMode::SameThread, _) => automation.name.clone(),
+        (RunMode::NewThread, Some(event)) => format!("{} · {event}", automation.name),
+        (RunMode::NewThread, None) => format!(
             "{} · {}",
             automation.name,
             chrono::Local::now().format("%d.%m %H:%M")
@@ -338,7 +365,7 @@ fn finish(app: &Entity<AppState>, id: AutomationId, failed: bool, reply: String,
     save_run(app, &run, cx);
     save(app, &automation, cx);
     if retry {
-        start_run(app, automation, true, true, cx);
+        start_run(app, automation, true, true, None, cx);
     }
 }
 
@@ -377,6 +404,7 @@ impl AutomationsView {
             .unwrap_or_else(|| "missing project".into());
         let next = match (automation.enabled, automation.next_run_at) {
             (false, _) => "Off".to_string(),
+            (true, None) if automation.schedule.trigger().is_some() => "Watching".to_string(),
             (true, Some(at)) => format!(
                 "Next {}",
                 at.with_timezone(&chrono::Local).format("%a %d.%m %H:%M")
@@ -728,6 +756,13 @@ const SCHEDULE_KINDS: &[(&str, &str)] = &[
     ("interval", "Every N minutes"),
     ("once", "Once"),
     ("cron", "Cron"),
+    ("event", "When something happens"),
+];
+const EVENTS: &[(&str, &str)] = &[
+    ("ci_failed", "CI fails"),
+    ("pr_comment", "My pull requests get comments"),
+    ("issue_opened", "An issue is opened"),
+    ("app_error", "The app logs an error"),
 ];
 const WEEKDAYS: [&str; 7] = [
     "Monday",
@@ -747,11 +782,14 @@ struct AutomationForm {
     minutes: Entity<InputState>,
     once: Entity<InputState>,
     cron: Entity<InputState>,
+    /// The branch (CI) or label (issues) an event is limited to.
+    event_filter: Entity<InputState>,
     stop_phrase: Entity<InputState>,
     max_runs: Entity<InputState>,
     project: Option<ProjectId>,
     provider: ProviderKind,
     kind: &'static str,
+    event: &'static str,
     weekday: u8,
     run_mode: RunMode,
     failure: FailurePolicy,
@@ -827,6 +865,14 @@ impl AutomationForm {
                 expr.clone(),
                 0,
             ),
+            Some(Schedule::On { .. }) => (
+                "event",
+                "09:00".into(),
+                "60".into(),
+                String::new(),
+                "0 9 * * 1-5".into(),
+                0,
+            ),
             None => (
                 "daily",
                 "09:00".into(),
@@ -835,6 +881,13 @@ impl AutomationForm {
                 "0 9 * * 1-5".into(),
                 0,
             ),
+        };
+        let (event, event_filter) = match a.and_then(|a| a.schedule.trigger()) {
+            Some(elyra_core::Trigger::CiFailed { branch }) => ("ci_failed", branch.clone()),
+            Some(elyra_core::Trigger::PrComment) => ("pr_comment", String::new()),
+            Some(elyra_core::Trigger::IssueOpened { label }) => ("issue_opened", label.clone()),
+            Some(elyra_core::Trigger::AppError) => ("app_error", String::new()),
+            None => ("ci_failed", String::new()),
         };
         let prompt_text = a.map(|a| a.prompt.clone()).unwrap_or_default();
         let prompt = cx.new(|cx| {
@@ -856,6 +909,7 @@ impl AutomationForm {
             minutes: input("60", minutes, window, cx),
             once: input("2026-12-24 08:00", once, window, cx),
             cron: input("0 9 * * 1-5", cron, window, cx),
+            event_filter: input("any", event_filter, window, cx),
             stop_phrase: input(
                 "e.g. ALL CLEAR",
                 a.and_then(|a| a.stop_phrase.clone()).unwrap_or_default(),
@@ -873,6 +927,7 @@ impl AutomationForm {
             project: a.map(|a| a.project_id).or(first_project),
             provider: a.map(|a| a.provider).unwrap_or(ProviderKind::Claude),
             kind,
+            event,
             weekday,
             run_mode: a.map(|a| a.run_mode).unwrap_or_default(),
             failure: a.map(|a| a.failure_policy).unwrap_or_default(),
@@ -919,6 +974,17 @@ impl AutomationForm {
                 expr: self.cron.read(cx).value().trim().to_string(),
                 tz,
             },
+            "event" => {
+                let filter = self.event_filter.read(cx).value().trim().to_string();
+                Schedule::On {
+                    event: match self.event {
+                        "pr_comment" => elyra_core::Trigger::PrComment,
+                        "issue_opened" => elyra_core::Trigger::IssueOpened { label: filter },
+                        "app_error" => elyra_core::Trigger::AppError,
+                        _ => elyra_core::Trigger::CiFailed { branch: filter },
+                    },
+                }
+            }
             _ => Schedule::Daily { time, tz },
         };
         schedule.validate()?;
@@ -955,6 +1021,8 @@ impl AutomationForm {
         };
         if automation.schedule != schedule || self.existing.is_none() {
             automation.next_run_at = schedule.next_after(Utc::now());
+            // A new event starts watching from now.
+            automation.event_cursor = None;
         }
         if automation.project_id != project || automation.run_mode != self.run_mode {
             automation.thread_id = None;
@@ -1058,8 +1126,40 @@ impl Render for AutomationForm {
                 ))
                 .child(field("Time", Input::new(&self.time).small().w(px(100.))))
                 .into_any_element(),
+            "event" => h_flex()
+                .gap_2()
+                .child(field(
+                    "When",
+                    picker(
+                        "automation-event",
+                        self.event,
+                        EVENTS.iter().map(|(k, l)| (*k, l.to_string())).collect(),
+                        weak.clone(),
+                        |f, v| f.event = v,
+                    ),
+                ))
+                .when(matches!(self.event, "ci_failed" | "issue_opened"), |this| {
+                    this.child(field(
+                        if self.event == "ci_failed" {
+                            "On branch"
+                        } else {
+                            "With label"
+                        },
+                        Input::new(&self.event_filter).small().w(px(140.)),
+                    ))
+                })
+                .into_any_element(),
             _ => field("Time", Input::new(&self.time).small().w(px(100.))).into_any_element(),
         };
+        let outside = (self.kind == "event"
+            && matches!(self.event, "pr_comment" | "issue_opened"))
+        .then(|| {
+            div()
+                .text_xs()
+                .whitespace_normal()
+                .text_color(cx.theme().muted_foreground)
+                .child("Anyone who can open issues or comment can start this run, and what they wrote reaches the agent (as data, not instructions). Keep the permissions at Ask or Plan unless you trust everyone who can.")
+        });
         v_flex()
             .gap_3()
             .child(field("Name", Input::new(&self.name).small()))
@@ -1120,6 +1220,7 @@ impl Render for AutomationForm {
                     ))
                     .child(schedule_input),
             )
+            .children(outside)
             .child(
                 h_flex()
                     .gap_2()
