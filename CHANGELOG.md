@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.15.0
+
+Code that remembers why it was written: a turn that takes out another
+instruction's lines is caught, an error can be kept as a test that is proven to
+guard the fix, and rules that name what is gone are found.
 
 - **The intent guard.** When a turn removes or rewrites lines an agent wrote
   for another instruction, the thread shows a card with which instructions they
