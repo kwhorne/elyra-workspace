@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.16.0
+
+Two agents against each other: Red writes the tests, Blue the code. Journeys
+now guard the layout as well as the flow, and warm start tries out whether an
+orientation saves agents their first searches.
 
 - **Warm start, an experiment.** Switch it on in Settings → Agents & MCP.
   - Before a new thread's first message reaches the agent, Elyra looks the
