@@ -23,6 +23,8 @@ pub struct StatsView {
     stats: Vec<elyra_core::TurnStat>,
     /// How each agent does, per instruction, across projects.
     agents: Vec<crate::leaderboard::Row>,
+    /// The warm start experiment's first turns.
+    warm: Vec<crate::warm_start::FirstTurn>,
 }
 
 impl StatsView {
@@ -31,6 +33,7 @@ impl StatsView {
             app,
             stats: Vec::new(),
             agents: Vec::new(),
+            warm: Vec::new(),
         };
         this.refresh(cx);
         this
@@ -40,19 +43,22 @@ impl StatsView {
     /// every thread.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         let threads = crate::leaderboard::threads(self.app.read(cx), None);
+        let ids: Vec<elyra_core::ThreadId> = threads.iter().map(|(id, _, _)| *id).collect();
         let job = cx.background_executor().spawn(async move {
             let db = elyra_core::paths::database_path();
             let stats = elyra_core::Store::open_read_only(&db)?.turn_stats()?;
             let agents = crate::leaderboard::load(&db, threads)?;
-            anyhow::Ok((stats, agents))
+            let warm = crate::warm_start::load(&db, &ids)?;
+            anyhow::Ok((stats, agents, warm))
         });
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok((stats, agents)) => {
+                    Ok((stats, agents, warm)) => {
                         this.stats = stats;
                         this.agents = agents;
+                        this.warm = warm;
                     }
                     Err(err) => log::warn!("usage statistics: {err:#}"),
                 }
@@ -66,6 +72,60 @@ impl StatsView {
 impl StatsView {
     /// Per agent and model: instructions, checks green on the first try and
     /// in the end, fixes and cost per instruction.
+    /// The warm start experiment: first turns with and without the
+    /// orientation.
+    fn render_warm_start(&self, cx: &App) -> Option<AnyElement> {
+        if self.warm.is_empty() {
+            return None;
+        }
+        let muted = cx.theme().muted_foreground;
+        let (with, without) = crate::warm_start::compare(&self.warm);
+        let number = |value: Option<f64>, unit: &str| {
+            value.map_or("–".to_string(), |v| format!("{v:.1}{unit}"))
+        };
+        let row = |label: &str, side: &crate::warm_start::Side| {
+            h_flex()
+                .gap_2()
+                .py_1()
+                .text_sm()
+                .child(div().flex_1().child(label.to_string()))
+                .child(div().w(px(80.)).child(side.threads.to_string()))
+                .child(div().w(px(170.)).child(number(side.median_calls, "")))
+                .child(div().w(px(150.)).child(number(side.median_seconds, " s")))
+                .child(
+                    div()
+                        .w(px(110.))
+                        .child(side.median_cost.map_or("–".into(), |c| format!("${c:.2}"))),
+                )
+        };
+        let enough = with.threads >= 5 && without.threads >= 5;
+        Some(
+            v_flex()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .py_1()
+                        .text_xs()
+                        .text_color(muted)
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .child(div().flex_1().child("First turn"))
+                        .child(div().w(px(80.)).child("Threads"))
+                        .child(div().w(px(170.)).child("Tool calls before an edit"))
+                        .child(div().w(px(150.)).child("Time to the first edit"))
+                        .child(div().w(px(110.)).child("Cost")),
+                )
+                .child(row("With the orientation", &with))
+                .child(row("Without", &without))
+                .child(div().pt_1().text_xs().text_color(muted).child(if enough {
+                    "Medians of each thread's first turn. Half the new threads get the orientation, by their id."
+                } else {
+                    "Medians of each thread's first turn. Too few threads on one side yet to tell (five each, at least)."
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn render_agents(&self, cx: &App) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         if self.agents.is_empty() {
@@ -268,6 +328,15 @@ impl Render for StatsView {
                         .child("How the agents do on your code"),
                 )
                 .child(self.render_agents(cx))
+                .when_some(self.render_warm_start(cx), |this, warm| {
+                    this.child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("Warm start (experiment)"),
+                    )
+                    .child(warm)
+                })
                 .child(
                     div()
                         .text_xs()

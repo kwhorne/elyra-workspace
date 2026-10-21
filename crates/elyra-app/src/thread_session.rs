@@ -51,6 +51,8 @@ pub struct ThreadSession {
     pub errors_in_turn: Vec<(String, String)>,
     /// The card whose test the running turn writes.
     kept_test: Option<ItemId>,
+    /// The warm start was looked up for this thread's first message.
+    warm_started: bool,
     /// The working folder, its repository's shared git directory and its
     /// root, for the intent board (looked up once per folder).
     intent_repo: Option<(std::path::PathBuf, std::path::PathBuf, std::path::PathBuf)>,
@@ -132,6 +134,7 @@ impl ThreadSession {
             rewrite_note: None,
             errors_in_turn: Vec::new(),
             kept_test: None,
+            warm_started: false,
             intent_repo: None,
             running: false,
             preparing: None,
@@ -703,6 +706,10 @@ impl ThreadSession {
     }
 
     fn deliver(&mut self, mut prompt: Prompt, cx: &mut Context<Self>) {
+        if self.wants_warm_start(cx) {
+            self.warm_start(prompt, cx);
+            return;
+        }
         // A fork that couldn't branch the provider session carries the
         // earlier conversation into its first message.
         if let Some(context) = self.thread.fork_context.take() {
@@ -729,6 +736,47 @@ impl ThreadSession {
             self.set_status(ThreadStatus::Failed, cx);
         }
         cx.notify();
+    }
+
+    /// A new thread's first message, with the warm start experiment on.
+    fn wants_warm_start(&self, cx: &App) -> bool {
+        !self.warm_started
+            && crate::preferences::Preferences::global(cx).warm_start
+            && self.thread.parent_id.is_none()
+            && self.thread.fork_context.is_none()
+            && self
+                .items
+                .iter()
+                .filter(|i| matches!(i.content, ItemContent::User { .. }))
+                .count()
+                == 1
+    }
+
+    /// Look the first message up, then deliver it: with what was found for
+    /// half the threads, without for the others (to compare). Threads where
+    /// nothing was found aren't part of the experiment.
+    fn warm_start(&mut self, mut prompt: Prompt, cx: &mut Context<Self>) {
+        self.warm_started = true;
+        let (dir, project, thread) = (self.project.path.clone(), self.project.id, self.thread.id);
+        let message = prompt.text.clone();
+        let job = cx
+            .background_executor()
+            .spawn(async move { crate::warm_start::build(&dir, project, thread, &message) });
+        cx.spawn(async move |this, cx| {
+            let pack = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(pack) = pack {
+                    if crate::warm_start::gets_it(thread) {
+                        this.notice(pack.notice(), false, cx);
+                        prompt.text = format!("{}\n\n{}", pack.text, prompt.text);
+                    } else {
+                        this.notice(crate::warm_start::WITHOUT, false, cx);
+                    }
+                }
+                this.deliver(prompt, cx);
+            });
+        })
+        .detach();
     }
 
     /// Take back the instruction `item` (a message from the user): what its

@@ -966,6 +966,15 @@ fn external_page() -> SettingPage {
                 )
                 .item(
                     SettingItem::new(
+                        "Warm start (experiment)",
+                        switch(|p| p.warm_start, |p, v| p.warm_start = v).default_value(false),
+                    )
+                    .description(
+                        "Before a new thread's first message reaches the agent, Elyra looks its names up in the project's symbol index and earlier threads and puts what it found first, to save the agent its first searches. Half the new threads start without it, for comparison; Stats shows how the first turns of both went.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
                         "Agents changing other threads",
                         SettingField::render(|_, _, cx| render_thread_pairs(cx)),
                     )

@@ -77,6 +77,9 @@ pub struct Preferences {
     pub felagi_runtime: bool,
     /// The name this Mac registers under in Félagi (blank: the computer's name).
     pub felagi_runtime_name: String,
+    /// The warm start experiment: half the new threads get an orientation
+    /// from the symbol index and earlier threads with their first message.
+    pub warm_start: bool,
 }
 
 /// How to launch one provider.
@@ -202,6 +205,7 @@ impl Default for Preferences {
             grove_db_checkpoints: true,
             felagi_runtime: false,
             felagi_runtime_name: String::new(),
+            warm_start: false,
         }
     }
 }

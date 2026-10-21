@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Warm start, an experiment.** Switch it on in Settings → Agents & MCP.
+  - Before a new thread's first message reaches the agent, Elyra looks the
+    names in it up: where they are defined, which instructions last changed
+    those files, and earlier threads about the same. That goes first, so the
+    agent needn't spend its first tool calls searching.
+  - Half the new threads start without it. Stats compares the first turns of
+    both: tool calls before the first edit, time to it, and cost.
+  - See [Warm start](docs/context-and-goals.md#warm-start-experiment).
+
 ## 1.15.0
 
 Code that remembers why it was written: a turn that takes out another

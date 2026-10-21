@@ -68,6 +68,7 @@ mod undo;
 mod updater;
 mod updates;
 mod walkthrough;
+mod warm_start;
 mod webview;
 mod workspace;
 mod worktree_setup;

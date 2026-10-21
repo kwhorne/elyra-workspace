@@ -140,6 +140,27 @@ tries it.
 
 The command applies to every thread in the project. Empty turns it off.
 
+### Warm start (experiment)
+
+At the start of most threads an agent spends its first tool calls finding where
+things are. With **Settings → Agents & MCP → Warm start (experiment)** on, Elyra
+looks the names in a new thread's first message up before it reaches the agent:
+
+- where those symbols are defined, from the project's symbol index (as it is;
+  the first message doesn't wait for it to update),
+- which instructions last changed their files, and
+- up to two earlier threads in the project about the same thing,
+
+and puts that first, as an orientation the agent is told to check against the
+code. A notice in the thread says what it got.
+
+Whether it helps is measured, not assumed: half the new threads (by their id)
+start without it, and say so. **Stats → Warm start (experiment)** compares the
+first turns of both: tool calls before the first edit, time to the first edit,
+and cost, as medians. Threads where nothing was found aren't counted on either
+side, side chats and forks aren't part of it, and it says when there are too
+few threads to tell yet.
+
 ### Keep an error as a test
 
 When a message carried an error (a server error from

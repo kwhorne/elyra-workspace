@@ -100,7 +100,7 @@ def prompt(rid, params):
     with open(os.path.join(state["cwd"], "prompts.log"), "a") as log:
         log.write(text.replace("\n", " ")[:400] + "\n")
     # Tags are in the user's own words, not in the notes Elyra puts first.
-    text = re.sub(r"<(other-agents|rewritten-intent)>.*?</\1>\s*", "", text, flags=re.S)
+    text = re.sub(r"<(other-agents|rewritten-intent|orientation)>.*?</\1>\s*", "", text, flags=re.S)
     if "Someone is asking you about it." in text:
         say(sid, text[:8000])
         return end(rid)
