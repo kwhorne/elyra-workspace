@@ -30,6 +30,7 @@ mod gateway;
 mod grove;
 mod instructions;
 mod intent_board;
+mod intent_guard;
 mod journeys;
 mod leaderboard;
 mod lifecycle;

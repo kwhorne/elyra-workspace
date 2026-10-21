@@ -12,7 +12,7 @@ use gpui_kit::*;
 use std::path::{Path, PathBuf};
 
 /// What is asked about which line.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Request {
     /// The thread the chat belongs to (a side chat of it); None: on its own.
     pub parent: Option<ThreadId>,
@@ -23,6 +23,13 @@ pub struct Request {
     pub line: Option<u32>,
     pub text: String,
     pub question: String,
+    /// The message that wrote it, when known (otherwise the line record's
+    /// newest for the line).
+    pub author: Option<(ThreadId, ItemId)>,
+    /// How a later turn changed it, as a diff.
+    pub since: Option<String>,
+    /// The chat's title (default: Why · <location>).
+    pub title: Option<String>,
 }
 
 pub const DEFAULT_QUESTION: &str = "Why is this line the way it is?";
@@ -93,6 +100,7 @@ pub fn prompt(
     text: &str,
     diff: Option<&str>,
     now: Option<&str>,
+    since: Option<&str>,
     question: &str,
 ) -> String {
     let mut out = format!(
@@ -111,6 +119,12 @@ pub fn prompt(
         )),
         None => out.push_str("\nThe line is no longer in the file.\n"),
     }
+    if let Some(since) = since {
+        out.push_str(&format!(
+            "\nSince then, a later turn changed it like this:\n```diff\n{}\n```\n",
+            since.trim_end()
+        ));
+    }
     out.push_str(&format!(
         "\nAnswer from what you knew and decided then: the reason, what you weighed it against, and what it depends on. If you would do it differently now that you see the code as it is, say so and why. This is a question: don't change any files.\n\nQuestion: {}",
         question.trim()
@@ -126,24 +140,32 @@ pub async fn ask(
 ) -> anyhow::Result<Entity<ThreadSession>> {
     let found = cx.update(|cx| -> anyhow::Result<_> {
         let state = app.read(cx);
-        let project = crate::provenance::project_of(state, &request.root)
-            .ok_or_else(|| anyhow::anyhow!("that folder isn't in a project"))?;
-        let hash = elyra_core::line_hash(&request.text)
-            .ok_or_else(|| anyhow::anyhow!("that line is blank"))?;
-        let origin = state
-            .store
-            .line_origins(project, &request.path, hash)?
-            .into_iter()
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!("no agent in Elyra Workspace is recorded as writing that line")
-            })?;
-        let items = state.store.transcript(origin.thread)?;
+        let (thread, item) = match request.author {
+            Some(author) => author,
+            None => {
+                let project = crate::provenance::project_of(state, &request.root)
+                    .ok_or_else(|| anyhow::anyhow!("that folder isn't in a project"))?;
+                let hash = elyra_core::line_hash(&request.text)
+                    .ok_or_else(|| anyhow::anyhow!("that line is blank"))?;
+                let origin = state
+                    .store
+                    .line_origins(project, &request.path, hash)?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no agent in Elyra Workspace is recorded as writing that line"
+                        )
+                    })?;
+                (origin.thread, origin.item)
+            }
+        };
+        let items = state.store.transcript(thread)?;
         anyhow::ensure!(!items.is_empty(), "the conversation that wrote it is gone");
-        let then = until_turn_end(&items, origin.item);
+        let then = until_turn_end(&items, item);
         // Where the turn ended; for turns from before that was kept, where
         // the next message began.
-        let turn = crate::undo::span(&items, origin.item).and_then(|span| {
+        let turn = crate::undo::span(&items, item).and_then(|span| {
             let end = span.after.or_else(|| {
                 items.get(then.len()).and_then(|next| match &next.content {
                     ItemContent::User {
@@ -156,7 +178,7 @@ pub async fn ask(
             Some((span.before, end))
         });
         Ok((
-            origin.thread,
+            thread,
             crate::app_state::transcript_text(then, 40_000),
             turn,
         ))
@@ -176,9 +198,13 @@ pub async fn ask(
         &request.text,
         diff.as_deref(),
         now.as_deref(),
+        request.since.as_deref(),
         &request.question,
     );
-    let title = format!("Why · {location}");
+    let title = request
+        .title
+        .clone()
+        .unwrap_or_else(|| format!("Why · {location}"));
     cx.update(|cx| {
         let session = app.update(cx, |app, cx| {
             app.create_line_chat(request.parent, author, title, context, cx)
@@ -245,13 +271,17 @@ mod tests {
             "  let total = round(sum - discount);",
             Some("@@ -1 +1 @@\n-a\n+b\n"),
             Some(">    3  let total"),
+            None,
             "Why round after the discount?",
         );
         assert!(text.contains("`lib.rs:3`: `let total = round(sum - discount);`"));
         assert!(text.contains("```diff\n@@ -1 +1 @@\n-a\n+b\n```"));
         assert!(text.contains("(the line is marked >)"));
         assert!(text.ends_with("Question: Why round after the discount?"));
-        let gone = prompt("lib.rs", "x", None, None, "Why?");
-        assert!(gone.contains("The line is no longer in the file.") && !gone.contains("```"));
+        let gone = prompt("lib.rs", "x", None, None, Some("-x\n+y"), "Why?");
+        assert!(gone.contains("The line is no longer in the file."));
+        assert!(
+            gone.contains("Since then, a later turn changed it like this:\n```diff\n-x\n+y\n```")
+        );
     }
 }

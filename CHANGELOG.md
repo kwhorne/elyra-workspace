@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **The intent guard.** When a turn removes or rewrites lines an agent wrote
+  for another instruction, the thread shows a card with which instructions they
+  were for, their threads and agents, and the lines as they were.
+  - **Ask the author** asks the agent that wrote them, as it was then, whether
+    the new code still does what it was asked to do.
+  - The agent that took them out hears of it with your next message.
+  - See [When a turn takes out another instruction's lines](docs/git-and-review.md#when-a-turn-takes-out-another-instructions-lines).
+
 ## 1.14.0
 
 Automations that start when something happens: CI fails, your pull requests

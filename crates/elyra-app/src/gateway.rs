@@ -1695,6 +1695,7 @@ async fn ask_author(
         line: Some(line),
         text,
         question,
+        ..Default::default()
     };
     let chat = crate::ask_line::ask(app, request, cx)
         .await

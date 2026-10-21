@@ -17,6 +17,7 @@ What it does depends on a tag in the prompt:
   [write PATH] TEXT  append TEXT as a line to PATH
   [edit PATH] TEXT   the same, as an ACP edit tool call (what Elyra sees of
            a real agent's edit)
+  [replace PATH] OLD => NEW  replace the first OLD in PATH with NEW
   anything else (also Elyra's follow-ups): add 1 to value.txt
 Every prompt is appended to prompts.log in the working directory, the
 instructions that lead a new session's first prompt to instructions.log, and
@@ -96,6 +97,8 @@ def prompt(rid, params):
     text = "".join(block.get("text", "") for block in blocks)
     with open(os.path.join(state["cwd"], "prompts.log"), "a") as log:
         log.write(text.replace("\n", " ")[:400] + "\n")
+    # Tags are in the user's own words, not in the notes Elyra puts first.
+    text = re.sub(r"<(other-agents|rewritten-intent)>.*?</\1>\s*", "", text, flags=re.S)
     if "Someone is asking you about it." in text:
         say(sid, text[:8000])
         return end(rid)
@@ -113,6 +116,13 @@ def prompt(rid, params):
         send({"method": "session/update", "params": {"sessionId": sid, "update": {
             "sessionUpdate": "tool_call_update", "toolCallId": "edit-1", "status": "completed"}}})
         say(sid, "Edited " + edit.group(1) + ".")
+        return end(rid)
+    replace = re.search(r"\[replace ([^\]]+)\] (.*?) => (.*)", text, re.S)
+    if replace:
+        path = os.path.join(state["cwd"], replace.group(1))
+        content = open(path).read()
+        open(path, "w").write(content.replace(replace.group(2).strip(), replace.group(3).strip(), 1))
+        say(sid, "Replaced in " + replace.group(1) + ".")
         return end(rid)
     write = re.search(r"\[write ([^\]]+)\] (.*)", text, re.S)
     if write:

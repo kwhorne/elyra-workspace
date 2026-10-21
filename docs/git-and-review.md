@@ -64,6 +64,27 @@ picked up where the turn that wrote it ended:
 Agents can do the same with the gateway's `ask_author` tool before they change
 code they don't understand.
 
+### When a turn takes out another instruction's lines
+
+Every turn's removed lines are looked up in the same record. When a turn
+removes or rewrites lines that an agent wrote for **another instruction** (in
+another thread, or earlier in this one), the thread shows a card after the turn:
+*This turn took out lines written for other instructions*, with each
+instruction, its thread and agent, how many lines in which files, and a few of
+the lines as they were. A guard condition quietly dropped in a cleanup, with no
+test that would have caught it, shows up here.
+
+- **Ask the author** opens a side chat with the agent that wrote those lines,
+  picked up where it wrote them, with how the later turn changed them. It is asked
+  whether the new code still does what it was asked to do, and to name what is
+  lost if not. **Open the answer** goes back to it.
+- **Open its thread** opens the thread that wrote them.
+- The agent that took them out hears of it with your next message, and is asked
+  to restore the behaviour or say plainly what is gone and why.
+
+Lines that only moved within a file don't count, and neither do lines the turn's
+own instruction wrote.
+
 ### Lines nobody has read
 
 Elyra Workspace remembers which lines agents wrote, so it can also show which of

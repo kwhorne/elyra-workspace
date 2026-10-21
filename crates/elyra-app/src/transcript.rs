@@ -924,6 +924,7 @@ fn render_item(
             session.running,
             cx,
         ),
+        ItemContent::Rewrote { instructions, .. } => rewrote_card(id, instructions, cx),
         ItemContent::PageSnapshot { url, before, after } => {
             let picture = |label: &'static str, path: &str| {
                 let path = std::path::PathBuf::from(path);
@@ -1137,6 +1138,121 @@ fn proposal_card(
 /// (the last line shows while folded, when they failed).
 #[allow(clippy::too_many_arguments)]
 /// An instruction taken back.
+/// The turn took out lines written for other instructions.
+fn rewrote_card(
+    id: ItemId,
+    instructions: &[elyra_core::RewrittenIntent],
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    let mut card = v_flex()
+        .w_full()
+        .p_2()
+        .gap_2()
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().warning.opacity(0.5))
+        .bg(cx.theme().warning.opacity(0.05))
+        .child(
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .child(
+                    Icon::new(IconName::TriangleAlert)
+                        .small()
+                        .text_color(cx.theme().warning),
+                )
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("This turn took out lines written for other instructions"),
+                ),
+        );
+    for (index, intent) in instructions.iter().enumerate() {
+        let (thread, asked) = (intent.thread, intent.asked);
+        card = card.child(
+            v_flex()
+                .gap_1()
+                .child(
+                    div()
+                        .text_sm()
+                        .whitespace_normal()
+                        .child(format!("“{}”", intent.instruction)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(crate::intent_guard::summary(intent)),
+                )
+                .child(
+                    v_flex()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .bg(cx.theme().danger.opacity(0.06))
+                        .text_xs()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .children(intent.lines.iter().take(3).map(|line| {
+                            div()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(format!("- {line}"))
+                        })),
+                )
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(match asked {
+                            None => Button::new(SharedString::from(format!("rewrite-ask-{id}-{index}")))
+                                .xsmall()
+                                .outline()
+                                .icon(IconName::MessagesSquare)
+                                .label("Ask the author")
+                                .tooltip("Ask the agent that wrote these lines, as it was then, whether the new code still does what it was asked to do")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.ask_rewrite_author(id, index, window, cx)
+                                })),
+                            Some(chat) => Button::new(SharedString::from(format!("rewrite-answer-{id}-{index}")))
+                                .xsmall()
+                                .outline()
+                                .icon(IconName::MessagesSquare)
+                                .label("Open the answer")
+                                .on_click(move |_, window, cx| {
+                                    if let Some(hub) = cx.try_global::<crate::browser_tools::BrowserHub>() {
+                                        let workspace = hub.workspace.clone();
+                                        let _ = workspace.update(cx, |this, cx| {
+                                            this.show_side_chat(chat, window, cx)
+                                        });
+                                    }
+                                }),
+                        })
+                        .child(
+                            Button::new(SharedString::from(format!("rewrite-open-{id}-{index}")))
+                                .xsmall()
+                                .ghost()
+                                .label("Open its thread")
+                                .on_click(move |_, window, cx| {
+                                    if let Some(hub) = cx.try_global::<crate::browser_tools::BrowserHub>() {
+                                        let workspace = hub.workspace.clone();
+                                        let _ = workspace
+                                            .update(cx, |this, cx| this.activate(thread, window, cx));
+                                    }
+                                }),
+                        ),
+                ),
+        );
+    }
+    card.child(
+        div()
+            .text_xs()
+            .text_color(muted)
+            .child("The agent hears of it with your next message."),
+    )
+    .into_any_element()
+}
+
 fn undo_card(
     id: ItemId,
     instruction: &str,

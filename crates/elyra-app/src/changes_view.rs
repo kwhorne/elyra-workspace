@@ -967,6 +967,7 @@ impl ChangesView {
             } else {
                 question
             },
+            ..Default::default()
         };
         self.comment_input
             .update(cx, |input, cx| input.set_value("", window, cx));

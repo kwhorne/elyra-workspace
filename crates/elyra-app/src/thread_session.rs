@@ -2,7 +2,7 @@ use crate::app_state::AppState;
 use chrono::Utc;
 use elyra_core::{
     ApprovalDecision, Environment, GoalStatus, ItemContent, ItemId, PermissionMode, Project,
-    ProviderKind, QuestionAnswer, Thread, ThreadStatus, TranscriptItem,
+    ProviderKind, QuestionAnswer, Thread, ThreadId, ThreadStatus, TranscriptItem,
 };
 use elyra_provider::{
     AgentSession, ModelOption, PermissionResponse, Prompt, ProviderEvent, SessionConfig,
@@ -43,6 +43,9 @@ pub struct ThreadSession {
     /// How many turns have had their lines recorded, so views that show
     /// what agents wrote know when to look again.
     pub lines_recorded: usize,
+    /// What the last turn took out of other instructions, for the agent's
+    /// next message.
+    rewrite_note: Option<String>,
     /// The working folder, its repository's shared git directory and its
     /// root, for the intent board (looked up once per folder).
     intent_repo: Option<(std::path::PathBuf, std::path::PathBuf, std::path::PathBuf)>,
@@ -121,6 +124,7 @@ impl ThreadSession {
             streaming_text: String::new(),
             streaming_thinking: String::new(),
             lines_recorded: 0,
+            rewrite_note: None,
             intent_repo: None,
             running: false,
             preparing: None,
@@ -703,6 +707,10 @@ impl ThreadSession {
         }
         if let Some(board) = self.other_agents(cx) {
             prompt.text = format!("{board}\n\n{}", prompt.text);
+        }
+        // What the last turn took out of other instructions, once.
+        if let Some(note) = self.rewrite_note.take() {
+            prompt.text = format!("{note}\n\n{}", prompt.text);
         }
         let result = self
             .ensure_provider(cx)
@@ -1802,6 +1810,99 @@ impl ThreadSession {
 
     /// Remember which lines this turn added, so `why` and `history` (and the
     /// blame in Changes) can trace them back to its message.
+    /// The turn took out lines written for other instructions: say which, and
+    /// tell the agent with its next message.
+    fn guard_intents(
+        &mut self,
+        item: ItemId,
+        before: String,
+        after: String,
+        removed: &[crate::intent_guard::Removed],
+        cx: &mut Context<Self>,
+    ) {
+        let Some(app) = self.app.upgrade() else {
+            return;
+        };
+        let intents = crate::intent_guard::find(
+            app.read(cx),
+            self.project.id,
+            (self.thread.id, item),
+            removed,
+        );
+        if intents.is_empty() {
+            return;
+        }
+        self.rewrite_note = Some(crate::intent_guard::note(&intents, self.thread.id));
+        self.append(
+            ItemContent::Rewrote {
+                before,
+                after,
+                instructions: intents,
+            },
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Ask the author of a rewritten instruction whether the new code still
+    /// does what it was asked to do (in a side chat); returns the chat.
+    pub fn rewrite_request(&self, item: ItemId, index: usize) -> Option<crate::ask_line::Request> {
+        let entry = self.items.iter().find(|i| i.id == item)?;
+        let ItemContent::Rewrote {
+            before,
+            after,
+            instructions,
+        } = &entry.content
+        else {
+            return None;
+        };
+        let intent = instructions.get(index)?;
+        let root = elyra_git::repo_root(&self.working_dir()).ok()?;
+        let since: String = intent
+            .files
+            .iter()
+            .filter_map(|path| elyra_git::diff_text_of(&root, before, after, path).ok())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .chars()
+            .take(10_000)
+            .collect();
+        Some(crate::ask_line::Request {
+            parent: Some(self.thread.id),
+            root,
+            path: intent.files.first()?.clone(),
+            line: None,
+            text: intent.lines.first()?.clone(),
+            question: crate::intent_guard::question(intent),
+            author: Some((intent.thread, intent.item)),
+            since: Some(since).filter(|s| !s.trim().is_empty()),
+            title: Some(format!(
+                "Still holds? · {}",
+                intent.instruction.chars().take(40).collect::<String>()
+            )),
+        })
+    }
+
+    /// Remember the chat that asked an instruction's author.
+    pub fn set_rewrite_asked(
+        &mut self,
+        item: ItemId,
+        index: usize,
+        chat: ThreadId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(position) = self.items.iter().position(|i| i.id == item) else {
+            return;
+        };
+        if let ItemContent::Rewrote { instructions, .. } = &mut self.items[position].content
+            && let Some(intent) = instructions.get_mut(index)
+        {
+            intent.asked = Some(chat);
+            self.persist_item(position, cx);
+            cx.notify();
+        }
+    }
+
     fn record_line_origins(&mut self, cx: &mut Context<Self>) {
         let Some((item, Some(checkpoint))) =
             self.items
@@ -1832,12 +1933,19 @@ impl ThreadSession {
                 .into_iter()
                 .filter_map(|(path, text)| Some((path, elyra_core::line_hash(&text)?)))
                 .collect::<Vec<_>>();
-            Some((files, lines, after))
+            // Lines it took out, to see whose instructions they were for.
+            let removed = crate::intent_guard::removed(&root, &checkpoint, &after);
+            Some((files, lines, after, removed, checkpoint))
         });
         cx.spawn(async move |this, cx| {
-            let Some((files, lines, after)) = job.await else {
+            let Some((files, lines, after, removed, before)) = job.await else {
                 return;
             };
+            if !removed.is_empty() {
+                let _ = this.update(cx, |this, cx| {
+                    this.guard_intents(item, before, after.clone(), &removed, cx)
+                });
+            }
             let _ = this.update(cx, |this, cx| {
                 // The turn's summary keeps where it left the folder.
                 if let Some(index) = this

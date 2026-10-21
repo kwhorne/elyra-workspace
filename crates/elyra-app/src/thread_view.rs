@@ -1910,6 +1910,43 @@ impl ThreadView {
         cx.notify();
     }
 
+    /// Ask the author of lines this thread's turn took out whether the new
+    /// code still does what it was asked to do.
+    pub fn ask_rewrite_author(
+        &mut self,
+        item: ItemId,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(request) = self.session.read(cx).rewrite_request(item, index) else {
+            window.push_notification("That instruction's lines can't be traced any more.", cx);
+            return;
+        };
+        let Some(app) = self.session.read(cx).app_entity() else {
+            return;
+        };
+        let session = self.session.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let result = crate::ask_line::ask(&app, request, cx).await;
+            let _ = cx.update(|window, cx| match result {
+                Ok(chat) => {
+                    let chat = chat.read(cx).thread.id;
+                    session.update(cx, |session, cx| {
+                        session.set_rewrite_asked(item, index, chat, cx)
+                    });
+                    if let Some(hub) = cx.try_global::<crate::browser_tools::BrowserHub>() {
+                        let workspace = hub.workspace.clone();
+                        let _ =
+                            workspace.update(cx, |this, cx| this.show_side_chat(chat, window, cx));
+                    }
+                }
+                Err(err) => window.push_notification(format!("Could not ask: {err:#}"), cx),
+            });
+        })
+        .detach();
+    }
+
     /// Ask the agent that wrote the line the newest app error failed on.
     fn ask_about_app_error(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(traced) = self.app_errors.last().cloned() else {
@@ -1933,6 +1970,7 @@ impl ThreadView {
                 "The app now fails on this line: {} ({}). What was the line meant to handle, and which assumption of yours doesn't hold? Say how you would fix it.",
                 traced.error.message, traced.error.level
             ),
+            ..Default::default()
         };
         self.app_errors.pop();
         cx.notify();

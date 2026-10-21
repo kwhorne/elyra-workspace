@@ -60,6 +60,39 @@ pub fn added_between(repo: &Path, commit: &str, now: &str) -> Result<Vec<(String
     Ok(parse_added(&diff))
 }
 
+/// The lines removed from one snapshot to another (changed lines too, as
+/// they were), as (path, line).
+pub fn removed_between(repo: &Path, commit: &str, now: &str) -> Result<Vec<(String, String)>> {
+    let diff = run_ok(
+        repo,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "-U0",
+            "--no-renames",
+            commit,
+            now,
+        ],
+    )?;
+    Ok(parse_removed(&diff))
+}
+
+fn parse_removed(diff: &str) -> Vec<(String, String)> {
+    let mut removed = Vec::new();
+    let mut path: Option<String> = None;
+    for line in diff.lines() {
+        if let Some(rest) = line.strip_prefix("--- ") {
+            path = rest.strip_prefix("a/").map(str::to_string);
+        } else if line.starts_with("diff --git ") || line.starts_with("+++ ") {
+            continue;
+        } else if let (Some(text), Some(path)) = (line.strip_prefix('-'), &path) {
+            removed.push((path.clone(), text.to_string()));
+        }
+    }
+    removed
+}
+
 fn parse_added(diff: &str) -> Vec<(String, String)> {
     let mut added = Vec::new();
     let mut path: Option<String> = None;
@@ -195,6 +228,16 @@ mod tests {
                 ("a.rs".to_string(), "fn new() {}".to_string()),
                 ("a.rs".to_string(), "let x = 1;".to_string())
             ]
+        );
+        assert_eq!(
+            super::parse_removed(diff),
+            [("gone.rs".to_string(), "old".to_string())],
+            "a deleted file's lines are removed lines"
+        );
+        let changed = "diff --git a/t.rs b/t.rs\n--- a/t.rs\n+++ b/t.rs\n@@ -3 +3 @@\n-    round(sum) - discount\n+    round(sum - discount)\n";
+        assert_eq!(
+            super::parse_removed(changed),
+            [("t.rs".to_string(), "    round(sum) - discount".to_string())]
         );
         let repo = temp_repo("added-lines");
         std::fs::write(repo.join("keep.txt"), "one\n").unwrap();

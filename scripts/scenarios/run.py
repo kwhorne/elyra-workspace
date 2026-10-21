@@ -583,6 +583,34 @@ def app_errors_lead_back_to_the_instruction(world, project):
     expect("Written by the agent in “Cart prices”" in text and "[write app/Cart.php]" in text, text)
 
 
+@scenario(files={"tax.rs": "// VAT\n"})
+def rewriting_another_instructions_lines_is_noticed(world, project):
+    author = world.new_thread(project, "[write tax.rs] if customer.is_foreign() { return 0; }")
+    world.wait(author, 30)
+    world.tool("set_thread_title", thread_id=author, title="VAT for foreign customers")
+    time.sleep(1.5)  # the turn's lines are recorded after it ends
+    tidy = world.new_thread(
+        project, "[replace tax.rs] if customer.is_foreign() { return 0; } => let vat = total / 4;")
+    world.wait(tidy, 30)
+    time.sleep(1.5)
+    cards = [i for i in world.items(tidy) if i["kind"] == "rewrote"]
+    expect(len(cards) == 1, f"one card: {[i['kind'] for i in world.items(tidy)]}")
+    intent = cards[0]["instructions"][0]
+    expect(intent["title"] == "VAT for foreign customers" and intent["files"] == ["tax.rs"]
+           and intent["count"] == 1 and intent["instruction"].startswith("[write tax.rs] if customer"), str(intent))
+    expect("is_foreign" in intent["lines"][0], str(intent))
+    world.tool("send_message", thread_id=tidy, text="[talk] carry on")
+    world.wait(tidy, 30)
+    prompt = world.prompts(project)[-1]  # the log keeps a prompt's start only
+    expect(prompt.startswith("<rewritten-intent>") and "“VAT for foreign customers”" in prompt,
+           "the agent hears of it: " + prompt[:300])
+    # Moving lines isn't taking them out, and the author's own later turns aren't flagged.
+    world.tool("send_message", thread_id=author, text="[write tax.rs] // reviewed")
+    world.wait(author, 30)
+    time.sleep(1.5)
+    expect(not [i for i in world.items(author) if i["kind"] == "rewrote"], "nothing to flag")
+
+
 @scenario(files={"lib.rs": RUST})
 def parallel_agents_see_what_the_others_change(world, project):
     first = world.new_thread(project, "[edit lib.rs] fn member_discount(total: u32) -> u32 { total * 85 / 100 }")

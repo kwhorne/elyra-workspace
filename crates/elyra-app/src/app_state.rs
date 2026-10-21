@@ -802,6 +802,14 @@ pub fn transcript_text(items: &[elyra_core::TranscriptItem], budget: usize) -> S
                     format!("failed: {}", failure.as_deref().unwrap_or(""))
                 }
             )),
+            ItemContent::Rewrote { instructions, .. } => Some(format!(
+                "[took out lines written for] {}",
+                instructions
+                    .iter()
+                    .map(|i| format!("“{}”", i.instruction))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            )),
             ItemContent::Check {
                 command, passed, ..
             } => Some(format!(

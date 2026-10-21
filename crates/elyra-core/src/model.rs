@@ -249,6 +249,15 @@ pub enum ItemContent {
         text: String,
         is_error: bool,
     },
+    /// The turn removed or rewrote lines that were written for other
+    /// instructions (from the line record): what they were for, to check
+    /// that it still holds.
+    Rewrote {
+        /// The folder before and after the turn (snapshots).
+        before: String,
+        after: String,
+        instructions: Vec<RewrittenIntent>,
+    },
     /// The page in the thread's browser before and after a turn (JPEG files).
     PageSnapshot {
         url: String,
@@ -349,6 +358,25 @@ pub struct TranscriptItem {
 }
 
 /// A turn that wrote lines: the thread and its user message, and when.
+/// An earlier instruction whose lines a later turn removed or rewrote.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RewrittenIntent {
+    pub thread: ThreadId,
+    pub item: ItemId,
+    /// Its message's first line.
+    pub instruction: String,
+    pub title: String,
+    pub agent: String,
+    pub files: Vec<String>,
+    /// A few of the lines as they were.
+    pub lines: Vec<String>,
+    /// How many of its lines went.
+    pub count: usize,
+    /// The chat that asked its author, once asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<ThreadId>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LineOrigin {
     pub thread: ThreadId,
