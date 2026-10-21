@@ -20,6 +20,9 @@ What it does depends on a tag in the prompt:
   [replace PATH] OLD => NEW  replace the first OLD in PATH with NEW
   Keep the error … as a regression test: write tests/regression.sh, which
            checks that price.txt says "fixed"
+  A duel: as Red, write tests/feature.sh (and notes.txt, which isn't a test);
+           as Blue, first change that test, then (once it is put back) write
+           feature.txt
   anything else (also Elyra's follow-ups): add 1 to value.txt
 Every prompt is appended to prompts.log in the working directory, the
 instructions that lead a new session's first prompt to instructions.log, and
@@ -119,6 +122,20 @@ def prompt(rid, params):
             "sessionUpdate": "tool_call_update", "toolCallId": "edit-1", "status": "completed"}}})
         say(sid, "Edited " + edit.group(1) + ".")
         return end(rid)
+    duel = {
+        "You are Red in a duel": [("tests/feature.sh", "grep -q done feature.txt\n"), ("notes.txt", "not a test\n")],
+        "You are Blue in a duel": [("tests/feature.sh", "exit 0\n")],
+        "Elyra put back Red's locked tests": [("feature.txt", "done\n")],
+    }
+    for start, files in duel.items():
+        if text.startswith(start):
+            for name, content in files:
+                path = os.path.join(state["cwd"], name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "w") as f:
+                    f.write(content)
+            say(sid, "Wrote " + ", ".join(name for name, _ in files) + ".")
+            return end(rid)
     if text.startswith("Keep the error this thread fixed as a regression test"):
         os.makedirs(os.path.join(state["cwd"], "tests"), exist_ok=True)
         with open(os.path.join(state["cwd"], "tests", "regression.sh"), "w") as f:

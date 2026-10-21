@@ -17,6 +17,16 @@
     problems, and after a turn those go back to the agent like a broken step.
   - **Accept this layout** keeps an intended change.
   - See [The layout guard](docs/browser.md#the-layout-guard).
+- **Red vs. Blue.** One agent writes the tests and another the code, so the
+  tests don't share the code's blind spots. Start it from the command palette.
+  See [Red vs. Blue](docs/projects-and-threads.md#red-vs-blue).
+  - Red's tests must fail against the current code. Anything Red changes that
+    isn't a test is put back.
+  - Blue gets the tests locked, in the same worktree, until the checks pass. A
+    locked test Blue changes is put back.
+  - Blue can challenge a test with the new `challenge_test` tool. Red answers,
+    and may change it.
+  - Agents can start a duel with `start_duel`.
 
 ## 1.15.0
 

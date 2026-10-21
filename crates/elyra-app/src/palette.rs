@@ -156,6 +156,12 @@ fn commands() -> Vec<Command> {
             actions::BestOfN
         ),
         command!(
+            "Red vs. Blue… (one agent writes the tests, another the code)",
+            "",
+            IconName::Swords,
+            actions::NewDuel
+        ),
+        command!(
             "Toggle terminal",
             "⌘J",
             IconName::SquareTerminal,

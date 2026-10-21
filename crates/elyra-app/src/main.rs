@@ -18,6 +18,7 @@ mod context_view;
 mod conventional;
 mod day_summary;
 mod dialogs;
+mod duel;
 mod editors;
 mod events;
 mod export;
@@ -144,6 +145,7 @@ fn main() {
             .detach();
         automations::init(app.clone(), cx);
         events::init(app.clone(), cx);
+        duel::init(app.clone(), cx);
         cx.set_menus(menus());
 
         // Development: open in the background without taking focus.

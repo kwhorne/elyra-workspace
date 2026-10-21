@@ -894,6 +894,33 @@ def comments_on_my_pull_request_start_an_automation(world, project):
     expect("My own note" not in prompt and "Bump" not in prompt, "not yours, not bots': " + prompt)
 
 
+@scenario(check="test ! -f tests/feature.sh || sh tests/feature.sh")
+def red_writes_the_tests_and_blue_the_code(world, project):
+    text = world.tool("start_duel", project=project, requirement="Mark the feature done.",
+                      red="acp", blue="acp")
+    red = json.loads(text)["red_thread_id"]
+
+    def notices(thread):
+        return [i["text"] for i in world.items(thread) if i["kind"] == "notice"]
+    wait_for("Red's tests to be handed over", lambda: any("handed to Blue" in n for n in notices(red)), 60)
+    expect(any(n.startswith("Put back what isn't a test") and "notes.txt" in n for n in notices(red)),
+           f"Red only writes tests: {notices(red)}")
+    with world.db() as db:
+        blue, environment = db.execute("SELECT id, environment FROM threads WHERE title LIKE 'Blue · code%'").fetchone()
+        red_environment = db.execute("SELECT environment FROM threads WHERE id = ?", (red,)).fetchone()[0]
+    worktree = json.loads(red_environment).get("path")
+    expect(worktree and json.loads(environment).get("path") == worktree, "Blue works in Red's worktree")
+    expect(not os.path.exists(os.path.join(worktree, "notes.txt")), "notes.txt was put back")
+    wait_for("the duel to end", lambda: any("The duel is won" in n for n in notices(blue)), 90)
+    expect(any(n.startswith("Put back Red's locked tests: tests/feature.sh") for n in notices(blue)),
+           f"Blue's change to the test was put back: {notices(blue)}")
+    expect(open(os.path.join(worktree, "tests", "feature.sh")).read() == "grep -q done feature.txt\n",
+           "the test is as Red wrote it")
+    expect(any("The duel is won" in n for n in notices(red)), "Red hears of it too")
+    checks = [i for i in world.items(red) if i["kind"] == "check"]
+    expect(not checks, "Red's failing tests don't start automatic fixes")
+
+
 @scenario()
 def an_agent_comes_back_to_its_thread(world, project):
     thread = world.new_thread(

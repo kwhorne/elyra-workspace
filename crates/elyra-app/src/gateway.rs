@@ -299,6 +299,25 @@ fn tools() -> Vec<Tool> {
             }, "required": ["name", "prompt", "schedule"] }),
         ),
         tool(
+            "start_duel",
+            "Start a Red vs. Blue duel on a requirement: one agent (red) writes tests that must fail against the current code, in a new worktree; another (blue) then writes the code with those tests locked, until the checks pass. The tests don't share the code's blind spots. Needs the project's check command. Returns Red's thread id.",
+            json!({ "type": "object", "properties": {
+                "requirement": { "type": "string", "description": "What the code must do, as you would tell both agents" },
+                "project": { "type": "string", "description": "Project id, name or path; default: this thread's" },
+                "red": { "type": "string", "enum": ProviderKind::ALL.map(|k| k.as_str()), "description": "The agent that writes the tests" },
+                "blue": { "type": "string", "enum": ProviderKind::ALL.map(|k| k.as_str()), "description": "The agent that writes the code" }
+            }, "required": ["requirement", "red", "blue"] }),
+        ),
+        tool(
+            "challenge_test",
+            "For Blue in a duel: challenge one of Red's locked tests you are sure is wrong (it contradicts the requirement). Red answers, and may change it; the answer comes back here. At most 3 per duel; otherwise make the code pass the tests as they are.",
+            json!({ "type": "object", "properties": {
+                "file": { "type": "string" },
+                "test": { "type": "string", "description": "The test's name" },
+                "reason": { "type": "string", "description": "Why it is wrong, pointing at the requirement" }
+            }, "required": ["file", "test", "reason"] }),
+        ),
+        tool(
             "schedule_followup",
             "Come back to this thread later: at the time you give, Elyra sends your message to this thread as a new turn (for example \"check whether the deploy finished and the error rate is back to normal\"). Use it when something has to wait (a deploy, a CI run, a review) instead of asking the user to remind you. At most 3 waiting per thread, between 5 minutes and 7 days ahead. The user sees it in the thread and in Automations, and can cancel it.",
             json!({ "type": "object", "properties": {
@@ -513,6 +532,23 @@ async fn serve_call(app: Entity<AppState>, call: Call, cx: &mut AsyncApp) {
         symbols(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "why" {
         why(&app, &call, cx).await.map(Output::Text)
+    } else if call.tool == "challenge_test" {
+        match call.caller {
+            Caller::Thread(blue) => {
+                let file = arg(&call.args, "file").map(str::to_string);
+                let test = arg(&call.args, "test").map(str::to_string);
+                let reason = arg(&call.args, "reason").map(str::to_string);
+                match (file, test, reason) {
+                    (Ok(file), Ok(test), Ok(reason)) => {
+                        crate::duel::challenge(&app, blue, file, test, reason, cx)
+                            .await
+                            .map(Output::Text)
+                    }
+                    (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => Err(err),
+                }
+            }
+            Caller::Client { .. } => Err("Only Blue in a duel can challenge a test.".into()),
+        }
     } else if call.tool == "error_origin" {
         error_origin(&app, &call, cx).await.map(Output::Text)
     } else if call.tool == "ask_author" {
@@ -1417,6 +1453,41 @@ fn run_tool(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String,
         }
         "propose_automation" => propose_automation(app, call, cx),
         "schedule_followup" => schedule_followup(app, call, cx),
+        "start_duel" => {
+            let requirement = arg(args, "requirement")?.to_string();
+            let provider = |key: &str| {
+                args[key]
+                    .as_str()
+                    .and_then(ProviderKind::parse)
+                    .ok_or_else(|| format!("`{key}` must be one of the providers"))
+            };
+            let (red, blue) = (provider("red")?, provider("blue")?);
+            let state = app.read(cx);
+            let project = match args["project"].as_str().map(str::to_lowercase) {
+                Some(query) => state
+                    .projects
+                    .iter()
+                    .find(|p| {
+                        p.id.to_string() == query
+                            || p.name.to_lowercase() == query
+                            || p.path.display().to_string().to_lowercase() == query
+                    })
+                    .map(|p| p.id)
+                    .ok_or_else(|| format!("no project matches “{query}” (see list_projects)"))?,
+                None => match call.caller {
+                    Caller::Thread(id) => state
+                        .thread(id)
+                        .map(|t| t.project_id)
+                        .ok_or("no such thread")?,
+                    Caller::Client { .. } => return Err("Name the project.".into()),
+                },
+            };
+            let red_thread = crate::duel::start(app, project, requirement, red, blue, cx)?;
+            if let Caller::Thread(from) = call.caller {
+                crate::thread_access::remember(app.read(cx), from, red_thread);
+            }
+            Ok(json!({ "red_thread_id": red_thread.to_string() }).to_string())
+        }
         "propose_rule" => {
             let Caller::Thread(thread_id) = call.caller else {
                 return Err("Only an agent working in a thread can propose a rule.".into());
@@ -1582,7 +1653,7 @@ async fn wait_for_thread(
 
 /// Wait until the thread's turn is over (or it waits for approval); false
 /// when it is still running after `timeout`.
-async fn settle(
+pub(crate) async fn settle(
     app: &Entity<AppState>,
     id: ThreadId,
     timeout: Duration,

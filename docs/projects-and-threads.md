@@ -180,6 +180,34 @@ pick. When one is done and you like it best:
 The candidates are ordinary threads, so you can also talk to them before you
 choose. **Compare best of N** in a candidate's thread menu reopens the comparison.
 
+## Red vs. Blue
+
+When one agent writes both the code and its tests, the tests tend to share the
+code's blind spots. A duel splits them between two agents. Start one with
+**Red vs. Blue…** in the command palette (⌘K): write the requirement, and pick
+which agent writes the tests (Red) and which the code (Blue). Two different
+agents catch more. The project needs a check command (Context tab).
+
+1. **Red writes the tests**, in a new worktree. Elyra puts back anything Red
+   changes that isn't a test, and runs the checks: the tests must **fail**
+   against the current code, or they pin down nothing new and go back to Red
+   (up to three tries). Red's thread runs no automatic fixes; its tests are
+   meant to fail.
+2. **Blue writes the code**, in the same worktree, with Red's tests **locked**.
+   After each of Blue's turns, a locked test Blue changed is put back, and Blue
+   is told to make the code pass it as it is (three times, then the duel stops).
+   Blue's checks run as usual.
+3. **Challenging a test.** When Blue is sure a test contradicts the requirement,
+   it calls the gateway's `challenge_test`: Red gets the challenge and either
+   fixes the test (*AGREED*), which then becomes the locked version, or explains
+   why it stands (*DISAGREED*). Blue gets the answer. At most three per duel.
+4. **The duel is won** when Blue's code passes Red's tests and the checks are
+   green; both threads say so. Review and merge the worktree's branch as usual.
+
+Both threads are named after the requirement (*Red · tests · …* and
+*Blue · code · …*), and each step leaves a notice in them. Agents can start a
+duel with the gateway's `start_duel`.
+
 ## Agents side by side
 
 When several threads work in the same repository, in the same folder or in

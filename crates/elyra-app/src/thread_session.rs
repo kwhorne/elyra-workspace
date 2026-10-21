@@ -53,6 +53,8 @@ pub struct ThreadSession {
     kept_test: Option<ItemId>,
     /// The warm start was looked up for this thread's first message.
     warm_started: bool,
+    /// Don't run the checks after turns (Red in a duel writes failing tests).
+    pub skip_checks: bool,
     /// The working folder, its repository's shared git directory and its
     /// root, for the intent board (looked up once per folder).
     intent_repo: Option<(std::path::PathBuf, std::path::PathBuf, std::path::PathBuf)>,
@@ -135,6 +137,7 @@ impl ThreadSession {
             errors_in_turn: Vec::new(),
             kept_test: None,
             warm_started: false,
+            skip_checks: false,
             intent_repo: None,
             running: false,
             preparing: None,
@@ -1740,8 +1743,11 @@ impl ThreadSession {
 
     // ---- checks -----------------------------------------------------------
 
-    /// The project's check command, if it has one.
+    /// The project's check command, if it has one (and the thread runs it).
     pub fn check_command(&self) -> Option<String> {
+        if self.skip_checks {
+            return None;
+        }
         self.project
             .check_command
             .as_deref()

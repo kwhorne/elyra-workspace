@@ -1865,6 +1865,20 @@ impl Workspace {
         }
     }
 
+    fn on_new_duel(&mut self, _: &NewDuel, window: &mut Window, cx: &mut Context<Self>) {
+        let project = self
+            .active
+            .and_then(|id| self.app.read(cx).thread(id).map(|t| t.project_id))
+            .or(self.current_project);
+        match project {
+            Some(project) => crate::duel::start_dialog(self.app.clone(), project, window, cx),
+            None => window.push_notification(
+                Notification::info("Open a project first: a duel runs in a project's folder."),
+                cx,
+            ),
+        }
+    }
+
     /// Give `prompt` to each provider in a new thread with its own worktree.
     pub(crate) fn start_race(
         &mut self,
@@ -2765,6 +2779,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::on_review_branch))
             .on_action(cx.listener(Self::on_show_browser))
             .on_action(cx.listener(Self::on_best_of_n))
+            .on_action(cx.listener(Self::on_new_duel))
             .on_action(cx.listener(Self::on_todays_work))
             .on_action(cx.listener(Self::on_export_thread))
             .on_action(cx.listener(Self::on_fork_thread))
