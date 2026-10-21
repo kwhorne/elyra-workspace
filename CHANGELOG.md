@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 1.17.0
+
+The right agent for the part of the code you're working on, from how each has
+done there.
 
 - **Smart routing: which agent for this part of the code.** Every
   instruction's outcome is now tied to the folders it wrote in. When a new
