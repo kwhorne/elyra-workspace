@@ -2396,7 +2396,10 @@ impl ThreadSession {
                 if stopped {
                     break;
                 }
-                let outcome = crate::browser_tools::replay(thread, &journey, cx).await;
+                let mut outcome = crate::browser_tools::replay(thread, &journey, cx).await;
+                let _ = this.update(cx, |this, _| {
+                    crate::journeys::guard_layout(&this.working_dir(), &journey, &mut outcome)
+                });
                 let failed = this
                     .update(cx, |this, cx| {
                         this.append_journey(&journey, &outcome, cx);
@@ -2438,9 +2441,32 @@ impl ThreadSession {
                 total_steps: journey.steps.len(),
                 failure: outcome.failure.clone(),
                 duration_ms: outcome.duration_ms,
+                layout: outcome.layout_new.clone(),
+                layout_saved: outcome.layout_saved,
+                layout_accepted: false,
             },
             cx,
         );
+    }
+
+    /// Accept a journey's new layout problems as how its pages look now.
+    pub fn accept_layout(&mut self, item: ItemId, cx: &mut Context<Self>) {
+        let Some(index) = self.items.iter().position(|i| i.id == item) else {
+            return;
+        };
+        let dir = self.working_dir();
+        if let ItemContent::Journey {
+            name,
+            layout,
+            layout_accepted,
+            ..
+        } = &mut self.items[index].content
+        {
+            crate::journeys::accept_layout(&dir, name, layout);
+            *layout_accepted = true;
+            self.persist_item(index, cx);
+            cx.notify();
+        }
     }
 
     /// Replay journeys now (from the Context tab): shown, not sent to the agent.
@@ -2459,8 +2485,11 @@ impl ThreadSession {
         cx.notify();
         cx.spawn(async move |this, cx| {
             for journey in journeys {
-                let outcome = crate::browser_tools::replay(thread, &journey, cx).await;
-                let _ = this.update(cx, |this, cx| this.append_journey(&journey, &outcome, cx));
+                let mut outcome = crate::browser_tools::replay(thread, &journey, cx).await;
+                let _ = this.update(cx, |this, cx| {
+                    crate::journeys::guard_layout(&this.working_dir(), &journey, &mut outcome);
+                    this.append_journey(&journey, &outcome, cx)
+                });
             }
             let _ = this.update(cx, |this, cx| {
                 this.activity = None;

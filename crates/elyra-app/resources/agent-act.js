@@ -136,5 +136,58 @@
     return JSON.stringify(found.error ? { present: false } : { present: true, element: describe(found.el) });
   };
 
-  window.__elyraAct = { click, fill, press, present };
+  // Layout problems a functional check misses: the page wider than the
+  // window, controls (partly) outside it, controls covering each other, text
+  // cut off. Each comes with a key that stays the same between runs (no
+  // text in it), to compare with how the page looked before.
+  const layout = () => {
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const issues = [];
+    const add = (kind, el, detail) => {
+      const key = el ? `${kind}:${shape(el)}` : `${kind}:page`;
+      if (!issues.some((i) => i.key === key)) issues.push({ key, kind, element: el ? describe(el) : 'the page', detail });
+    };
+    const shape = (el) => {
+      let d = el.tagName.toLowerCase();
+      if (el.id) d += '#' + el.id;
+      if (el.classList && el.classList.length) d += '.' + [...el.classList].slice(0, 3).join('.');
+      return d;
+    };
+    const wide = document.documentElement.scrollWidth - vw;
+    if (wide > 1) add('overflow', null, `the page is ${Math.round(wide)} px wider than the window`);
+    const controls = [...document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea, [role=button], [role=link]')]
+      .filter(visible).slice(0, 300);
+    for (const el of controls) {
+      const r = el.getBoundingClientRect();
+      if (r.right > vw + 1 || r.left < -1) {
+        add('offscreen', el, `${Math.round(Math.max(r.right - vw, -r.left))} px outside the window`);
+      }
+    }
+    for (let i = 0; i < controls.length; i++) {
+      const a = controls[i].getBoundingClientRect();
+      for (let j = i + 1; j < controls.length; j++) {
+        if (controls[i].contains(controls[j]) || controls[j].contains(controls[i])) continue;
+        const b = controls[j].getBoundingClientRect();
+        const w = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+        const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+        if (w <= 0 || h <= 0) continue;
+        const smaller = Math.min(a.width * a.height, b.width * b.height);
+        if (smaller > 0 && (w * h) / smaller > 0.25) {
+          add('overlap', controls[j], `covers ${describe(controls[i])}`);
+        }
+      }
+    }
+    for (const el of document.querySelectorAll('button, a, label, h1, h2, h3, th, td, [role=button]')) {
+      if (!visible(el)) continue;
+      const style = getComputedStyle(el);
+      const clips = style.overflowX === 'hidden' || style.overflowX === 'clip' || style.textOverflow === 'ellipsis';
+      if (clips && el.scrollWidth > el.clientWidth + 2 && (el.innerText || '').trim()) {
+        add('clipped', el, 'its text is cut off');
+      }
+      if (issues.length > 40) break;
+    }
+    return JSON.stringify({ issues: issues.slice(0, 40), width: vw });
+  };
+
+  window.__elyraAct = { click, fill, press, present, layout };
 })();

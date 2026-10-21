@@ -831,13 +831,29 @@ fn render_item(
             total_steps,
             failure,
             duration_ms,
+            layout,
+            layout_saved,
+            layout_accepted,
         } => {
+            let layout_changed = !layout.is_empty();
             let (icon, color, label) = if *passed {
                 (IconName::Route, cx.theme().success, "Journey passed")
+            } else if layout_changed && *layout_accepted {
+                (
+                    IconName::Route,
+                    cx.theme().muted_foreground,
+                    "Journey layout accepted",
+                )
+            } else if layout_changed {
+                (
+                    IconName::Route,
+                    cx.theme().warning,
+                    "Journey layout changed",
+                )
             } else {
                 (IconName::Route, cx.theme().danger, "Journey failed")
             };
-            let summary = if *passed {
+            let summary = if *passed || layout_changed {
                 format!(
                     "{name} · {total_steps} steps · {:.1}s",
                     *duration_ms as f64 / 1000.0
@@ -876,15 +892,70 @@ fn render_item(
                                 .child(summary),
                         ),
                 )
-                .when_some(failure.clone(), |this, failure| {
+                .when_some(
+                    failure.clone().filter(|_| !layout_changed),
+                    |this, failure| {
+                        this.child(
+                            div()
+                                .px_2()
+                                .pb_1()
+                                .text_xs()
+                                .whitespace_normal()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(failure),
+                        )
+                    },
+                )
+                .when(layout_changed, |this| {
+                    this.child(
+                        v_flex()
+                            .px_2()
+                            .pb_1()
+                            .gap_1()
+                            .text_xs()
+                            .children(layout.iter().take(8).map(|problem| {
+                                div()
+                                    .whitespace_normal()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(crate::journeys::describe_problem(problem))
+                            }))
+                            .when(!*layout_accepted, |this| {
+                                this.child(
+                                    h_flex().child(
+                                        Button::new(SharedString::from(format!(
+                                            "layout-accept-{id}"
+                                        )))
+                                        .xsmall()
+                                        .outline()
+                                        .label("Accept this layout")
+                                        .tooltip("The change is intended: don't report these again")
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.session.update(cx, |session, cx| {
+                                                    session.accept_layout(id, cx)
+                                                })
+                                            }),
+                                        ),
+                                    ),
+                                )
+                            }),
+                    )
+                })
+                .when_some(*layout_saved, |this, count| {
                     this.child(
                         div()
                             .px_2()
                             .pb_1()
                             .text_xs()
-                            .whitespace_normal()
                             .text_color(cx.theme().muted_foreground)
-                            .child(failure),
+                            .child(format!(
+                                "Its pages' layout was saved{}; later replays report what changes.",
+                                match count {
+                                    0 => String::new(),
+                                    1 => " (with 1 problem already there)".into(),
+                                    n => format!(" (with {n} problems already there)"),
+                                }
+                            )),
                     )
                 })
                 .into_any_element()

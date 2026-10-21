@@ -119,6 +119,25 @@ read, edit and commit with the code.
 - Addresses are replayed on the site the thread's browser shows, so a journey
   saved on `shop.test` also runs on a worktree's own site.
 
+### The layout guard
+
+A journey checks that a flow works, not that it still looks right. So after
+every step, the replay also measures the page's layout, without a model:
+
+- the page wider than the window (a horizontal scrollbar),
+- buttons, links and fields partly outside the window,
+- buttons, links and fields covering each other, and
+- text cut off in buttons, links, labels, headings and table cells.
+
+The first replay saves how the journey's pages look, in
+`.elyra/journeys/layout/<name>.json` (problems already there included), and the
+card says so. Later replays report only **problems the pages didn't have**:
+*Journey layout changed*, with each one (*after "click Checkout", overlapping:
+button.pay "Pay" (covers button.back "Back")*). After a turn, that goes back to
+the agent like a broken step, to fix in the CSS or markup. When the change is
+intended, **Accept this layout** stops reporting those. Commit the layout file
+with the journey, so everyone compares with the same.
+
 Replaying clicks and types on the page, like the agent's own actions: an agent
 asks first unless the thread is in Full access.
 

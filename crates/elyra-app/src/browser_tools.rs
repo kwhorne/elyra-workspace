@@ -627,7 +627,8 @@ async fn run_journeys(
     let mut lines = Vec::new();
     let mut failed = 0;
     for journey in &journeys {
-        let outcome = replay(thread, journey, cx).await;
+        let mut outcome = replay(thread, journey, cx).await;
+        crate::journeys::guard_layout(&dir, journey, &mut outcome);
         if !outcome.passed {
             failed += 1;
         }
@@ -638,6 +639,9 @@ async fn run_journeys(
                 outcome.steps_run,
                 outcome.duration_ms as f64 / 1000.
             ),
+            Some(why) if !outcome.layout_new.is_empty() => {
+                format!("LAYOUT  {}: {why}", journey.name)
+            }
             Some(why) => format!(
                 "FAILED  {} at step {}: {why}",
                 journey.name,
@@ -684,11 +688,13 @@ pub async fn replay(
 ) -> crate::journeys::Outcome {
     use crate::journeys::{Outcome, Step};
     let started = std::time::Instant::now();
+    let mut layout = Vec::new();
     let fail = |steps_run: usize, step: &Step, why: String| Outcome {
         passed: false,
         steps_run,
         failure: Some(format!("{}: {why}", step.describe())),
         duration_ms: started.elapsed().as_millis() as u64,
+        ..Default::default()
     };
     let origin = cx.update(|cx| {
         browser_of(thread, cx)
@@ -738,13 +744,34 @@ pub async fn replay(
         if let Err(why) = result {
             return fail(index, step, why);
         }
+        // How the page looks now, for the layout guard.
+        layout.push((index, measure_layout(thread, cx).await));
     }
     Outcome {
         passed: true,
         steps_run: journey.steps.len(),
         failure: None,
         duration_ms: started.elapsed().as_millis() as u64,
+        layout,
+        ..Default::default()
     }
+}
+
+/// The page's layout problems now (agent-act.js `layout()`).
+async fn measure_layout(thread: ThreadId, cx: &mut AsyncApp) -> Vec<crate::journeys::Measured> {
+    let page = cx.update(|cx| browser_of(thread, cx).and_then(|b| b.read(cx).web_view()));
+    let Some(page) = page else {
+        return Vec::new();
+    };
+    let (tx, rx) = async_channel::bounded::<Option<String>>(1);
+    page.agent_act("layout()", move |json| {
+        tx.try_send(json).ok();
+    });
+    wait(rx, cx)
+        .await
+        .flatten()
+        .map(|json| crate::journeys::parse_layout(&json))
+        .unwrap_or_default()
 }
 
 /// How long an action keeps looking for its element (the page may still render).

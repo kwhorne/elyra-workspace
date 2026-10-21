@@ -10,6 +10,13 @@
   - Half the new threads start without it. Stats compares the first turns of
     both: tool calls before the first edit, time to it, and cost.
   - See [Warm start](docs/context-and-goals.md#warm-start-experiment).
+- **The layout guard for journeys.** After every step of a journey replay,
+  the page's layout is measured too: the page wider than the window, controls
+  outside it or covering each other, and text cut off.
+  - The first replay saves how the pages look. Later ones report only new
+    problems, and after a turn those go back to the agent like a broken step.
+  - **Accept this layout** keeps an intended change.
+  - See [The layout guard](docs/browser.md#the-layout-guard).
 
 ## 1.15.0
 

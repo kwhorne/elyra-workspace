@@ -347,6 +347,16 @@ pub enum ItemContent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         failure: Option<String>,
         duration_ms: u64,
+        /// Layout problems the page didn't have before (see `journeys`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        layout: Vec<LayoutProblem>,
+        /// The first replay with the layout guard: how the page looks was
+        /// saved, with this many problems already there.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        layout_saved: Option<usize>,
+        /// The user accepted the new layout as it is.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        layout_accepted: bool,
     },
     /// The project's checks, run after a turn that changed files.
     Check {
@@ -370,6 +380,22 @@ pub struct TranscriptItem {
 }
 
 /// A turn that wrote lines: the thread and its user message, and when.
+/// A layout problem on a page during a journey step: the page wider than the
+/// window, a control outside it, controls covering each other, text cut off.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct LayoutProblem {
+    /// Which step (0-based) and what it does.
+    pub step: usize,
+    pub step_text: String,
+    /// `overflow`, `offscreen`, `overlap` or `clipped`.
+    pub kind: String,
+    /// What it is about, for people.
+    pub element: String,
+    pub detail: String,
+    /// The same between runs, for comparing.
+    pub key: String,
+}
+
 /// Where keeping an error as a test stands.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
