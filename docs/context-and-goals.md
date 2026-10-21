@@ -97,6 +97,15 @@ propose that as a rule: a card in the thread with the rule and what taught it.
 get it; commit it with your changes. **Add to project instructions** keeps it in
 Elyra only. **Dismiss** drops it.
 
+**Rules that may be stale.** Rules name files, folders and code in backticks
+(*Put VAT in \`TaxService\`*). When what a rule names is gone from the repository
+(no file has that path, no file mentions that name any more, or a Boost rule's
+glob matches no file), the Context tab lists the rule under *Rules that may be
+stale*, with what is gone. Agents read rules on every turn, so a stale one
+misleads them and costs context. **Remove** takes its line out of the file;
+**Where it came from** opens the thread that proposed it, to see what taught it.
+The generated guidelines of Laravel Boost and Elyra Framework aren't checked.
+
 In a project with [Laravel Boost](#laravel-boost)'s project rules, the rule goes
 to `.ai/rules` instead, where Boost keeps them: the agent says which files it
 applies to (*app/Http/Controllers/\*\**), the card shows it, and the rule is added
@@ -130,6 +139,29 @@ tries it.
   *finished* means the checks passed.
 
 The command applies to every thread in the project. Empty turns it off.
+
+### Keep an error as a test
+
+When a message carried an error (a server error from
+[Grove](#grove), or one the Laravel app logged, sent with **Add to message**,
+or an [app error automation](automations-and-tasks.md#when-something-happens)
+run), the thread shows a card after the turn: *This turn worked on an error*.
+**Keep as test** has the agent turn it into a regression test in the project's
+own test suite, reproducing exactly what failed, without touching the fix.
+
+When that turn ends, Elyra checks the test itself, in a temporary checkout, with
+the project's check command:
+
+- **with the fix**, where the test must pass, and
+- **with the folder as it was before the fix**, plus only the new test files,
+  where it must fail.
+
+*Kept: tests/Feature/CartTest.php passes with the fix and fails without it* means
+it guards the fix. If it passes without the fix too (it wouldn't catch the error
+coming back) or fails with it, the card says so, and **Ask the agent to fix the
+test** sends it what was wrong. Test files are recognised by the usual
+conventions (`tests/`, `*Test.php`, `*.test.ts`, `*_test.go`, …); without a check
+command the test can't be run, and the card says that instead.
 
 ### Who broke it?
 

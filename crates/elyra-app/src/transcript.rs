@@ -925,6 +925,9 @@ fn render_item(
             cx,
         ),
         ItemContent::Rewrote { instructions, .. } => rewrote_card(id, instructions, cx),
+        ItemContent::ErrorFixed { errors, test, .. } => {
+            error_fixed_card(id, errors, test.as_ref(), session.running, cx)
+        }
         ItemContent::PageSnapshot { url, before, after } => {
             let picture = |label: &'static str, path: &str| {
                 let path = std::path::PathBuf::from(path);
@@ -1138,6 +1141,93 @@ fn proposal_card(
 /// (the last line shows while folded, when they failed).
 #[allow(clippy::too_many_arguments)]
 /// An instruction taken back.
+/// The turn worked on errors: keep them as a regression test.
+fn error_fixed_card(
+    id: ItemId,
+    errors: &[String],
+    test: Option<&elyra_core::KeptTest>,
+    running: bool,
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    use elyra_core::KeptTest;
+    let muted = cx.theme().muted_foreground;
+    let (icon, color) = match test {
+        Some(KeptTest::Guards { .. }) => (IconName::CircleCheck, cx.theme().success),
+        Some(KeptTest::PassesWithoutFix { .. } | KeptTest::FailsWithFix { .. }) => {
+            (IconName::TriangleAlert, cx.theme().warning)
+        }
+        _ => (IconName::FlaskConical, muted),
+    };
+    let button = |label: &'static str, tooltip: &'static str| {
+        Button::new(SharedString::from(format!("keep-test-{id}")))
+            .xsmall()
+            .outline()
+            .label(label)
+            .tooltip(tooltip)
+            .disabled(running)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.session
+                    .update(cx, |session, cx| session.keep_as_test(id, cx))
+            }))
+    };
+    v_flex()
+        .w_full()
+        .p_2()
+        .gap_1()
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().border)
+        .child(
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .child(Icon::new(icon).small().text_color(color))
+                .child(div().font_weight(FontWeight::MEDIUM).child(if errors.len() == 1 {
+                    "This turn worked on an error"
+                } else {
+                    "This turn worked on errors"
+                })),
+        )
+        .children(errors.iter().map(|error| {
+            div()
+                .text_xs()
+                .text_color(muted)
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(error.clone())
+        }))
+        .when_some(test, |this, test| {
+            this.child(
+                div()
+                    .text_xs()
+                    .whitespace_normal()
+                    .text_color(match test {
+                        KeptTest::Guards { .. } => cx.theme().success,
+                        KeptTest::PassesWithoutFix { .. } | KeptTest::FailsWithFix { .. } => {
+                            cx.theme().warning
+                        }
+                        _ => muted,
+                    })
+                    .child(crate::keep_test::describe(test)),
+            )
+        })
+        .child(h_flex().gap_2().map(|this| match test {
+            None => this.child(button(
+                "Keep as test",
+                "Have the agent turn it into a regression test; Elyra then checks that it fails without the fix",
+            )),
+            Some(KeptTest::PassesWithoutFix { .. } | KeptTest::FailsWithFix { .. }) => this.child(
+                button("Ask the agent to fix the test", "Send the agent what was wrong with it"),
+            ),
+            Some(KeptTest::NotVerified { .. }) => {
+                this.child(button("Try again", "Ask the agent for the test again"))
+            }
+            Some(_) => this,
+        }))
+        .into_any_element()
+}
+
 /// The turn took out lines written for other instructions.
 fn rewrote_card(
     id: ItemId,

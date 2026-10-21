@@ -2,7 +2,10 @@
 //! earlier states (a turn's checkpoint) without touching the working tree.
 //! What git ignores at the top of the repository (dependencies such as
 //! `vendor` and `node_modules`, `.env`) is linked in from the real folder, so
-//! the project's checks can run there. Removed when dropped.
+//! the project's checks can run there. Composer's `vendor` is cloned instead
+//! (APFS, no extra space): PHP resolves symlinks, so a linked autoloader would
+//! load the app's classes from the real folder, not the checkout. Removed
+//! when dropped.
 
 use crate::run_ok;
 use anyhow::{Context as _, Result};
@@ -67,6 +70,9 @@ impl ScratchCheckout {
             if to.exists() || entry == ".git" {
                 continue;
             }
+            if entry == "vendor" && self.repo.join("composer.json").is_file() && clone(&from, &to) {
+                continue;
+            }
             #[cfg(unix)]
             std::os::unix::fs::symlink(&from, &to)
                 .with_context(|| format!("linking {entry} into the temporary checkout"))?;
@@ -83,6 +89,17 @@ impl Drop for ScratchCheckout {
             let _ = run_ok(&self.repo, &["worktree", "prune"]);
         }
     }
+}
+
+/// A copy-on-write clone of a folder (APFS); false where that isn't possible.
+fn clone(from: &Path, to: &Path) -> bool {
+    cfg!(target_os = "macos")
+        && std::process::Command::new("cp")
+            .arg("-cRp")
+            .arg(from)
+            .arg(to)
+            .status()
+            .is_ok_and(|s| s.success())
 }
 
 /// The ignored entries at the top of the repository, from `git ls-files
@@ -118,6 +135,7 @@ mod tests {
         commit_staged(&repo, "second").unwrap();
         std::fs::create_dir_all(repo.join("vendor/lib")).unwrap();
         std::fs::write(repo.join(".env"), "KEY=1\n").unwrap();
+        std::fs::write(repo.join("composer.json"), "{}\n").unwrap();
 
         let dir = {
             let scratch = ScratchCheckout::new(&repo).unwrap();
@@ -125,6 +143,11 @@ mod tests {
             assert_eq!(read("app.txt"), "two\n");
             assert_eq!(read(".env"), "KEY=1\n", "ignored files are linked in");
             assert!(scratch.dir().join("vendor/lib").is_dir());
+            assert!(
+                cfg!(not(target_os = "macos")) || !scratch.dir().join("vendor").is_symlink(),
+                "Composer's vendor is a clone, so PHP loads the checkout's classes"
+            );
+            assert!(scratch.dir().join(".env").is_symlink());
             scratch.checkout(&first).unwrap();
             assert_eq!(read("app.txt"), "one\n");
             assert_eq!(read(".env"), "KEY=1\n", "and stay");

@@ -644,6 +644,23 @@ impl ThreadView {
                 _ => None,
             })
             .collect();
+        // Errors sent along can be kept as a test once the turn is done.
+        let errors: Vec<(String, String)> = self
+            .attachments
+            .iter()
+            .filter_map(|attachment| match attachment {
+                Attachment::Context { title, content, .. }
+                    if title.starts_with("Server error") || title.starts_with("App error") =>
+                {
+                    Some((title.clone(), content.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        if !errors.is_empty() {
+            self.session
+                .update(cx, |session, _| session.errors_in_turn = errors);
+        }
         let prompt = composer::build_prompt(&text, std::mem::take(&mut self.attachments));
         if !replays.is_empty() {
             self.session

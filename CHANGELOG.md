@@ -9,6 +9,19 @@
     the new code still does what it was asked to do.
   - The agent that took them out hears of it with your next message.
   - See [When a turn takes out another instruction's lines](docs/git-and-review.md#when-a-turn-takes-out-another-instructions-lines).
+- **Keep an error as a test.** After a turn worked on an error (from Grove, the
+  app's log or an app error automation), **Keep as test** has the agent write a
+  regression test. Elyra then runs the checks with the fix, where the test must
+  pass, and against the code from before the fix, where it must fail, and says
+  whether the test guards the fix. See
+  [Keep an error as a test](docs/context-and-goals.md#keep-an-error-as-a-test).
+- **Rules that may be stale.** The Context tab lists rules in AGENTS.md,
+  CLAUDE.md, GEMINI.md and `.ai/rules` that name files or code no longer in the
+  repository. You can remove them, or open the thread that proposed them.
+- **Fix:** in Laravel projects, *Who broke it?* ran the checks against the
+  current code instead of earlier states. Its temporary checkout linked
+  `vendor/`, and PHP's autoloader then loaded the app's classes from the real
+  folder. `vendor/` is now cloned (APFS) instead.
 
 ## 1.14.0
 

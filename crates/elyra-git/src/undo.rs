@@ -30,7 +30,7 @@ pub fn changed_paths(repo: &Path, from: &str, to: &str) -> Result<Vec<String>> {
 }
 
 /// A file's content in a snapshot; None when it isn't there.
-fn content_at(repo: &Path, commit: &str, path: &str) -> Option<Vec<u8>> {
+pub fn content_at(repo: &Path, commit: &str, path: &str) -> Option<Vec<u8>> {
     let output = std::process::Command::new("git")
         .current_dir(repo)
         .args(["show", &format!("{commit}:{path}")])

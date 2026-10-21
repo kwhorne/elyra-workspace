@@ -249,6 +249,18 @@ pub enum ItemContent {
         text: String,
         is_error: bool,
     },
+    /// The turn worked on errors (from Grove or the app's log), which can be
+    /// kept as a regression test.
+    ErrorFixed {
+        /// What failed, one line each.
+        errors: Vec<String>,
+        /// What the agent was given about them.
+        detail: String,
+        /// The folder before the fix (the message's checkpoint).
+        before: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        test: Option<KeptTest>,
+    },
     /// The turn removed or rewrote lines that were written for other
     /// instructions (from the line record): what they were for, to check
     /// that it still holds.
@@ -358,6 +370,24 @@ pub struct TranscriptItem {
 }
 
 /// A turn that wrote lines: the thread and its user message, and when.
+/// Where keeping an error as a test stands.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum KeptTest {
+    /// The agent is writing the test.
+    Writing,
+    /// Running it with and without the fix.
+    Checking,
+    /// It passes with the fix and fails without it.
+    Guards { files: Vec<String> },
+    /// It passes without the fix too: it doesn't catch the error.
+    PassesWithoutFix { files: Vec<String> },
+    /// It fails with the fix as well.
+    FailsWithFix { files: Vec<String>, output: String },
+    /// It couldn't be run against the code from before the fix.
+    NotVerified { reason: String },
+}
+
 /// An earlier instruction whose lines a later turn removed or rewrote.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RewrittenIntent {

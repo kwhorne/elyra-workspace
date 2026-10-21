@@ -213,6 +213,13 @@ fn start_run(
         Some(event) => crate::events::prompt(&automation.prompt, event),
         None => automation.prompt.clone(),
     };
+    // An error the app logged can be kept as a test once the run fixed it.
+    if let Some(event) = &event
+        && automation.schedule.trigger() == Some(&elyra_core::Trigger::AppError)
+    {
+        let error = (format!("App error: {}", event.title), event.text.clone());
+        session.update(cx, |session, _| session.errors_in_turn = vec![error]);
+    }
     session.update(cx, |session, cx| session.submit(Prompt::text(prompt), cx));
 }
 

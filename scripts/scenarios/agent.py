@@ -18,6 +18,8 @@ What it does depends on a tag in the prompt:
   [edit PATH] TEXT   the same, as an ACP edit tool call (what Elyra sees of
            a real agent's edit)
   [replace PATH] OLD => NEW  replace the first OLD in PATH with NEW
+  Keep the error … as a regression test: write tests/regression.sh, which
+           checks that price.txt says "fixed"
   anything else (also Elyra's follow-ups): add 1 to value.txt
 Every prompt is appended to prompts.log in the working directory, the
 instructions that lead a new session's first prompt to instructions.log, and
@@ -116,6 +118,12 @@ def prompt(rid, params):
         send({"method": "session/update", "params": {"sessionId": sid, "update": {
             "sessionUpdate": "tool_call_update", "toolCallId": "edit-1", "status": "completed"}}})
         say(sid, "Edited " + edit.group(1) + ".")
+        return end(rid)
+    if text.startswith("Keep the error this thread fixed as a regression test"):
+        os.makedirs(os.path.join(state["cwd"], "tests"), exist_ok=True)
+        with open(os.path.join(state["cwd"], "tests", "regression.sh"), "w") as f:
+            f.write("grep -q fixed price.txt\n")
+        say(sid, "Added tests/regression.sh.")
         return end(rid)
     replace = re.search(r"\[replace ([^\]]+)\] (.*?) => (.*)", text, re.S)
     if replace:

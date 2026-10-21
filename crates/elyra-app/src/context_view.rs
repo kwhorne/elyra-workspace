@@ -9,7 +9,9 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::path::{Path, PathBuf};
@@ -129,6 +131,8 @@ pub struct ContextView {
     /// Framework guidelines in the instructions the agent reads, and their
     /// size.
     guidelines: Vec<(String, u64)>,
+    /// Rules naming what is gone (None: not looked yet).
+    stale_rules: Option<Vec<crate::rules_health::Stale>>,
     /// The project's saved browser journeys.
     journeys: Vec<(std::path::PathBuf, Result<crate::journeys::Journey, String>)>,
     goal: Entity<TextareaState>,
@@ -241,6 +245,7 @@ impl ContextView {
             skills: Vec::new(),
             stack: Default::default(),
             guidelines: Vec::new(),
+            stale_rules: None,
             journeys: Vec::new(),
             goal,
             budget,
@@ -506,7 +511,174 @@ impl ContextView {
             self.session.read(cx).thread.provider,
         );
         self.journeys = crate::journeys::load_all(&self.session.read(cx).working_dir());
+        self.check_rules(cx);
         cx.notify();
+    }
+
+    /// Look for rules that name what is gone, in the background.
+    fn check_rules(&mut self, cx: &mut Context<Self>) {
+        let dir = self.session.read(cx).working_dir();
+        let job = cx
+            .background_executor()
+            .spawn(async move { crate::rules_health::check(&dir) });
+        cx.spawn(async move |this, cx| {
+            let stale = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.stale_rules = Some(stale);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn remove_rule(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(stale) = self
+            .stale_rules
+            .as_ref()
+            .and_then(|s| s.get(index))
+            .cloned()
+        else {
+            return;
+        };
+        let dir = self.session.read(cx).working_dir();
+        if let Err(err) = crate::rules_health::remove(&dir, &stale.rule) {
+            log::warn!("removing a rule: {err:#}");
+        }
+        self.check_rules(cx);
+    }
+
+    /// Open the thread that proposed the rule, if one did.
+    fn rule_origin(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(stale) = self
+            .stale_rules
+            .as_ref()
+            .and_then(|s| s.get(index))
+            .cloned()
+        else {
+            return;
+        };
+        let rule = stale.rule.text.trim_end_matches('.').replace('"', "");
+        let filter = elyra_core::SearchFilter {
+            project: Some(self.session.read(cx).project.id),
+            archived: true,
+            messages_only: false,
+        };
+        let found = self
+            .app
+            .read(cx)
+            .store
+            .search_transcripts(&format!("\"{rule}\""), &filter, 20)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|hit| hit.kind == "tool_use")
+            .or_else(|| {
+                self.app
+                    .read(cx)
+                    .store
+                    .search_transcripts(&format!("\"{rule}\""), &filter, 1)
+                    .ok()?
+                    .into_iter()
+                    .next()
+            });
+        match found {
+            Some(hit) => {
+                if let Some(hub) = cx.try_global::<crate::browser_tools::BrowserHub>() {
+                    let workspace = hub.workspace.clone();
+                    let _ = workspace.update(cx, |this, cx| this.activate(hit.thread, window, cx));
+                }
+            }
+            None => window.push_notification(
+                "No thread in this project mentions this rule: it was written by hand, or before the threads that remain.",
+                cx,
+            ),
+        }
+    }
+
+    fn render_rules(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let stale = self.stale_rules.as_ref()?;
+        if stale.is_empty() {
+            return None;
+        }
+        let muted = cx.theme().muted_foreground;
+        let mut section = v_flex()
+            .gap_2()
+            .child(Self::section("Rules that may be stale", cx))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .whitespace_normal()
+                    .child("These rules name files or code that aren't in the repository any more. Agents read them on every turn: fix or remove them."),
+            );
+        for (index, item) in stale.iter().enumerate() {
+            let what = item
+                .missing
+                .iter()
+                .map(|m| format!("`{m}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            section = section.child(
+                v_flex()
+                    .gap_1()
+                    .p_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_color(muted)
+                            .child(format!("{}:{}", item.rule.file, item.rule.line)),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .whitespace_normal()
+                            .child(item.rule.text.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().warning)
+                            .whitespace_normal()
+                            .child(if item.frontmatter {
+                                format!("Matches no file: {what}")
+                            } else {
+                                format!("Gone: {what}")
+                            }),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .when(!item.frontmatter, |this| {
+                                this.child(
+                                    Button::new(SharedString::from(format!("rule-remove-{index}")))
+                                        .xsmall()
+                                        .outline()
+                                        .label("Remove")
+                                        .tooltip("Take the rule's line out of the file")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.remove_rule(index, cx)
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new(SharedString::from(format!("rule-origin-{index}")))
+                                    .xsmall()
+                                    .ghost()
+                                    .label("Where it came from")
+                                    .tooltip(
+                                        "Open the thread that proposed it, to see what taught it",
+                                    )
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.rule_origin(index, window, cx)
+                                    })),
+                            ),
+                    ),
+            );
+        }
+        Some(section.into_any_element())
     }
 
     fn render_journeys(&self, cx: &Context<Self>) -> AnyElement {
@@ -1374,6 +1546,7 @@ impl Render for ContextView {
                     .child(self.render_checks(&project_name, cx))
                     .child(self.render_journeys(cx))
                     .child(self.render_shared(cx))
+                    .children(self.render_rules(cx))
                     .child(
                         v_flex()
                             .gap_2()

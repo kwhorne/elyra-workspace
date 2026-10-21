@@ -137,6 +137,11 @@ fn title_of(area: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The globs in a Boost rule file's frontmatter.
+pub fn globs_of(text: &str) -> Vec<String> {
+    globs(text)
+}
+
 /// The globs in a rule file's frontmatter (`paths:` list).
 fn globs(text: &str) -> Vec<String> {
     let Some(rest) = text.strip_prefix("---\n") else {
