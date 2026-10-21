@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Smart routing: which agent for this part of the code.** Every
+  instruction's outcome is now tied to the folders it wrote in. When a new
+  thread's first message names paths or symbols where one agent has clearly
+  done better, a line above the message box says so, and one click gives the
+  thread to that agent. To have it picked by itself, turn on Settings → Pick the
+  agent from your stats. See
+  [Which agent for this part of the code](docs/context-and-goals.md#which-agent-for-this-part-of-the-code).
+
 ## 1.16.0
 
 Two agents against each other: Red writes the tests, Blue the code. Journeys

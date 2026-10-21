@@ -3,7 +3,7 @@ use crate::orchestration::*;
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, Row, params};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -843,6 +843,30 @@ impl Store {
             .into_iter()
             .flatten()
             .collect())
+    }
+
+    /// The files each instruction (thread, user message) wrote lines in, for
+    /// a project.
+    pub fn instruction_paths(
+        &self,
+        project: ProjectId,
+    ) -> Result<HashMap<(ThreadId, ItemId), Vec<String>>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT thread_id, item_id, path FROM line_origins WHERE project_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![project.to_string()], |row| {
+            Ok((
+                parse_uuid(row, 0)?,
+                parse_uuid(row, 1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut out: HashMap<(ThreadId, ItemId), Vec<String>> = HashMap::new();
+        for row in rows {
+            let (thread, item, path) = row?;
+            out.entry((thread, item)).or_default().push(path);
+        }
+        Ok(out)
     }
 
     /// Every recorded origin of lines in this file: (hash, thread, the user
@@ -1711,6 +1735,13 @@ mod tests {
         );
         let file = store.file_origins(project, "app/Order.php", 10).unwrap();
         assert_eq!((file[0].item, file[0].lines), (second, 2));
+        let paths = store.instruction_paths(project).unwrap();
+        assert_eq!(paths.len(), 2);
+        assert_eq!(
+            paths[&(thread, second)],
+            ["app/Order.php"],
+            "each file once"
+        );
         assert_eq!(
             store.unreviewed_lines(project, "app/Order.php").unwrap(),
             HashSet::from([hash, 7])

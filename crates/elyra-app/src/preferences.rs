@@ -80,6 +80,9 @@ pub struct Preferences {
     /// The warm start experiment: half the new threads get an orientation
     /// from the symbol index and earlier threads with their first message.
     pub warm_start: bool,
+    /// Give a new thread to the agent that did best in the areas its first
+    /// message names (otherwise it is only suggested).
+    pub auto_route: bool,
 }
 
 /// How to launch one provider.
@@ -206,6 +209,7 @@ impl Default for Preferences {
             felagi_runtime: false,
             felagi_runtime_name: String::new(),
             warm_start: false,
+            auto_route: false,
         }
     }
 }

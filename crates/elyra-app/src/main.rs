@@ -48,6 +48,7 @@ mod recovery;
 mod restack;
 mod review_follow;
 mod review_inbox;
+mod routing;
 mod rules;
 mod rules_health;
 mod search;

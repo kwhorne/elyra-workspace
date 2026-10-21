@@ -966,6 +966,15 @@ fn external_page() -> SettingPage {
                 )
                 .item(
                     SettingItem::new(
+                        "Pick the agent from your stats",
+                        switch(|p| p.auto_route, |p, v| p.auto_route = v).default_value(false),
+                    )
+                    .description(
+                        "When a new thread's first message points at a part of the code where one agent has clearly done better (checks green on the first try, then cost), give it that agent. Off: it is only suggested above the message box.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
                         "Warm start (experiment)",
                         switch(|p| p.warm_start, |p, v| p.warm_start = v).default_value(false),
                     )

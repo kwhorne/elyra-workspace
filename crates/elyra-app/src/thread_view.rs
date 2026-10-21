@@ -66,6 +66,10 @@ pub struct ThreadView {
     )>,
     /// For a new thread: how the agents have done in its project.
     agent_hint: Option<String>,
+    /// For a new thread's first message: the agent that did best in the
+    /// areas it names, with the message it was worked out for.
+    route: Option<(String, crate::routing::Pick)>,
+    _route_task: Option<Task<()>>,
     expanded: HashSet<ItemId>,
     forms: HashMap<String, QuestionForm>,
     attachments: Vec<Attachment>,
@@ -209,6 +213,8 @@ impl ThreadView {
             rows: transcript::RowIndex::default(),
             reply: None,
             agent_hint: None,
+            route: None,
+            _route_task: None,
             expanded: HashSet::new(),
             forms: HashMap::new(),
             attachments: Vec::new(),
@@ -481,6 +487,128 @@ impl ThreadView {
             self.session.update(cx, |session, cx| session.warm_up(cx));
         }
         self.refresh_popup(&value, cursor, cx);
+        self.suggest_agent(value, cx);
+    }
+
+    /// While the first message is written: which agent did best where it
+    /// points (after a pause in typing).
+    fn suggest_agent(&mut self, text: String, cx: &mut Context<Self>) {
+        let session = self.session.read(cx);
+        if session.has_started() || text.trim().chars().count() < 12 {
+            self._route_task = None;
+            if self.route.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
+        let Some(app) = session.app_entity() else {
+            return;
+        };
+        let (project, dir) = (session.project.id, session.project.path.clone());
+        let records = crate::routing::cached(project);
+        let threads = records
+            .is_none()
+            .then(|| crate::routing::threads(app.read(cx), project));
+        self._route_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            let message = text.clone();
+            let pick = cx
+                .background_executor()
+                .spawn(async move {
+                    let records = match records {
+                        Some(records) => records,
+                        None => {
+                            let records = std::sync::Arc::new(
+                                crate::routing::load(
+                                    &elyra_core::paths::database_path(),
+                                    project,
+                                    &threads.unwrap_or_default(),
+                                )
+                                .unwrap_or_default(),
+                            );
+                            crate::routing::remember(project, records.clone());
+                            records
+                        }
+                    };
+                    let areas = crate::routing::areas_for(&dir, &message);
+                    crate::routing::recommend(&records, &areas)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let current = {
+                    let thread = &this.session.read(cx).thread;
+                    (thread.provider, thread.model.clone())
+                };
+                this.route = pick
+                    .filter(|pick| (pick.provider, pick.model.clone()) != current)
+                    .map(|pick| (text, pick));
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Give the thread to the suggested agent.
+    fn take_route(&mut self, cx: &mut Context<Self>) {
+        let Some((_, pick)) = self.route.take() else {
+            return;
+        };
+        self.session.update(cx, |session, cx| {
+            session.set_provider(pick.provider, cx);
+            session.set_model(pick.model.clone(), cx);
+        });
+        cx.notify();
+    }
+
+    fn render_route(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let (_, pick) = self.route.as_ref()?;
+        let name = match &pick.model {
+            Some(model) => format!("{} · {model}", pick.provider.label()),
+            None => pick.provider.label().to_string(),
+        };
+        Some(
+            h_flex()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().info.opacity(0.4))
+                .bg(cx.theme().info.opacity(0.06))
+                .text_xs()
+                .child(
+                    Icon::new(IconName::ChartColumn)
+                        .xsmall()
+                        .text_color(cx.theme().info),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .whitespace_normal()
+                        .child(pick.reason.clone()),
+                )
+                .child(
+                    Button::new("route-take")
+                        .xsmall()
+                        .outline()
+                        .label(format!("Use {name}"))
+                        .on_click(cx.listener(|this, _, _, cx| this.take_route(cx))),
+                )
+                .child(
+                    Button::new("route-dismiss")
+                        .ghost()
+                        .xsmall()
+                        .icon(IconName::X)
+                        .tooltip("Dismiss")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.route = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+        )
     }
 
     fn refresh_popup(&mut self, value: &str, cursor: usize, cx: &mut Context<Self>) {
@@ -631,6 +759,29 @@ impl ThreadView {
         if self.attachments.is_empty() && self.run_builtin(text.trim(), cx) {
             self.set_composer("", None, window, cx);
             return;
+        }
+        // Settings → Pick the agent from your stats: take the suggestion
+        // worked out for this very message.
+        if crate::preferences::Preferences::global(cx).auto_route
+            && !self.session.read(cx).has_started()
+            && self
+                .route
+                .as_ref()
+                .is_some_and(|(for_text, _)| *for_text == text)
+            && let Some((_, pick)) = self.route.clone()
+        {
+            self.take_route(cx);
+            self.session.update(cx, |session, cx| {
+                session.notice(
+                    format!(
+                        "Given to {} from your stats. {}",
+                        pick.provider.label(),
+                        pick.reason
+                    ),
+                    false,
+                    cx,
+                )
+            });
         }
         // Failed requests sent along are replayed after the turn.
         let replays: Vec<(u64, String)> = self
@@ -2469,6 +2620,7 @@ impl Render for ThreadView {
         let interrupted = self.render_interrupted(cx);
         let attachments = self.render_attachments(cx);
         let page_errors = self.render_page_errors(cx);
+        let route = self.render_route(cx);
         let popup = self.render_popup(cx);
         let find = self.render_find(cx);
         let width = crate::preferences::Preferences::global(cx).chat_width;
@@ -2506,6 +2658,7 @@ impl Render for ThreadView {
                         .children(queue)
                         .children(self.felagi.clone())
                         .children(page_errors)
+                        .children(route)
                         .child(
                             v_flex()
                                 .id("composer-frame")

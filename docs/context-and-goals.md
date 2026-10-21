@@ -140,6 +140,23 @@ tries it.
 
 The command applies to every thread in the project. Empty turns it off.
 
+### Which agent for this part of the code
+
+The numbers above are for the whole project, but agents differ within one: one
+may do well in the Rust core and not in the CSS. So every instruction's outcome
+is also tied to the folders its turns wrote in (from the line record, two levels
+deep, such as `app/Http` or `crates/elyra-app`).
+
+When you write a new thread's first message, Elyra looks at what it names: paths
+in the project, and where the symbols it mentions are defined. If one agent and
+model has clearly done better in those folders (checks green on the first try
+more often, or as often and much cheaper, with at least three checked
+instructions there for each agent compared), a line above the message box says
+so (*In app/Http, Codex has been green on the first try in 8 of 9 instructions
+($0.12 each); Claude Code 4 of 7 ($0.40 each).*), and **Use Codex** gives the
+thread to it. With **Settings → Agents & MCP → Pick the agent from your stats**
+on, that happens by itself when you send, and the thread says why.
+
 ### Warm start (experiment)
 
 At the start of most threads an agent spends its first tool calls finding where
