@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 1.18.0
+
+Proof, not a feeling, around what agents write: another agent cross-examines
+the plan before any code exists, the tests are tested once they pass, a stuck
+agent is stopped and started over, and the stats count how much of each
+agent's code you keep.
 
 - **Test the tests: the mutation gate.** Once the checks pass after a turn,
   Elyra makes up to four small changes to the conditions in the lines the
