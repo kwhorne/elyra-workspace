@@ -162,6 +162,44 @@ pub enum ProposalOutcome {
     Dismissed,
 }
 
+/// A rule the code must keep, checked by Elyra after turns without asking a
+/// model: kept in the repository as `.elyra/invariants/<name>.json`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Invariant {
+    /// What it keeps, in a line.
+    pub name: String,
+    /// The files it applies to, a glob in the repository (empty: all).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub paths: String,
+    /// A regular expression each of those files must match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require: Option<String>,
+    /// A regular expression no line a turn adds to them may match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forbid: Option<String>,
+    /// A shell command that must succeed; it gets the files in
+    /// `ELYRA_FILES`, one per line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Why it matters, for the agent that breaks it.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub why: String,
+}
+
+/// An invariant a turn broke, and where.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrokenInvariant {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    /// What was found, for people and the agent.
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub why: String,
+}
+
 /// A small change Elyra made to a line a turn wrote, to see whether the
 /// tests notice (the mutation gate).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -434,6 +472,23 @@ pub enum ItemContent {
         detail: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         outcome: Option<StuckOutcome>,
+    },
+    /// The project's invariants (`.elyra/invariants`) that applied to what a
+    /// turn changed, and those it broke.
+    Invariants {
+        checked: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        broken: Vec<BrokenInvariant>,
+    },
+    /// An invariant the agent proposed, for the user to save as a check or
+    /// dismiss; with what checking it on the code as it is found.
+    InvariantProposal {
+        invariant: Invariant,
+        /// Where it doesn't hold now (None: not checked yet).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        holds: Option<Vec<BrokenInvariant>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<ProposalOutcome>,
     },
     /// After green checks, the lines the instruction added were changed one
     /// small way at a time and the checks run again: what they didn't catch

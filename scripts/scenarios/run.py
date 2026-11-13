@@ -1122,6 +1122,51 @@ def agents_find_what_templates_use(world, project):
     expect("OrderTable.vue:5" in text and "OrderTable.vue:2" in text, "its handler and its use: " + text)
 
 
+TENANT = json.dumps({"name": "API controllers scope queries to the tenant", "paths": "app/Api/**/*.php",
+                     "require": "tenant_id", "forbid": "\\bdd\\(", "why": "customers must not see other tenants' data"})
+
+
+@scenario(check="echo checked >> checks.log", files={
+    ".gitignore": "checks.log\n", ".elyra/invariants/tenant.json": TENANT,
+    "app/Api/Orders.php": "<?php\n$orders = Order::where('tenant_id', $tenant)->get();\n",
+})
+def invariants_send_a_broken_rule_back(world, project):
+    thread = world.new_thread(project, "[write app/Api/Invoices.php] <?php $all = Invoice::all(); dd($all);")
+    world.wait(thread)
+    items = world.items(thread)
+    cards = [i for i in items if i["kind"] == "invariants"]
+    expect(cards and cards[0]["checked"] == ["API controllers scope queries to the tenant"], str(cards))
+    details = [(b["path"], b["detail"]) for b in cards[0]["broken"]]
+    expect(details == [("app/Api/Invoices.php", "doesn't have `tenant_id`"),
+                       ("app/Api/Invoices.php", "has `<?php $all = Invoice::all(); dd($all);`")], str(details))
+    prompts = world.prompts(project)
+    expect(len(prompts) == 3 and all(p.startswith("The project's invariants broke with your changes:") for p in prompts[1:]),
+           f"sent back as a fix, and again after a fix that left the file as it was: {prompts}")
+    expect("customers must not see other tenants' data" in prompts[1], prompts[1])
+    expect(world.status(thread) == "failed", f"then handed over: {world.status(thread)}")
+    log = os.path.join(world.projects[project]["path"], "checks.log")
+    expect(not os.path.exists(log), "the slower checks don't run while an invariant is broken")
+
+
+@scenario(files={"app/Api/Orders.php": "<?php\n$orders = Order::where('tenant_id', $tenant)->get();\n",
+                 "app/Api/Invoices.php": "<?php\n$all = Invoice::all();\n"})
+def agents_propose_checks_for_the_user_to_save(world, project):
+    thread = world.new_thread(project, "[call propose_invariant " + TENANT + "]")
+    reply = world.wait(thread, 30)
+    expect("Proposed the check" in reply, reply[-300:])
+
+    def tried():
+        cards = [i for i in world.items(thread) if i["kind"] == "invariant_proposal"]
+        return cards[0] if cards and cards[0].get("holds") is not None else None
+    card = wait_for("the check to be tried", tried, 20)
+    expect(card["invariant"]["paths"] == "app/Api/**/*.php" and card.get("outcome") is None, str(card))
+    expect([(b["path"], b["detail"]) for b in card["holds"]] == [("app/Api/Invoices.php", "doesn't have `tenant_id`")],
+           "where the code doesn't hold it yet: " + str(card["holds"]))
+    bad = world.new_thread(project, '[call propose_invariant {"name": "x", "forbid": "dd("}]')
+    reply = world.wait(bad, 30)
+    expect("can't be used" in reply, "a broken expression is refused: " + reply[-300:])
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

@@ -93,6 +93,16 @@ def rich_items():
         {"kind": "turn_summary", "duration_ms": 84200, "cost_usd": 0.412, "is_error": False},
         {"kind": "check", "command": "vendor/bin/pint --test && php artisan test --parallel --stop-on-failure", "passed": False,
          "exit_code": 1, "duration_ms": 41200, "output": "FAILED  Tests\\Feature\\OrderApiTest > it returns 422 without an address\nExpected 422, got 500."},
+        {"kind": "invariants", "checked": ["API controllers scope queries to the tenant", "No dd( in committed code"],
+         "broken": [
+             {"name": "API controllers scope queries to the tenant", "path": "app/Http/Controllers/Api/InvoiceController.php",
+              "detail": "doesn't have `tenant_id`", "why": "Customers must never see another tenant's invoices."},
+             {"name": "No dd( in committed code", "path": "app/Http/Controllers/Api/InvoiceController.php", "line": 31,
+              "detail": "has `dd($invoices);`"}]},
+        {"kind": "invariant_proposal", "invariant": {
+            "name": "API controllers scope queries to the tenant", "paths": "app/Http/Controllers/Api/**/*.php",
+            "require": "tenant_id", "why": "Customers must never see another tenant's orders."},
+         "holds": [{"name": "x", "path": "app/Http/Controllers/Api/ExportController.php", "detail": "doesn't have `tenant_id`"}]},
         {"kind": "notice", "text": "The checks still fail after 2 automatic fixes; over to you.", "is_error": True},
         {"kind": "mutation_gate", "command": "php artisan test --parallel", "state": {"state": "done"}, "mutants": [
             {"path": "app/Http/Controllers/OrderController.php", "line": 42, "code": "if ($customer->address === null && ! $request->boolean('draft')) {",

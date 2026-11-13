@@ -1758,7 +1758,11 @@ impl ThreadSession {
         // Done means green: the turn ends when the project's checks and
         // journeys pass.
         let command = self.check_command();
-        if !is_error && !self.stopped && (command.is_some() || self.journeys_after_turn(cx)) {
+        let invariants = !self.skip_checks && crate::invariants::exist(&self.working_dir());
+        if !is_error
+            && !self.stopped
+            && (command.is_some() || invariants || self.journeys_after_turn(cx))
+        {
             self.run_checks(command, spent_before, cx);
             return;
         }
@@ -1846,16 +1850,76 @@ impl ThreadSession {
         }
         cx.notify();
         let run_command = command.clone();
+        let invariants = !self.skip_checks;
+        // Invariants look at all the instruction changed: a fix that didn't
+        // touch the file that broke one hasn't mended it.
+        let instruction = self
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match &item.content {
+                ItemContent::User {
+                    text, checkpoint, ..
+                } if crate::checks::fix_prompt_label(text).is_none() => Some(checkpoint.clone()),
+                _ => None,
+            })
+            .flatten();
         // None: the turn changed no files; Some(None): no check command.
         let job = cx.background_executor().spawn(async move {
-            if !crate::checks::changed_since(&dir, checkpoint.flatten().as_deref()) {
-                return None;
+            let checkpoint = checkpoint.flatten();
+            if !crate::checks::changed_since(&dir, checkpoint.as_deref()) {
+                return (None, None);
             }
-            Some(run_command.map(|command| crate::checks::run(&dir, &command, &cancel)))
+            // The project's invariants first: quick, and when they break the
+            // slower checks needn't run.
+            let held = invariants
+                .then(|| {
+                    let root = elyra_git::repo_root(&dir).ok()?;
+                    let (invariants, problems) = crate::invariants::load(&root);
+                    for problem in problems {
+                        log::warn!("invariant: {problem}");
+                    }
+                    if invariants.is_empty() {
+                        return None;
+                    }
+                    let base = instruction.as_deref().or(checkpoint.as_deref())?;
+                    let changed = crate::invariants::changes(&root, base)
+                        .map_err(|err| log::warn!("invariants: {err:#}"))
+                        .ok()?;
+                    let (checked, broken) = crate::invariants::check(&root, &invariants, &changed);
+                    (!checked.is_empty()).then_some((checked, broken))
+                })
+                .flatten();
+            if held.as_ref().is_some_and(|(_, broken)| !broken.is_empty()) {
+                return (held, Some(None));
+            }
+            let outcome = run_command.map(|command| crate::checks::run(&dir, &command, &cancel));
+            (held, Some(outcome))
         });
         cx.spawn(async move |this, cx| {
-            let outcome = job.await;
+            let (held, outcome) = job.await;
             let _ = this.update(cx, |this, cx| {
+                if let Some((checked, broken)) = held {
+                    this.append(
+                        ItemContent::Invariants {
+                            checked,
+                            broken: broken.clone(),
+                        },
+                        cx,
+                    );
+                    if !broken.is_empty() && !this.stopped {
+                        this.check_cancel = None;
+                        this.fix_or_hand_over(
+                            "The invariants",
+                            |attempt, attempts| {
+                                crate::invariants::fix_prompt(&broken, attempt, attempts)
+                            },
+                            spent_before,
+                            cx,
+                        );
+                        return;
+                    }
+                }
                 this.checks_done(command, outcome, spent_before, cx)
             });
         })
@@ -3182,6 +3246,108 @@ impl ThreadSession {
             self.persist_item(index, cx);
             cx.notify();
         }
+    }
+
+    // ---- invariants -----------------------------------------------------
+
+    /// Show an invariant the agent proposed, and try it on the code as it is.
+    pub fn propose_invariant(&mut self, invariant: elyra_core::Invariant, cx: &mut Context<Self>) {
+        self.append(
+            ItemContent::InvariantProposal {
+                invariant: invariant.clone(),
+                holds: None,
+                outcome: None,
+            },
+            cx,
+        );
+        let Some(card) = self.items.last().map(|item| item.id) else {
+            return;
+        };
+        let dir = self.working_dir();
+        let job = cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&dir).unwrap_or(dir);
+            crate::invariants::try_on(&root, &invariant)
+        });
+        cx.spawn(async move |this, cx| {
+            let found = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(index) = this.items.iter().position(|item| item.id == card)
+                    && let ItemContent::InvariantProposal { holds, .. } =
+                        &mut this.items[index].content
+                {
+                    *holds = Some(found);
+                    this.persist_item(index, cx);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Save a proposed invariant in the repository, or dismiss it.
+    pub fn decide_invariant(&mut self, card: ItemId, save: bool, cx: &mut Context<Self>) {
+        let Some(index) = self.items.iter().position(|item| item.id == card) else {
+            return;
+        };
+        let ItemContent::InvariantProposal {
+            invariant, outcome, ..
+        } = &self.items[index].content
+        else {
+            return;
+        };
+        if outcome.is_some() {
+            return;
+        }
+        let invariant = invariant.clone();
+        let decided = if save {
+            let dir = self.working_dir();
+            let root = elyra_git::repo_root(&dir).unwrap_or(dir);
+            match crate::invariants::save(&root, &invariant) {
+                Ok(path) => {
+                    let path = path
+                        .strip_prefix(&root)
+                        .unwrap_or(&path)
+                        .display()
+                        .to_string();
+                    self.notice(
+                        format!("Saved as a check in {path}; it runs after every turn that changes the files it covers. Commit it with your changes."),
+                        false,
+                        cx,
+                    );
+                    elyra_core::ProposalOutcome::Created
+                }
+                Err(err) => {
+                    self.notice(format!("Couldn't save the check: {err:#}"), true, cx);
+                    return;
+                }
+            }
+        } else {
+            elyra_core::ProposalOutcome::Dismissed
+        };
+        let Some(index) = self.items.iter().position(|item| item.id == card) else {
+            return;
+        };
+        if let ItemContent::InvariantProposal { outcome, .. } = &mut self.items[index].content {
+            *outcome = Some(decided);
+            self.persist_item(index, cx);
+        }
+        cx.notify();
+    }
+
+    /// Ask the agent to turn a proposed rule into a check it can propose.
+    pub fn rule_as_check(&mut self, item: ItemId, cx: &mut Context<Self>) {
+        let Some((rule, paths)) = self.proposed_rule(item) else {
+            return;
+        };
+        let paths = paths
+            .map(|p| format!(" It applies to {p}."))
+            .unwrap_or_default();
+        self.submit(
+            Prompt::text(format!(
+                "Turn the rule “{rule}” into a check Elyra can run after every turn, with the gateway's propose_invariant tool.{paths} Use `require` (a regular expression each of those files must have), `forbid` (one new lines mustn't have) or a short shell `command` over the files in ELYRA_FILES, whichever catches a mistake against it most simply. If it can't be checked mechanically, say so instead."
+            )),
+            cx,
+        );
     }
 
     /// Show a rule the agent learned, for the user to keep or dismiss.

@@ -95,7 +95,9 @@ propose that as a rule: a card in the thread with the rule and what taught it.
 **Add to AGENTS.md** puts it under *Learned rules* in the repository's AGENTS.md
 (or CLAUDE.md or GEMINI.md, when that is what the project has), so every agent and your team
 get it; commit it with your changes. **Add to project instructions** keeps it in
-Elyra only. **Dismiss** drops it.
+Elyra only. **Save as check** asks the agent to turn it into an
+[invariant](#invariants-rules-that-get-checked), when a pattern or a short
+command can catch a mistake against it. **Dismiss** drops it.
 
 **Rules that may be stale.** Rules name files, folders and code in backticks
 (*Put VAT in \`TaxService\`*). When what a rule names is gone from the repository
@@ -112,6 +114,44 @@ applies to (*app/Http/Controllers/\*\**), the card shows it, and the rule is add
 to that area's file (`.ai/rules/controllers.md`, with the globs in its
 frontmatter) and to `.ai/rules/index.md`, the index Boost tells agents to read
 before they edit. So there is one rule book, whichever tool wrote the rule.
+
+### Invariants: rules that get checked
+
+A rule in AGENTS.md is read, and sometimes forgotten; an invariant is checked.
+The hardest mistakes are the ones left out of new files: a new API route without
+the tenant scope you asked for last week. An invariant is a JSON file in the
+repository's `.elyra/invariants`, so your team and other tools have it too:
+
+```json
+{
+  "name": "API controllers scope queries to the tenant",
+  "paths": "app/Http/Controllers/Api/**/*.php",
+  "require": "tenant_id",
+  "forbid": "\\bdd\\(",
+  "why": "Customers must never see another tenant's orders."
+}
+```
+
+- `paths`: the files it applies to, a glob (`**/` any folders, `*`, `{ts,tsx}`);
+  left out, all files.
+- `require`: a regular expression each of those files must match.
+- `forbid`: one no line a turn **adds** to them may match (lines already there
+  don't count).
+- `command`: a shell command that must succeed, run at the top of the project
+  with the files in `ELYRA_FILES`, one per line (under a minute).
+
+After every turn that changed files, the invariants covering what the message
+changed (its automatic fixes included) are checked, in milliseconds and without a
+model, before the [checks](#checks-after-each-turn): **2 invariants held**, or
+**Invariant broken** with each file and line. A broken one goes back to the agent
+like failed checks, with the rule and why it matters, and the slower checks wait
+until it holds.
+
+Agents propose them with the gateway's `propose_invariant`, when your correction
+is something a pattern can catch, or when you press **Save as check** on a
+proposed rule. The card shows what it checks and tries it on the code as it is
+(*The code doesn't hold it in 1 place yet*); **Save as check** writes the file,
+to commit with your changes.
 
 ## Checks after each turn
 

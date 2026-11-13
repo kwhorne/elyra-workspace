@@ -33,6 +33,7 @@ mod grove;
 mod instructions;
 mod intent_board;
 mod intent_guard;
+mod invariants;
 mod journeys;
 mod keep_test;
 mod leaderboard;

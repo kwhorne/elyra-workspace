@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Invariants: rules that get checked.** A rule in AGENTS.md can be forgotten;
+  an invariant in `.elyra/invariants` is checked after every turn that changes
+  the files it covers, in milliseconds and without a model: a regular
+  expression the files must have, one new lines mustn't have, or a command. A
+  broken one goes back to the agent like failed checks, before the slower
+  checks run. Agents propose them (`propose_invariant`, or **Save as check** on
+  a proposed rule), and the card tries them on the code before you save. See
+  [Invariants](docs/context-and-goals.md#invariants-rules-that-get-checked).
 - **Vue, Svelte and Blade in the symbol index.** Components and views are
   where much of a web project's wiring is, and they were invisible to symbol
   lookups. A Vue or Svelte component's script is read in place, the file

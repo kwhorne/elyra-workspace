@@ -336,6 +336,18 @@ fn tools() -> Vec<Tool> {
             }, "required": ["rule"] }),
         ),
         tool(
+            "propose_invariant",
+            "Propose a check Elyra runs after every turn that changes the files it covers, in milliseconds and without a model: a project rule made mechanical (\"every API controller scopes queries to tenant_id\", \"no dd( in committed code\"). Use it when the user corrects something a pattern or a short command can catch, or when asked to turn a rule into a check. Give `paths` and at least one of `require`, `forbid` or `command`. Elyra tries it on the code as it is and shows the result on a card; the user saves it (in .elyra/invariants) or dismisses it. Once saved, a turn that breaks it goes back to the agent like failed checks.",
+            json!({ "type": "object", "properties": {
+                "name": { "type": "string", "description": "What it keeps, in a line: e.g. API controllers scope queries to the tenant" },
+                "paths": { "type": "string", "description": "The files it applies to, a glob in the project (e.g. app/Http/Controllers/Api/**/*.php, src/**/*.{ts,tsx}); leave out for all files" },
+                "require": { "type": "string", "description": "A regular expression each of those files must match (Rust regex syntax)" },
+                "forbid": { "type": "string", "description": "A regular expression no line a turn adds to them may match" },
+                "command": { "type": "string", "description": "A shell command that must exit 0, run at the project's top with the files in ELYRA_FILES (one per line); quick (under a minute)" },
+                "why": { "type": "string", "description": "Why it matters, told to the agent that breaks it" }
+            }, "required": ["name"] }),
+        ),
+        tool(
             "archive_thread",
             "Archive a finished thread.",
             json!({ "type": "object", "properties": { "thread_id": id }, "required": ["thread_id"] }),
@@ -1515,6 +1527,39 @@ fn run_tool(app: &Entity<AppState>, call: &Call, cx: &mut App) -> Result<String,
             });
             Ok(format!(
                 "Proposed the rule \u{201c}{rule}\u{201d} as a card in this thread; it is kept only if the user accepts it. Follow it for the rest of this task anyway."
+            ))
+        }
+        "propose_invariant" => {
+            let Caller::Thread(thread_id) = call.caller else {
+                return Err("Only an agent working in a thread can propose a check.".into());
+            };
+            let text = |key: &str| {
+                args[key]
+                    .as_str()
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty())
+            };
+            let invariant = elyra_core::Invariant {
+                name: arg(args, "name")?.trim().to_string(),
+                paths: text("paths")
+                    .map(|p| p.trim_start_matches("./").to_string())
+                    .unwrap_or_default(),
+                require: text("require"),
+                forbid: text("forbid"),
+                command: text("command"),
+                why: text("why").unwrap_or_default(),
+            };
+            crate::invariants::validate(&invariant)
+                .map_err(|err| format!("This check can't be used: {err}."))?;
+            let session = app
+                .update(cx, |app, cx| app.session(thread_id, cx))
+                .ok_or("could not open the thread")?;
+            session.update(cx, |session, cx| {
+                session.propose_invariant(invariant.clone(), cx)
+            });
+            Ok(format!(
+                "Proposed the check \u{201c}{}\u{201d} as a card in this thread; Elyra tries it on the code as it is, and it runs after turns only if the user saves it.",
+                invariant.name
             ))
         }
         "create_thread" => {

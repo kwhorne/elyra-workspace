@@ -221,7 +221,10 @@ pub fn fix_prompt_label(text: &str) -> Option<String> {
     if text.starts_with(crate::mutation::ASK_START) {
         return Some("adding tests".into());
     }
-    if !text.starts_with(FIX_PROMPT_START) && !text.starts_with("The browser journey ") {
+    if !text.starts_with(FIX_PROMPT_START)
+        && !text.starts_with("The browser journey ")
+        && !text.starts_with(crate::invariants::FIX_START)
+    {
         return None;
     }
     let start = text.find("(automatic fix ")? + 1;

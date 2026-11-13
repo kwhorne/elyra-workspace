@@ -834,6 +834,18 @@ fn render_item(
                                 })),
                         )
                         .child(
+                            Button::new(SharedString::from(format!("rule-check-{id}")))
+                                .small()
+                                .icon(IconName::ShieldCheck)
+                                .label("Save as check")
+                                .tooltip("Ask the agent to turn it into a check Elyra runs after every turn (it proposes it here)")
+                                .disabled(session.running)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.session
+                                        .update(cx, |session, cx| session.rule_as_check(id, cx))
+                                })),
+                        )
+                        .child(
                             Button::new(SharedString::from(format!("rule-dismiss-{id}")))
                                 .ghost()
                                 .small()
@@ -846,6 +858,12 @@ fn render_item(
             }
             card.into_any_element()
         }
+        ItemContent::Invariants { checked, broken } => invariants_card(checked, broken, cx),
+        ItemContent::InvariantProposal {
+            invariant,
+            holds,
+            outcome,
+        } => invariant_proposal_card(id, invariant, holds.as_deref(), *outcome, cx),
         ItemContent::Journey {
             name,
             passed,
@@ -2464,6 +2482,231 @@ fn plan_card(
         );
     }
     card.into_any_element()
+}
+
+/// The project's invariants after a turn: held, or what broke.
+fn invariants_card(
+    checked: &[String],
+    broken: &[elyra_core::BrokenInvariant],
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    if broken.is_empty() {
+        return h_flex()
+            .w_full()
+            .gap_2()
+            .text_sm()
+            .child(
+                Icon::new(IconName::ShieldCheck)
+                    .small()
+                    .text_color(cx.theme().success),
+            )
+            .child(
+                div()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(if checked.len() == 1 {
+                        "Invariant held".to_string()
+                    } else {
+                        format!("{} invariants held", checked.len())
+                    }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(checked.join(" · ")),
+            )
+            .into_any_element();
+    }
+    let mut names: Vec<&str> = broken.iter().map(|b| b.name.as_str()).collect();
+    names.dedup();
+    v_flex()
+        .w_full()
+        .p_2()
+        .gap_1()
+        .rounded_md()
+        .border_1()
+        .border_color(cx.theme().danger)
+        .child(
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .child(
+                    Icon::new(IconName::ShieldAlert)
+                        .small()
+                        .text_color(cx.theme().danger),
+                )
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(if names.len() == 1 {
+                            format!("Invariant broken: {}", names[0])
+                        } else {
+                            format!("{} invariants broken", names.len())
+                        }),
+                ),
+        )
+        .children(names.iter().map(|name| {
+            let mine: Vec<elyra_core::BrokenInvariant> =
+                broken.iter().filter(|b| b.name == *name).cloned().collect();
+            let why = mine.first().map(|b| b.why.clone()).unwrap_or_default();
+            v_flex()
+                .gap_0p5()
+                .text_xs()
+                .when(names.len() > 1, |this| {
+                    this.child(
+                        div()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(name.to_string()),
+                    )
+                })
+                .when(!why.is_empty(), |this| {
+                    this.child(div().whitespace_normal().text_color(muted).child(why))
+                })
+                .children(
+                    crate::invariants::describe(&mine)
+                        .into_iter()
+                        .take(8)
+                        .map(|line| {
+                            div()
+                                .whitespace_normal()
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .child(line)
+                        }),
+                )
+                .into_any_element()
+        }))
+        .into_any_element()
+}
+
+/// An invariant the agent proposed: what it checks, whether the code holds
+/// it now, and saving it.
+fn invariant_proposal_card(
+    id: ItemId,
+    invariant: &elyra_core::Invariant,
+    holds: Option<&[elyra_core::BrokenInvariant]>,
+    outcome: Option<elyra_core::ProposalOutcome>,
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    use elyra_core::ProposalOutcome;
+    let muted = cx.theme().muted_foreground;
+    let pending = outcome.is_none();
+    let title = match outcome {
+        None => "Proposed check".to_string(),
+        Some(ProposalOutcome::Created) => format!("Saved as a check in {}", crate::invariants::DIR),
+        Some(ProposalOutcome::Dismissed) => "Check dismissed".to_string(),
+    };
+    let rule = |label: &'static str, value: &str| {
+        h_flex()
+            .gap_2()
+            .text_xs()
+            .child(div().w(px(64.)).flex_none().text_color(muted).child(label))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .whitespace_normal()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .child(value.to_string()),
+            )
+    };
+    let decide = |key: &'static str, label: &'static str, save: bool| {
+        Button::new(SharedString::from(format!("invariant-{key}-{id}")))
+            .small()
+            .label(label)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.session
+                    .update(cx, |session, cx| session.decide_invariant(id, save, cx))
+            }))
+    };
+    v_flex()
+        .w_full()
+        .p_3()
+        .gap_2()
+        .rounded_lg()
+        .border_1()
+        .border_color(if pending { cx.theme().info } else { cx.theme().border })
+        .when(pending, |this| this.bg(cx.theme().info.opacity(0.06)))
+        .child(
+            h_flex()
+                .gap_2()
+                .child(Icon::new(IconName::ShieldCheck).small().text_color(cx.theme().info))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(title)),
+        )
+        .child(div().text_sm().whitespace_normal().child(invariant.name.clone()))
+        .child(
+            v_flex()
+                .gap_0p5()
+                .child(rule(
+                    "Files",
+                    if invariant.paths.is_empty() { "all" } else { &invariant.paths },
+                ))
+                .when_some(invariant.require.as_deref(), |this, v| this.child(rule("Must have", v)))
+                .when_some(invariant.forbid.as_deref(), |this, v| {
+                    this.child(rule("New lines without", v))
+                })
+                .when_some(invariant.command.as_deref(), |this, v| this.child(rule("Runs", v))),
+        )
+        .when(!invariant.why.is_empty(), |this| {
+            this.child(
+                div()
+                    .text_xs()
+                    .whitespace_normal()
+                    .text_color(muted)
+                    .child(invariant.why.clone()),
+            )
+        })
+        .child(match holds {
+            None => h_flex()
+                .gap_2()
+                .text_xs()
+                .text_color(muted)
+                .child(Spinner::new().xsmall())
+                .child("Trying it on the code as it is…")
+                .into_any_element(),
+            Some([]) => h_flex()
+                .gap_1()
+                .text_xs()
+                .text_color(cx.theme().success)
+                .child(Icon::new(IconName::CircleCheck).xsmall())
+                .child("The code holds it now.")
+                .into_any_element(),
+            Some(found) => v_flex()
+                .gap_0p5()
+                .text_xs()
+                .child(
+                    div()
+                        .text_color(cx.theme().warning)
+                        .whitespace_normal()
+                        .child(format!(
+                            "The code doesn't hold it in {} place{} yet; once saved, only files a turn changes are checked:",
+                            found.len(),
+                            if found.len() == 1 { "" } else { "s" }
+                        )),
+                )
+                .children(crate::invariants::describe(found).into_iter().take(5).map(|line| {
+                    div()
+                        .whitespace_normal()
+                        .text_color(muted)
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .child(line)
+                }))
+                .into_any_element(),
+        })
+        .when(pending, |this| {
+            this.child(
+                h_flex()
+                    .gap_2()
+                    .child(decide("save", "Save as check", true).primary())
+                    .child(decide("dismiss", "Dismiss", false).ghost()),
+            )
+        })
+        .into_any_element()
 }
 
 /// The mutation gate: small changes to the lines the instruction added, and

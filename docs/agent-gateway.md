@@ -37,6 +37,7 @@ token, and every call is written to an audit log. The address is shown in
 | `propose_automation` | Propose an [automation](automations-and-tasks.md#automations), on a schedule or [when something happens](automations-and-tasks.md#when-something-happens), as a card in the agent's own thread; it is created only if you accept it (agents in threads only) | |
 | `start_duel` | Start a [Red vs. Blue](projects-and-threads.md#red-vs-blue) duel on a requirement: one agent writes failing tests, another the code with them locked | |
 | `challenge_test` | For Blue in a duel: challenge one of Red's locked tests; Red answers and may change it (at most three per duel) | |
+| `propose_invariant` | Propose an [invariant](context-and-goals.md#invariants-rules-that-get-checked), a check Elyra runs after every turn (a glob and a regular expression the files must or new lines mustn't match, or a command), as a card that tries it on the code; saved only if you accept it (agents in threads only) | |
 | `schedule_followup` | Come back to the agent's own thread later with a message to itself, at most three waiting, 5 minutes to 7 days ahead ([Follow-ups](automations-and-tasks.md#follow-ups-agents-schedule); agents in threads only) | |
 | `browser_open` | Open a local development page in a thread's [browser](browser.md) | |
 | `browser_snapshot` | The page's structure as an outline of its elements and text | ✓ |
