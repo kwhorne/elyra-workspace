@@ -80,6 +80,18 @@ pub fn branch_base(repo: &Path) -> Option<(String, String)> {
         })
 }
 
+/// The remote's default branch as last fetched (`origin/main`), where work
+/// merged on the server shows up.
+pub fn remote_default(repo: &Path) -> Option<String> {
+    let head = run_ok(repo, &["rev-parse", "--abbrev-ref", "origin/HEAD"])
+        .ok()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty() && name != "origin/HEAD");
+    head.into_iter()
+        .chain(["origin/main".to_string(), "origin/master".to_string()])
+        .find(|name| run_ok(repo, &["rev-parse", "--verify", "-q", name]).is_ok())
+}
+
 /// The repository's shared git directory: the same for all its worktrees.
 pub fn common_dir(path: &Path) -> Result<PathBuf> {
     let dir = PathBuf::from(

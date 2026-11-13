@@ -145,6 +145,18 @@ const MIGRATIONS: &[&str] = &[
         DELETE FROM transcript_search WHERE rowid = old.rowid;
     END;
 "#,
+    // How many of the lines a turn wrote were still in the code once it had
+    // settled (see `line_survival`).
+    r#"
+    CREATE TABLE line_survival (
+        thread_id TEXT NOT NULL,
+        item_id TEXT NOT NULL,
+        lines INTEGER NOT NULL,
+        kept INTEGER NOT NULL,
+        measured_at TEXT NOT NULL,
+        PRIMARY KEY (thread_id, item_id)
+    );
+"#,
 ];
 
 const PROJECT_COLUMNS: &str =
@@ -924,6 +936,80 @@ impl Store {
         Ok(changed)
     }
 
+    /// The lines turns wrote between `from` and `to` that haven't been
+    /// measured yet: per turn (thread, user message), (path, hash) pairs.
+    pub fn lines_to_measure(
+        &self,
+        project: ProjectId,
+        from: DateTime<Utc>,
+        to: DateTime<Utc>,
+    ) -> Result<TurnLines> {
+        let mut stmt = self.conn.prepare(
+            "SELECT o.thread_id, o.item_id, o.path, o.hash FROM line_origins o
+             WHERE o.project_id = ?1 AND o.at >= ?2 AND o.at < ?3
+               AND NOT EXISTS (SELECT 1 FROM line_survival s
+                               WHERE s.thread_id = o.thread_id AND s.item_id = o.item_id)",
+        )?;
+        let rows = stmt.query_map(
+            params![project.to_string(), from.to_rfc3339(), to.to_rfc3339()],
+            |row| {
+                Ok((
+                    parse_uuid(row, 0)?,
+                    parse_uuid(row, 1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
+        )?;
+        let mut out = TurnLines::new();
+        for row in rows {
+            let (thread, item, path, hash) = row?;
+            out.entry((thread, item)).or_default().push((path, hash));
+        }
+        Ok(out)
+    }
+
+    /// Of the `lines` a turn wrote, `kept` were still in the code when it was
+    /// measured.
+    pub fn record_line_survival(
+        &self,
+        thread: ThreadId,
+        item: ItemId,
+        lines: usize,
+        kept: usize,
+        at: DateTime<Utc>,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO line_survival (thread_id, item_id, lines, kept, measured_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                thread.to_string(),
+                item.to_string(),
+                lines as i64,
+                kept as i64,
+                at.to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Every measured turn: (thread, user message) → (lines, kept).
+    pub fn line_survival(&self) -> Result<HashMap<(ThreadId, ItemId), (usize, usize)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT thread_id, item_id, lines, kept FROM line_survival")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                (parse_uuid(row, 0)?, parse_uuid(row, 1)?),
+                (
+                    row.get::<_, i64>(2)? as usize,
+                    row.get::<_, i64>(3)? as usize,
+                ),
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// Record a gateway call; keeps the newest 5000 entries.
     pub fn audit(&self, entry: &AuditEntry) -> Result<()> {
         self.conn.execute(
@@ -991,6 +1077,9 @@ fn parse_time(row: &Row, index: usize) -> rusqlite::Result<DateTime<Utc>> {
 /// A recorded line: (hash, thread, the user message, when, whether a person
 /// has read it).
 pub type LineRecord = (i64, ThreadId, ItemId, DateTime<Utc>, bool);
+
+/// The lines of turns, by (thread, user message): (path, hash) pairs.
+pub type TurnLines = HashMap<(ThreadId, ItemId), Vec<(String, i64)>>;
 
 /// What to search in.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1161,6 +1250,7 @@ mod tests {
         0x42f8_ac9c_0227_c9c2,
         0x86b0_2911_ef91_5665,
         0x8e8e_b15f_8c2e_10fd,
+        0x2039_4d7b_f888_69b2,
     ];
 
     #[test]
@@ -1697,6 +1787,43 @@ mod tests {
             Some("\"cart\"* \"total wrong\"".into())
         );
         assert_eq!(fts_query("a.b -x"), Some("\"a.b\"* \"-x\"*".into()));
+    }
+
+    #[test]
+    fn measures_each_turn_once_it_has_settled() {
+        let store = Store::open_in_memory().unwrap();
+        let (project, thread) = (new_id(), new_id());
+        let (old, settled, fresh) = (new_id(), new_id(), new_id());
+        let now = Utc::now();
+        let line = |text: &str| ("src/lib.rs".to_string(), line_hash(text).unwrap());
+        for (item, days) in [(old, 40), (settled, 5), (fresh, 1)] {
+            store
+                .record_line_origins(
+                    project,
+                    thread,
+                    item,
+                    now - chrono::Duration::days(days),
+                    &[line("fn total() -> u32 {"), line("    price + tax")],
+                )
+                .unwrap();
+        }
+        let window = |store: &Store| {
+            store
+                .lines_to_measure(
+                    project,
+                    now - chrono::Duration::days(30),
+                    now - chrono::Duration::days(3),
+                )
+                .unwrap()
+        };
+        let pending = window(&store);
+        assert_eq!(pending.len(), 1, "only the settled turn");
+        assert_eq!(pending[&(thread, settled)].len(), 2);
+        store
+            .record_line_survival(thread, settled, 2, 1, now)
+            .unwrap();
+        assert!(window(&store).is_empty(), "measured once");
+        assert_eq!(store.line_survival().unwrap()[&(thread, settled)], (2, 1));
     }
 
     #[test]

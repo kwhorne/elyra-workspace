@@ -1,8 +1,9 @@
 //! How each agent does on your own code: per instruction (a message from
 //! you, with the automatic fixes after it), whether the project's checks were
 //! green on the first try and in the end, how many fixes it took and what it
-//! cost. From the transcripts, so it reflects your projects and tasks rather
-//! than a benchmark.
+//! cost, and how much of the code its turns wrote you kept (see `survival`).
+//! From the transcripts, so it reflects your projects and tasks rather than a
+//! benchmark.
 
 use elyra_core::{ItemContent, ProjectId, Store, ThreadId, TranscriptItem};
 use std::collections::HashMap;
@@ -20,6 +21,9 @@ pub struct Outcome {
     /// Automatic fixes sent.
     pub fixes: usize,
     pub cost: f64,
+    /// Lines its turns wrote, of the turns measured, and how many were kept.
+    pub lines: usize,
+    pub kept: usize,
 }
 
 /// One agent and model across instructions.
@@ -35,6 +39,8 @@ pub struct Row {
     pub green: usize,
     pub fixes: usize,
     pub cost: f64,
+    pub lines: usize,
+    pub kept: usize,
 }
 
 impl Row {
@@ -52,13 +58,19 @@ impl Row {
     pub fn cost_each(&self) -> f64 {
         self.cost / self.instructions.max(1) as f64
     }
+
+    /// The share of its lines kept, when enough were measured.
+    pub fn kept_rate(&self) -> Option<f64> {
+        (self.lines >= crate::survival::MIN_LINES).then(|| self.kept as f64 / self.lines as f64)
+    }
 }
 
 /// Fewer checked instructions than this, and an agent isn't compared.
 pub const MIN_CHECKED: usize = 3;
 
-/// Each instruction in a transcript and how it went.
-pub fn outcomes(items: &[TranscriptItem]) -> Vec<Outcome> {
+/// Each instruction in a transcript and how it went (`survival`: the
+/// measured turns, by thread and user message).
+pub fn outcomes(items: &[TranscriptItem], survival: &crate::survival::Survival) -> Vec<Outcome> {
     let mut outcomes: Vec<Outcome> = Vec::new();
     for item in items {
         match &item.content {
@@ -69,6 +81,14 @@ pub fn outcomes(items: &[TranscriptItem]) -> Vec<Outcome> {
                     }
                 } else {
                     outcomes.push(Outcome::default());
+                }
+                // A fix's lines count for its instruction.
+                if let (Some(last), Some((lines, kept))) = (
+                    outcomes.last_mut(),
+                    survival.get(&(item.thread_id, item.id)),
+                ) {
+                    last.lines += lines;
+                    last.kept += kept;
                 }
             }
             // Stopped going in circles: not done on the first try.
@@ -112,6 +132,8 @@ pub fn rows(outcomes: impl IntoIterator<Item = ((String, Option<String>), Outcom
         row.instructions += 1;
         row.fixes += outcome.fixes;
         row.cost += outcome.cost;
+        row.lines += outcome.lines;
+        row.kept += outcome.kept;
         if let Some(first_try) = outcome.first_try {
             row.checked += 1;
             row.first_try += usize::from(first_try);
@@ -141,11 +163,12 @@ pub type Threads = Vec<(ThreadId, String, Option<String>)>;
 /// The rows for `threads`, read on a connection of its own. Blocking.
 pub fn load(db: &Path, threads: Threads) -> anyhow::Result<Vec<Row>> {
     let store = Store::open_read_only(db)?;
+    let survival = store.line_survival()?;
     let mut all = Vec::new();
     for (thread, agent, model) in threads {
         let items = store.transcript(thread)?;
         all.extend(
-            outcomes(&items)
+            outcomes(&items, &survival)
                 .into_iter()
                 .map(|outcome| ((agent.clone(), model.clone()), outcome)),
         );
@@ -214,6 +237,7 @@ pub fn remember(project: ProjectId, rows: Vec<Row>) {
 mod tests {
     use super::{Outcome, hint, outcomes, rows};
     use elyra_core::{ItemContent, TranscriptItem};
+    use std::collections::HashMap;
 
     fn item(content: ItemContent) -> TranscriptItem {
         TranscriptItem {
@@ -273,7 +297,12 @@ mod tests {
             user("Explain the cart"),
             turn(0.01),
         ];
-        let found = outcomes(&items);
+        // The instruction's turn and its fix's were measured.
+        let survival = HashMap::from([
+            ((items[0].thread_id, items[0].id), (40, 10)),
+            ((items[3].thread_id, items[3].id), (20, 18)),
+        ]);
+        let found = outcomes(&items, &survival);
         assert_eq!(found.len(), 3, "a fix belongs to its instruction");
         assert_eq!(
             found[0],
@@ -282,8 +311,11 @@ mod tests {
                 green: Some(true),
                 fixes: 1,
                 cost: 0.15000000000000002,
+                lines: 60,
+                kept: 28,
             }
         );
+        assert_eq!((found[1].lines, found[1].kept), (0, 0), "not measured");
         assert_eq!((found[1].first_try, found[1].fixes), (Some(true), 0));
         assert_eq!(found[2].first_try, None, "no checks ran");
 
@@ -293,12 +325,16 @@ mod tests {
             green: Some(true),
             fixes: 0,
             cost: 0.1,
+            lines: 20,
+            kept: 18,
         };
         let red = Outcome {
             first_try: Some(false),
             green: Some(true),
             fixes: 1,
             cost: 0.4,
+            lines: 10,
+            kept: 2,
         };
         let rows = rows(vec![
             (key("Claude Code"), green),
@@ -314,6 +350,9 @@ mod tests {
             (rows[0].first_try, rows[0].checked, rows[0].fixes),
             (2, 3, 1)
         );
+        assert_eq!((rows[0].lines, rows[0].kept), (50, 38));
+        assert_eq!(rows[0].kept_rate(), Some(0.76));
+        assert_eq!(rows[2].kept_rate(), None, "too few lines measured");
         assert_eq!(rows[1].agent, "Claude Code");
         assert_eq!(rows[2].agent, "Pi", "too few to compare: last");
         assert_eq!(

@@ -106,6 +106,7 @@ class World:
             FAKE_GH_STATE=os.path.join(self.dir, "gh.json"),
             ELYRA_REVIEW_POLL_SECS="2",
             ELYRA_EVENT_POLL_SECS="1",
+            ELYRA_SURVIVAL_POLL_SECS="2",
         )
         self.app = subprocess.Popen([BIN], env=env, stdout=log, stderr=log)
         deadline = time.time() + 60
@@ -974,6 +975,34 @@ def an_agent_going_in_circles_starts_over(world, project):
     with world.db() as db:
         model = db.execute("SELECT model FROM threads WHERE id = ?", (thread,)).fetchone()[0]
     expect(model is None, f"back to its own model, not {model}")
+
+
+@scenario()
+def the_code_you_keep_is_measured(world, project):
+    thread = world.new_thread(project, "[write notes.txt] The cart total is rounded after the discount.")
+    world.wait(thread, 30)
+    world.tool("send_message", thread_id=thread,
+               text="[write notes.txt] Shipping is free above 500 kroner.")
+    world.wait(thread, 30)
+    path = os.path.join(world.projects[project]["path"], "notes.txt")
+    # You rewrite the first line by hand.
+    with open(path, "w") as f:
+        f.write("The cart total is rounded before the discount.\nShipping is free above 500 kroner.\n")
+    with world.db() as db:
+        # The turns have settled.
+        db.execute("UPDATE line_origins SET at = ? WHERE thread_id = ?",
+                   ((datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=4)).isoformat(), thread))
+        items = [r[0] for r in db.execute(
+            "SELECT id FROM transcript_items WHERE thread_id = ? AND json_extract(content, '$.kind') = 'user' ORDER BY seq",
+            (thread,))]
+
+    def measured():
+        with world.db() as db:
+            rows = db.execute("SELECT item_id, lines, kept FROM line_survival WHERE thread_id = ?", (thread,)).fetchall()
+        return {item: (lines, kept) for item, lines, kept in rows} if len(rows) == 2 else None
+    survival = wait_for("the turns to be measured", measured, 30)
+    expect(survival[items[0]] == (1, 0), f"the rewritten line isn't kept: {survival}")
+    expect(survival[items[1]] == (1, 1), f"the other is: {survival}")
 
 
 def main():

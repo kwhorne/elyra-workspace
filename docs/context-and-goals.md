@@ -188,6 +188,11 @@ so (*In app/Http, Codex has been green on the first try in 8 of 9 instructions
 thread to it. With **Settings → Agents & MCP → Pick the agent from your stats**
 on, that happens by itself when you send, and the thread says why.
 
+Once at least 30 lines of every compared agent's code there have been measured
+([Code kept](#code-kept)), being green on the first try counts for as much of
+the code as you kept: 4 of 4 first-try greens with 30 % kept rank below 3 of 4
+with 95 % kept, and the line says so (*… and you kept 95 % of its lines*).
+
 ### Warm start (experiment)
 
 At the start of most threads an agent spends its first tool calls finding where
@@ -267,6 +272,8 @@ automatic fixes after it.
 
 - **Green first try**: the checks passed after the agent's first answer.
 - **Green in the end**: they passed after the automatic fixes.
+- **Code kept**: of the lines its turns wrote, the share still in the code
+  three days later (see below).
 - **Fixes each** and **Cost each**: automatic fixes and reported cost per
   instruction.
 
@@ -275,6 +282,26 @@ Side chats aren't counted. A new thread shows a line with the same numbers for
 its project when at least two agents have enough to compare, for example
 *Checks green on the first try in shop: Codex 9 of 10 ($0.12 each), Claude Code
 7 of 10 ($0.40 each)*.
+
+#### Code kept
+
+Green checks say the code worked, not that you kept it: an agent can pass on
+the first try with code you then rewrite in two follow-ups or by hand. So
+three days after each turn, Elyra looks at the lines it wrote (from the line
+record) and counts how many are still there, the same line in the same file:
+
+- in the project's folder, the thread's worktree, or the remote's default
+  branch as last fetched (`origin/main`), so work merged on GitHub counts;
+- once per turn: the number is kept, so a rewrite months later doesn't change
+  it. Turns older than 30 days when Elyra first looks aren't measured;
+- lines rewritten by a later message, by hand or by another thread, and
+  instructions you undid, count as not kept. So does a moved or renamed
+  file. An automatic fix's lines count for its instruction;
+- Best of N candidates aren't measured, since all but one are discarded by
+  design.
+
+It is greyed out until 30 lines are measured. [Which agent for this part of
+the code](#which-agent-for-this-part-of-the-code) uses it as well.
 
 ## Shared with every agent
 

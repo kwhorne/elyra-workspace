@@ -164,8 +164,13 @@ def build_world():
     with world.db() as db:
         seq = db.execute("SELECT COALESCE(MAX(seq), 0) FROM transcript_items WHERE thread_id = ?", (rich,)).fetchone()[0]
         for offset, item in enumerate(rich_items(), start=1):
+            item_id = uuid.uuid4().hex
             db.execute("INSERT INTO transcript_items (id, thread_id, seq, content, created_at) VALUES (?, ?, ?, ?, ?)",
-                       (uuid.uuid4().hex, rich, seq + offset, json.dumps(item), "2026-01-01T00:00:00Z"))
+                       (item_id, rich, seq + offset, json.dumps(item), "2026-01-01T00:00:00Z"))
+            # How much of its code was kept (Stats).
+            if offset == 1:
+                db.execute("INSERT INTO line_survival (thread_id, item_id, lines, kept, measured_at) "
+                           "VALUES (?, ?, 48, 41, '2026-01-04T00:00:00Z')", (rich, item_id))
     return world, {"all": threads + [rich], "rich": [rich]}
 
 

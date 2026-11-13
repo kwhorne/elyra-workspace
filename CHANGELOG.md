@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Code kept: whether you keep what an agent writes.** Three days after each
+  turn, Elyra counts how many of the lines it wrote are still in the code (in
+  the project's folder, the thread's worktree or the remote's default branch),
+  so code you rewrote in follow-ups or by hand, or undid, counts against the
+  agent. Usage statistics has a Code kept column, and smart routing weighs
+  first-try greens by it once enough of each agent's code is measured. See
+  [Code kept](docs/context-and-goals.md#code-kept).
 - **The thrash guard: when an agent goes in circles.** While a turn runs,
   Elyra watches its tool calls for the same command failing the same way three
   times, or six calls in a row failing. The conversation then says so, with

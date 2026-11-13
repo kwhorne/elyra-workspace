@@ -156,6 +156,7 @@ impl StatsView {
             .child(div().w(px(90.)).child("Instructions"))
             .child(div().w(px(150.)).child("Green first try"))
             .child(div().w(px(150.)).child("Green in the end"))
+            .child(div().w(px(110.)).child("Code kept"))
             .child(div().w(px(90.)).child("Fixes each"))
             .child(div().w(px(80.)).child("Cost each"));
         let rows = self.agents.iter().map(|row| {
@@ -171,6 +172,16 @@ impl StatsView {
                 .child(div().w(px(90.)).child(row.instructions.to_string()))
                 .child(div().w(px(150.)).child(percent(row.first_try, row.checked)))
                 .child(div().w(px(150.)).child(percent(row.green, row.checked)))
+                .child(
+                    div()
+                        .w(px(110.))
+                        .when(row.kept_rate().is_none(), |this| this.text_color(muted))
+                        .child(if row.lines == 0 {
+                            "–".to_string()
+                        } else {
+                            format!("{:.0} %", row.kept as f64 * 100. / row.lines as f64)
+                        }),
+                )
                 .child(div().w(px(90.)).child(format!(
                     "{:.1}",
                     row.fixes as f64 / row.instructions.max(1) as f64
@@ -187,8 +198,12 @@ impl StatsView {
             .child(div().pt_1().text_xs().text_color(muted).child(format!(
                 "An instruction is a message from you and the automatic fixes after it. \
                      \"Green\" counts the project's checks after it ran; agents with fewer than {} \
-                     checked instructions are greyed out.",
-                crate::leaderboard::MIN_CHECKED
+                     checked instructions are greyed out. \"Code kept\" is the share of the lines \
+                     its turns wrote that were still in the code {} days later (greyed out until {} \
+                     lines are measured).",
+                crate::leaderboard::MIN_CHECKED,
+                crate::survival::SETTLE_DAYS,
+                crate::survival::MIN_LINES,
             )))
             .into_any_element()
     }

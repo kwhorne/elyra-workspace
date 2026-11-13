@@ -5,7 +5,9 @@
 //! that does well in the Rust core may not in the CSS. A new thread's first
 //! message is matched to areas by the paths and symbols it names; when one
 //! agent has clearly done better there, the thread suggests it (or picks it,
-//! with Settings → Pick the agent from your stats).
+//! with Settings → Pick the agent from your stats). Once enough of their code
+//! there has been measured (`survival`), being green on the first try counts
+//! for as much of it as you kept.
 
 use elyra_core::{ItemContent, ProjectId, ProviderKind, Store, ThreadId};
 use std::collections::{BTreeSet, HashMap};
@@ -45,10 +47,11 @@ pub fn load(
 ) -> anyhow::Result<Vec<Record>> {
     let store = Store::open_read_only(db)?;
     let paths = store.instruction_paths(project)?;
+    let survival = store.line_survival()?;
     let mut records = Vec::new();
     for (thread, provider, model) in threads {
         let items = store.transcript(*thread)?;
-        let outcomes = crate::leaderboard::outcomes(&items);
+        let outcomes = crate::leaderboard::outcomes(&items, &survival);
         // The messages the outcomes belong to, in the same order.
         let messages = items.iter().filter_map(|item| match &item.content {
             ItemContent::User { text, .. } if crate::checks::fix_prompt_label(text).is_none() => {
@@ -92,11 +95,17 @@ struct Tally {
     first_try: usize,
     instructions: usize,
     cost: f64,
+    lines: usize,
+    kept: usize,
 }
 
 impl Tally {
     fn rate(&self) -> f64 {
         self.first_try as f64 / self.checked.max(1) as f64
+    }
+
+    fn kept_rate(&self) -> f64 {
+        self.kept as f64 / self.lines.max(1) as f64
     }
 }
 
@@ -121,6 +130,8 @@ pub fn recommend(records: &[Record], areas: &BTreeSet<String>) -> Option<Pick> {
             .or_default();
         tally.instructions += 1;
         tally.cost += record.outcome.cost;
+        tally.lines += record.outcome.lines;
+        tally.kept += record.outcome.kept;
         if let Some(first_try) = record.outcome.first_try {
             tally.checked += 1;
             tally.first_try += usize::from(first_try);
@@ -134,15 +145,27 @@ pub fn recommend(records: &[Record], areas: &BTreeSet<String>) -> Option<Pick> {
         return None;
     }
     let cost_each = |t: &Tally| t.cost / t.instructions.max(1) as f64;
+    // Green on the first try, for as much of the code as was kept: once
+    // enough of every agent's lines there have been measured.
+    let with_kept = compared
+        .iter()
+        .all(|(_, t)| t.lines >= crate::survival::MIN_LINES);
+    let score = |t: &Tally| {
+        if with_kept {
+            t.rate() * t.kept_rate()
+        } else {
+            t.rate()
+        }
+    };
     compared.sort_by(|(_, a), (_, b)| {
-        b.rate()
-            .total_cmp(&a.rate())
+        score(b)
+            .total_cmp(&score(a))
             .then_with(|| cost_each(a).total_cmp(&cost_each(b)))
     });
     let ((provider, model), best) = &compared[0];
     let (next_key, next) = &compared[1];
-    let clearly = best.rate() > next.rate() + 0.1
-        || (best.rate() >= next.rate() && cost_each(best) < cost_each(next) * 0.6);
+    let clearly = score(best) > score(next) + 0.1
+        || (score(best) >= score(next) && cost_each(best) < cost_each(next) * 0.6);
     if !clearly {
         return None;
     }
@@ -156,17 +179,33 @@ pub fn recommend(records: &[Record], areas: &BTreeSet<String>) -> Option<Pick> {
     Some(Pick {
         provider: *provider,
         model: model.clone(),
-        reason: format!(
-            "In {where_}, {} has been green on the first try in {} of {} instructions ({} each); {} {} of {} ({} each).",
-            label(*provider, model),
-            best.first_try,
-            best.checked,
-            crate::thread_session::format_usd(cost_each(best)),
-            label(next_key.0, &next_key.1),
-            next.first_try,
-            next.checked,
-            crate::thread_session::format_usd(cost_each(next)),
-        ),
+        reason: if with_kept {
+            format!(
+                "In {where_}, {} has been green on the first try in {} of {} instructions, and you kept {:.0} % of its lines ({} each); {} {} of {}, {:.0} % kept ({} each).",
+                label(*provider, model),
+                best.first_try,
+                best.checked,
+                best.kept_rate() * 100.,
+                crate::thread_session::format_usd(cost_each(best)),
+                label(next_key.0, &next_key.1),
+                next.first_try,
+                next.checked,
+                next.kept_rate() * 100.,
+                crate::thread_session::format_usd(cost_each(next)),
+            )
+        } else {
+            format!(
+                "In {where_}, {} has been green on the first try in {} of {} instructions ({} each); {} {} of {} ({} each).",
+                label(*provider, model),
+                best.first_try,
+                best.checked,
+                crate::thread_session::format_usd(cost_each(best)),
+                label(next_key.0, &next_key.1),
+                next.first_try,
+                next.checked,
+                crate::thread_session::format_usd(cost_each(next)),
+            )
+        },
     })
 }
 
@@ -248,8 +287,50 @@ mod tests {
                 green: Some(green),
                 fixes: 0,
                 cost,
+                lines: 0,
+                kept: 0,
             },
         }
+    }
+
+    #[test]
+    fn green_counts_for_as_much_of_the_code_as_was_kept() {
+        let area = BTreeSet::from(["app/Http".to_string()]);
+        let kept = |provider, green, lines, kept| {
+            let mut record = record(provider, "app/Http", green, 0.2);
+            record.outcome.lines = lines;
+            record.outcome.kept = kept;
+            record
+        };
+        // Codex is green more often, but most of what it writes is redone.
+        let mut records = Vec::new();
+        for green in [true, true, true, true] {
+            records.push(kept(ProviderKind::Codex, green, 20, 6));
+        }
+        for green in [true, true, true, false] {
+            records.push(kept(ProviderKind::Claude, green, 20, 19));
+        }
+        let pick = recommend(&records, &area).unwrap();
+        assert_eq!(pick.provider, ProviderKind::Claude);
+        assert!(
+            pick.reason
+                .contains("3 of 4 instructions, and you kept 95 % of its lines")
+                && pick.reason.contains("Codex 4 of 4, 30 % kept"),
+            "{}",
+            pick.reason
+        );
+        // Until enough of each agent's code is measured, only green counts.
+        for record in records
+            .iter_mut()
+            .filter(|r| r.provider == ProviderKind::Claude)
+        {
+            record.outcome.lines = 5;
+            record.outcome.kept = 5;
+        }
+        assert_eq!(
+            recommend(&records, &area).map(|p| p.provider),
+            Some(ProviderKind::Codex)
+        );
     }
 
     #[test]

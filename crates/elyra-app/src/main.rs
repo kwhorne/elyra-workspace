@@ -58,6 +58,7 @@ mod shortcuts;
 mod sidebar;
 mod stack;
 mod stats;
+mod survival;
 mod tasks;
 mod terminal_view;
 mod themes;
@@ -148,6 +149,7 @@ fn main() {
         automations::init(app.clone(), cx);
         events::init(app.clone(), cx);
         duel::init(app.clone(), cx);
+        survival::init(app.clone(), cx);
         cx.set_menus(menus());
 
         // Development: open in the background without taking focus.
