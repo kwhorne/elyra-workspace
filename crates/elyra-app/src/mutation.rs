@@ -158,6 +158,7 @@ pub fn run(
     let folder = scratch
         .dir()
         .join(dir.strip_prefix(root).unwrap_or(Path::new("")));
+    let env = scratch.env();
     let mut caught = Vec::new();
     for candidate in candidates {
         if cancel.load(Ordering::Relaxed) {
@@ -165,7 +166,7 @@ pub fn run(
         }
         let file = scratch.dir().join(&candidate.result.path);
         std::fs::write(&file, &candidate.mutated)?;
-        let outcome = run_limited(&folder, command, limit, cancel);
+        let outcome = run_limited(&folder, command, &env, limit, cancel);
         std::fs::write(&file, &candidate.original)?;
         if cancel.load(Ordering::Relaxed) {
             break;
@@ -179,6 +180,7 @@ pub fn run(
 fn run_limited(
     dir: &Path,
     command: &str,
+    env: &[(String, String)],
     limit: Duration,
     cancel: &Arc<AtomicBool>,
 ) -> crate::checks::Outcome {
@@ -197,7 +199,7 @@ fn run_limited(
             }
         });
     }
-    let outcome = crate::checks::run(dir, command, &stop);
+    let outcome = crate::checks::run_with(dir, command, env, &stop);
     done.store(true, Ordering::Relaxed);
     outcome
 }

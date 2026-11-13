@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Dependencies in temporary checkouts and worktrees.** Who broke it?, Keep as
+  test and Test the tests run the checks in a temporary checkout. Its linked
+  `node_modules`, `.venv` and other ignored folders were removed whenever it
+  moved to another state (a `node_modules/` pattern in `.gitignore` doesn't
+  cover a link), so in JavaScript and Python projects the checks ran without
+  their dependencies. They now stay. `node_modules` in a JavaScript workspace is
+  an APFS clone there, so its links to the workspace's packages lead to the
+  checkout's code rather than the project folder's, and in a Python project the
+  checkout's code comes first on `PYTHONPATH`. New worktrees get `node_modules/`
+  as an APFS clone, as they get Composer's `vendor/`.
 - **Lines no test guards, in Changes.** A line the mutation gate changed
   without the checks noticing has a flask in the diff instead of `+`, and the
   file list says how many a file has (*1 unguarded*). Click it for the change

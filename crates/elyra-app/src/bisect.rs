@@ -200,7 +200,7 @@ impl<P: Fn(String)> Runner<'_, P> {
         self.runs += 1;
         (self.progress)(format!("Running the checks {what} (run {})", self.runs));
         self.scratch.checkout(self.states[index])?;
-        let outcome = checks::run(self.folder, self.command, self.cancel);
+        let outcome = checks::run_with(self.folder, self.command, &self.scratch.env(), self.cancel);
         if stopped() {
             return Ok(None);
         }

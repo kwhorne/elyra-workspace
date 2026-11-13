@@ -180,6 +180,13 @@ threads can work in parallel.
   threads. Remove ones you no longer need (their branches are kept).
 - When you delete a thread that has a worktree, **Delete with worktree** removes
   both.
+- What Git leaves out comes along when the worktree lacks it: `.env`, the
+  agents' setup files (`.mcp.json`, `AGENTS.md` and the like, when not in Git),
+  and the dependencies as APFS clones, which take no extra space until they
+  change: Composer's `vendor/` and `node_modules/` (a workspace's links to its
+  own packages then point into the worktree), so the tests run there right away.
+  A Python virtualenv isn't copied, since an editable install in it names the
+  project folder: make one in the worktree. The thread says what was copied.
 
 ### Worktrees with their own running app
 

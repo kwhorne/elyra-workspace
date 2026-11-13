@@ -75,7 +75,8 @@ pub fn verify(
         let dir = scratch.dir().join(folder);
         // With the fix: the folder as the test's turn left it.
         scratch.checkout(after)?;
-        let with = crate::checks::run(&dir, command, cancel);
+        let env = scratch.env();
+        let with = crate::checks::run_with(&dir, command, &env, cancel);
         if !with.passed {
             let output: String = with
                 .output
@@ -107,7 +108,7 @@ pub fn verify(
                 }
             }
         }
-        let without = crate::checks::run(&dir, command, cancel);
+        let without = crate::checks::run_with(&dir, command, &env, cancel);
         Ok(if without.passed {
             KeptTest::PassesWithoutFix {
                 files: files.clone(),

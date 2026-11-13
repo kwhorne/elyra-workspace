@@ -1,9 +1,13 @@
 //! What a new worktree needs from the project folder that Git doesn't bring:
 //! files most projects keep out of the repository. The app's `.env`, the
 //! agents' setup that Laravel Boost and others write (`.mcp.json`, the
-//! guideline files, skills) and `vendor/`, so `php artisan` — and with it
-//! Boost's MCP server — works there. Only what the worktree lacks is copied;
-//! `vendor/` only as an APFS clone (cheap, no extra space until changed).
+//! guideline files, skills), `vendor/` so `php artisan` — and with it Boost's
+//! MCP server — works there, and `node_modules/` so the JavaScript tests and
+//! tools do (a workspace's links to its own packages then point into the
+//! worktree). Only what the worktree lacks is copied; `vendor/` and
+//! `node_modules/` only as APFS clones (cheap, no extra space until changed).
+//! A Python virtualenv isn't: its scripts and an editable install name the
+//! project folder, so a copy would run that folder's code.
 
 use std::path::Path;
 use std::process::Command;
@@ -25,7 +29,8 @@ const LOCAL: &[&str] = &[
 ];
 
 /// Copy what the worktree at `worktree` lacks from `project`; returns what
-/// was copied, and a note when `vendor/` couldn't be. Blocking.
+/// was copied, and a note when `vendor/` or `node_modules/` couldn't be.
+/// Blocking.
 pub fn prepare(project: &Path, worktree: &Path) -> (Vec<String>, Option<String>) {
     let mut copied = Vec::new();
     for name in LOCAL {
@@ -42,19 +47,30 @@ pub fn prepare(project: &Path, worktree: &Path) -> (Vec<String>, Option<String>)
             copied.push((*name).to_string());
         }
     }
-    let mut note = None;
-    let (vendor, into) = (project.join("vendor"), worktree.join("vendor"));
-    if vendor.is_dir() && !into.exists() && project.join("composer.json").is_file() {
-        if copy(&vendor, &into, true) {
-            copied.push("vendor".into());
+    let mut notes = Vec::new();
+    // Dependencies, as clones only: (folder, the file that says it's one,
+    // what to run instead).
+    for (folder, manifest, install) in [
+        ("vendor", "composer.json", "composer install"),
+        (
+            "node_modules",
+            "package.json",
+            "your package manager's install",
+        ),
+    ] {
+        let (from, into) = (project.join(folder), worktree.join(folder));
+        if !from.is_dir() || into.exists() || !project.join(manifest).is_file() {
+            continue;
+        }
+        if copy(&from, &into, true) {
+            copied.push(folder.into());
         } else {
-            note = Some(
-                "vendor/ wasn't copied (cloning needs APFS): run composer install in the worktree."
-                    .into(),
-            );
+            notes.push(format!(
+                "{folder}/ wasn't copied (cloning needs APFS): run {install} in the worktree."
+            ));
         }
     }
-    (copied, note)
+    (copied, (!notes.is_empty()).then(|| notes.join(" ")))
 }
 
 /// `cp -R`, as a clone where the file system can (`clone_only`: or not at
@@ -120,6 +136,14 @@ mod tests {
         )
         .unwrap();
         std::fs::write(project.join("vendor/autoload.php"), "<?php\n").unwrap();
+        std::fs::create_dir_all(project.join("node_modules/@shop")).unwrap();
+        std::os::unix::fs::symlink("../../packages/ui", project.join("node_modules/@shop/ui"))
+            .unwrap();
+        std::fs::write(
+            project.join("package.json"),
+            r#"{"workspaces": ["packages/*"]}"#,
+        )
+        .unwrap();
         std::fs::write(project.join("AGENTS.md"), "project's\n").unwrap();
         std::fs::write(worktree.join("AGENTS.md"), "the branch's own\n").unwrap();
 
@@ -142,6 +166,14 @@ mod tests {
         if copied.contains(&"vendor".to_string()) {
             assert!(worktree.join("vendor/autoload.php").is_file());
         }
+        if copied.contains(&"node_modules".to_string()) {
+            // The workspace link stays relative: it points into the worktree.
+            assert_eq!(
+                std::fs::read_link(worktree.join("node_modules/@shop/ui")).unwrap(),
+                std::path::Path::new("../../packages/ui")
+            );
+        }
+        assert!(cfg!(not(target_os = "macos")) || copied.contains(&"node_modules".to_string()));
         assert!(describe(&copied).unwrap().contains(".env"));
         assert_eq!(prepare(&project, &worktree).0, Vec::<String>::new(), "once");
         std::fs::remove_dir_all(&root).unwrap();

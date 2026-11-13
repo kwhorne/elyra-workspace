@@ -106,6 +106,17 @@ pub fn changed_since(dir: &Path, checkpoint: Option<&str>) -> bool {
 /// Run `command` in `dir` with the user's login shell, until it ends, the
 /// timeout passes or `cancel` is set.
 pub fn run(dir: &Path, command: &str, cancel: &Arc<AtomicBool>) -> Outcome {
+    run_with(dir, command, &[], cancel)
+}
+
+/// [`run`] with more environment (a temporary checkout's, see
+/// `ScratchCheckout::env`).
+pub fn run_with(
+    dir: &Path,
+    command: &str,
+    env: &[(String, String)],
+    cancel: &Arc<AtomicBool>,
+) -> Outcome {
     let started = Instant::now();
     // A POSIX login shell (fish doesn't take `exec 2>&1`).
     let shell = std::env::var("SHELL")
@@ -120,6 +131,7 @@ pub fn run(dir: &Path, command: &str, cancel: &Arc<AtomicBool>) -> Outcome {
         // Test runners stay non-interactive (no watch mode, no prompts).
         .env("CI", "1")
         .env("ELYRA_CHECK", "1")
+        .envs(env.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

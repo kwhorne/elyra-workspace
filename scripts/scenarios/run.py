@@ -81,7 +81,10 @@ class World:
     def project(self, name, check, value, files=None, allow_mcp_json=False, instructions=None):
         path = os.path.join(self.dir, name)
         os.makedirs(path)
-        for file, text in (files or {}).items():
+        files = dict(files or {})
+        ignored = files.pop(".gitignore", "")
+        for file, text in files.items():
+            os.makedirs(os.path.dirname(os.path.join(path, file)), exist_ok=True)
             with open(os.path.join(path, file), "w") as f:
                 f.write(text)
         git = lambda *args: subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
@@ -89,7 +92,7 @@ class World:
         with open(os.path.join(path, "value.txt"), "w") as f:
             f.write(f"{value}\n")
         with open(os.path.join(path, ".gitignore"), "w") as f:
-            f.write("prompts.log\nmodels.log\ninstructions.log\n")
+            f.write("prompts.log\nmodels.log\ninstructions.log\n" + ignored)
         git("add", ".")
         git("-c", "user.email=s@s", "-c", "user.name=s", "commit", "-qm", "start")
         self.projects[name] = {"path": path, "check": check, "allow_mcp_json": allow_mcp_json,
@@ -1072,6 +1075,30 @@ def red_gets_a_round_for_what_its_tests_missed(world, project):
     duel = next(d for d in duels if d["red"] == red)
     expect(duel["phase"] == "done" and duel["hardened"] == 1, str(duel))
     expect(sorted(duel["tests"]) == ["tests/test_rules.py", "tests/test_rules_more.py"], str(duel["tests"]))
+
+
+@scenario(check="""node -e 'process.exit(require("@shop/rules").free(600) ? 0 : 1)'""", files={
+    ".gitignore": "node_modules/\n",
+    "package.json": '{"workspaces": ["packages/*"]}\n',
+    "packages/rules/package.json": '{"name": "@shop/rules", "main": "index.js"}\n',
+})
+def the_tests_are_tested_in_a_javascript_workspace(world, project):
+    path = world.projects[project]["path"]
+    # As npm install leaves it: the workspace's package linked in, not in Git.
+    os.makedirs(os.path.join(path, "node_modules/@shop"))
+    os.symlink("../../packages/rules", os.path.join(path, "node_modules/@shop/rules"))
+    thread = world.new_thread(
+        project, "[write packages/rules/index.js] exports.free = (total) => total > 500 && total !== 999;")
+    world.wait(thread)
+
+    def gate():
+        cards = [i for i in world.items(thread) if i["kind"] == "mutation_gate"]
+        return cards[0] if cards and cards[0]["state"]["state"] != "running" else None
+    card = wait_for("the mutation gate", gate, 60)
+    # Through a linked node_modules the checks would run the real package,
+    # and every change would seem to get through.
+    missed = [m["change"] for m in card["mutants"] if m["caught"] is False]
+    expect(missed == ["`&&` → `||`"], f"only what the check can't see: {card['mutants']}")
 
 
 def main():

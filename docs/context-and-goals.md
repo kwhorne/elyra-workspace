@@ -287,7 +287,15 @@ another thread, another agent, or a turn hours ago. **Who broke it?** on a
 
 Your working folder isn't touched. The temporary copy shares what Git ignores at
 the top of the project (dependencies such as `vendor` and `node_modules`, and
-`.env`) by link, so the checks can run there; it's removed afterwards. **Stop**
+`.env`) by link, so the checks can run there; it's removed afterwards. Where a
+link would make the checks run the project folder's code instead of the
+copy's, it is an APFS clone instead (no extra space until it changes):
+Composer's `vendor`, and `node_modules` in a JavaScript workspace (npm, Yarn or
+pnpm workspaces, Lerna), whose links to its own packages would lead back to the
+folder. In a Python project the copy's code (and its `src`) comes first on
+`PYTHONPATH`, ahead of an editable install in the shared virtualenv. The same
+goes for [Test the tests](#test-the-tests) and [Keep an error as a
+test](#keep-an-error-as-a-test). **Stop**
 ends the search. If the checks pass in the temporary copy, the failure depends on
 something outside the project's files (a database, a service); if they already
 failed before the oldest turn, none of the turns looked at caused it. Turns that
@@ -374,7 +382,8 @@ CLAUDE.md and its skills, and:
   aren't in Git either. A new worktree gets them copied from the project folder
   when it lacks them (`vendor/` as an APFS clone, which takes no extra space
   until it changes), so `php artisan`, and Boost with it, work there too. The
-  thread says what was copied.
+  thread says what was copied. A JavaScript project's `node_modules/` is
+  cloned the same way ([Worktrees](git-and-review.md#worktrees)).
 - **Rules go to `.ai/rules`** (see [Rules agents learn](#rules-agents-learn)).
 - **App errors lead to the instruction behind them.** When the app logs an
   error in `storage/logs/laravel.log`, the thread working in that folder shows

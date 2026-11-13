@@ -2,10 +2,19 @@
 //! earlier states (a turn's checkpoint) without touching the working tree.
 //! What git ignores at the top of the repository (dependencies such as
 //! `vendor` and `node_modules`, `.env`) is linked in from the real folder, so
-//! the project's checks can run there. Composer's `vendor` is cloned instead
-//! (APFS, no extra space): PHP resolves symlinks, so a linked autoloader would
-//! load the app's classes from the real folder, not the checkout. Removed
-//! when dropped.
+//! the project's checks can run there. Some are cloned instead (APFS, no
+//! extra space until changed), because through a link the checks would run
+//! the real folder's code rather than the checkout's:
+//!
+//! - Composer's `vendor`: PHP resolves symlinks, so a linked autoloader loads
+//!   the app's classes from the real folder.
+//! - `node_modules` in a JavaScript workspace (npm, Yarn or pnpm workspaces,
+//!   Lerna): it links the workspace's own packages (`../../packages/ui`),
+//!   which through a linked `node_modules` resolve to the real folder's.
+//!
+//! A Python virtualenv stays linked (a clone wouldn't help: an editable
+//! install's `.pth` names the real folder); [`ScratchCheckout::env`] puts the
+//! checkout's own code first on `PYTHONPATH` instead. Removed when dropped.
 
 use crate::run_ok;
 use anyhow::{Context as _, Result};
@@ -14,6 +23,9 @@ use std::path::{Path, PathBuf};
 pub struct ScratchCheckout {
     repo: PathBuf,
     dir: PathBuf,
+    /// The ignored entries linked in, kept through `git clean` (a link isn't
+    /// a directory, so a `node_modules/` pattern doesn't keep it).
+    linked: Vec<String>,
 }
 
 impl ScratchCheckout {
@@ -30,9 +42,10 @@ impl ScratchCheckout {
             &["worktree", "add", "--detach", "--quiet", &path, "HEAD"],
         )
         .context("making a temporary checkout")?;
-        let scratch = Self {
+        let mut scratch = Self {
             repo: repo.to_path_buf(),
             dir,
+            linked: Vec::new(),
         };
         scratch.link_ignored()?;
         Ok(scratch)
@@ -49,12 +62,18 @@ impl ScratchCheckout {
             &self.dir,
             &["checkout", "--quiet", "--force", "--detach", commit],
         )?;
-        run_ok(&self.dir, &["clean", "--quiet", "-fd"])?;
+        let mut clean = vec!["clean".to_string(), "--quiet".into(), "-fd".into()];
+        for entry in &self.linked {
+            clean.push("-e".into());
+            clean.push(format!("/{entry}"));
+        }
+        let clean: Vec<&str> = clean.iter().map(String::as_str).collect();
+        run_ok(&self.dir, &clean)?;
         Ok(())
     }
 
     /// Link what git ignores at the top of the repository into the checkout.
-    fn link_ignored(&self) -> Result<()> {
+    fn link_ignored(&mut self) -> Result<()> {
         let ignored = run_ok(
             &self.repo,
             &[
@@ -70,15 +89,57 @@ impl ScratchCheckout {
             if to.exists() || entry == ".git" {
                 continue;
             }
-            if entry == "vendor" && self.repo.join("composer.json").is_file() && clone(&from, &to) {
-                continue;
+            let own_code = match entry.as_str() {
+                "vendor" => self.repo.join("composer.json").is_file(),
+                "node_modules" => js_workspace(&self.repo),
+                _ => false,
+            };
+            if !(own_code && clone(&from, &to)) {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&from, &to)
+                    .with_context(|| format!("linking {entry} into the temporary checkout"))?;
             }
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&from, &to)
-                .with_context(|| format!("linking {entry} into the temporary checkout"))?;
+            self.linked.push(entry);
         }
         Ok(())
     }
+}
+
+impl ScratchCheckout {
+    /// Environment for running the project's checks in the checkout: in a
+    /// Python project, `PYTHONPATH` with the checkout's `src` (when it has one)
+    /// and its top, so its code is imported rather than what an editable
+    /// install in the linked virtualenv points to.
+    pub fn env(&self) -> Vec<(String, String)> {
+        let python = ["pyproject.toml", "setup.py", "setup.cfg"]
+            .iter()
+            .any(|file| self.dir.join(file).is_file());
+        if !python {
+            return Vec::new();
+        }
+        let mut paths = Vec::new();
+        if self.dir.join("src").is_dir() {
+            paths.push(self.dir.join("src").display().to_string());
+        }
+        paths.push(self.dir.display().to_string());
+        if let Ok(existing) = std::env::var("PYTHONPATH")
+            && !existing.is_empty()
+        {
+            paths.push(existing);
+        }
+        vec![("PYTHONPATH".into(), paths.join(":"))]
+    }
+}
+
+/// Whether the repository is a JavaScript workspace, whose `node_modules`
+/// links its own packages.
+pub fn js_workspace(repo: &Path) -> bool {
+    repo.join("pnpm-workspace.yaml").is_file()
+        || repo.join("lerna.json").is_file()
+        || std::fs::read_to_string(repo.join("package.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|package| package.get("workspaces").is_some())
 }
 
 impl Drop for ScratchCheckout {
@@ -126,7 +187,7 @@ mod tests {
             ["vendor", ".env", "node_modules"]
         );
         let repo = temp_repo("scratch");
-        std::fs::write(repo.join(".gitignore"), "vendor/\n.env\n").unwrap();
+        std::fs::write(repo.join(".gitignore"), "vendor/\n.env\n.venv/\n").unwrap();
         std::fs::write(repo.join("app.txt"), "one\n").unwrap();
         stage_all(&repo).unwrap();
         let first = commit_staged(&repo, "first").unwrap();
@@ -136,6 +197,7 @@ mod tests {
         std::fs::create_dir_all(repo.join("vendor/lib")).unwrap();
         std::fs::write(repo.join(".env"), "KEY=1\n").unwrap();
         std::fs::write(repo.join("composer.json"), "{}\n").unwrap();
+        std::fs::create_dir_all(repo.join(".venv/bin")).unwrap();
 
         let dir = {
             let scratch = ScratchCheckout::new(&repo).unwrap();
@@ -148,12 +210,55 @@ mod tests {
                 "Composer's vendor is a clone, so PHP loads the checkout's classes"
             );
             assert!(scratch.dir().join(".env").is_symlink());
+            assert!(scratch.dir().join(".venv").is_symlink());
             scratch.checkout(&first).unwrap();
             assert_eq!(read("app.txt"), "one\n");
             assert_eq!(read(".env"), "KEY=1\n", "and stay");
+            assert!(
+                scratch.dir().join(".venv/bin").is_dir(),
+                "a linked folder stays too, though `.venv/` only ignores folders"
+            );
             scratch.dir().to_path_buf()
         };
         assert!(!dir.exists(), "removed when dropped");
+
+        // A JavaScript workspace's node_modules is cloned (it links the
+        // workspace's packages); a Python project gets its code first.
+        std::fs::write(repo.join(".gitignore"), "vendor/\n.env\nnode_modules/\n").unwrap();
+        std::fs::create_dir_all(repo.join("node_modules/@shop")).unwrap();
+        std::fs::write(
+            repo.join("package.json"),
+            r#"{"workspaces": ["packages/*"]}"#,
+        )
+        .unwrap();
+        std::fs::write(repo.join("pyproject.toml"), "[project]\nname = \"shop\"\n").unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src/shop.py"), "\n").unwrap();
+        stage_all(&repo).unwrap();
+        commit_staged(&repo, "third").unwrap();
+        {
+            let scratch = ScratchCheckout::new(&repo).unwrap();
+            assert!(scratch.dir().join("node_modules/@shop").is_dir());
+            assert!(
+                cfg!(not(target_os = "macos")) || !scratch.dir().join("node_modules").is_symlink(),
+                "a workspace's node_modules is a clone"
+            );
+            let env = scratch.env();
+            assert_eq!(env[0].0, "PYTHONPATH");
+            assert!(
+                env[0].1.starts_with(&format!(
+                    "{}:{}",
+                    scratch.dir().join("src").display(),
+                    scratch.dir().display()
+                )),
+                "{}",
+                env[0].1
+            );
+        }
+        std::fs::write(repo.join("package.json"), "{}").unwrap();
+        assert!(!super::js_workspace(&repo));
+        std::fs::write(repo.join("pnpm-workspace.yaml"), "packages: []\n").unwrap();
+        assert!(super::js_workspace(&repo));
         assert_eq!(
             std::fs::read_to_string(repo.join("app.txt")).unwrap(),
             "two\n",
