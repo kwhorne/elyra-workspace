@@ -1167,6 +1167,37 @@ def agents_propose_checks_for_the_user_to_save(world, project):
     expect("can't be used" in reply, "a broken expression is refused: " + reply[-300:])
 
 
+@scenario(files={".elyra/invariants/tenant.json": TENANT,
+                 "app/Api/Orders.php": "<?php\n$orders = Order::where('tenant_id', $tenant)->get();\n"})
+def loosening_an_invariant_doesnt_get_past_it(world, project):
+    thread = world.new_thread(project, "[loosen] Add the invoices endpoint")
+    world.wait(thread)
+    items = world.items(thread)
+    cards = [i for i in items if i["kind"] == "invariants"]
+    expect(cards and [(b["path"], b["detail"]) for b in cards[0]["broken"]] == [("app/Api/Invoices.php", "doesn't have `tenant_id`")],
+           f"checked as it was before the turn: {cards}")
+    notices = [i["text"] for i in items if i["kind"] == "notice"]
+    expect(any("changed the project's invariants (.elyra/invariants/tenant.json)" in n for n in notices), str(notices))
+    log = os.path.join(world.projects[project]["path"], "instructions.log")
+    told = open(log).read() if os.path.exists(log) else ""
+    expect("This project has invariants" in told and "API controllers scope queries to the tenant (app/Api/**/*.php)" in told,
+           "the agent was told: " + told[-300:])
+
+
+@scenario(check='python3 -B -c "import rules, time; time.sleep(1); assert rules.free(600)"')
+def a_new_message_stops_testing_the_tests(world, project):
+    thread = world.new_thread(project, "[write rules.py] def free(total): return total > 500 and total != 999")
+    world.wait(thread)
+    world.tool("send_message", thread_id=thread, text="[talk]")
+    world.wait(thread)
+
+    def gate():
+        cards = [i for i in world.items(thread) if i["kind"] == "mutation_gate"]
+        return cards[0] if cards and cards[0]["state"]["state"] != "running" else None
+    card = wait_for("the mutation gate to end", gate, 30)
+    expect(card["state"]["state"] == "stopped", f"stopped by the new message: {card}")
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

@@ -1035,7 +1035,21 @@ fn external_page() -> SettingPage {
                         .default_value(4.),
                     )
                     .description(
-                        "Once the checks pass (and took under 90 seconds), Elyra makes this many small changes to the lines the instruction added, such as a flipped comparison, and runs the checks again with each in a temporary copy. What they still pass with is code no test guards. 0 turns it off.",
+                        "Once the checks pass, Elyra makes this many small changes to the lines the instruction added, such as a flipped comparison, and runs the checks again with each in a temporary copy. What they still pass with is code no test guards. 0 turns it off.",
+                    ),
+                )
+                .item(
+                    SettingItem::new(
+                        "Only for checks that take at most",
+                        number_field(
+                            number(5., 600., 5.),
+                            |p| p.mutation_max_check_secs as f64,
+                            |p, v| p.mutation_max_check_secs = v.max(5.).round() as u32,
+                        )
+                        .default_value(30.),
+                    )
+                    .description(
+                        "Seconds. The checks run once per change, in the background, so slower ones are left out. A new message stops it; it runs again after that turn's checks pass.",
                     ),
                 ),
         )

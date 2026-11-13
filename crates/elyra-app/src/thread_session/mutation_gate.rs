@@ -37,7 +37,8 @@ impl ThreadSession {
         let Some((true, check_ms)) = check else {
             return;
         };
-        if check_ms > crate::mutation::MAX_CHECK_MS {
+        let limit_secs = crate::preferences::Preferences::global(cx).mutation_max_check_secs as u64;
+        if check_ms > limit_secs * 1000 {
             return;
         }
         // The folder before the instruction (its fixes and asked-for tests
@@ -66,10 +67,12 @@ impl ThreadSession {
         let cancel = Arc::new(AtomicBool::new(false));
         self.mutation_cancel = Some(cancel.clone());
         let dir = self.working_dir();
+        // What the tests caught before isn't tried again.
+        let skip = crate::mutation::caught_before(&self.items);
         let job = cx.background_executor().spawn(async move {
             let root = elyra_git::repo_root(&dir)?;
             let after = elyra_git::checkpoint::snapshot(&root, "elyra: mutation gate")?;
-            let candidates = crate::mutation::choose(&root, &before, &after, changes)?;
+            let candidates = crate::mutation::choose(&root, &before, &after, changes, &skip)?;
             anyhow::Ok((dir, root, after, candidates))
         });
         cx.spawn(async move |this, cx| {

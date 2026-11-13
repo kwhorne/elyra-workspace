@@ -29,6 +29,15 @@ pub fn changed_paths(repo: &Path, from: &str, to: &str) -> Result<Vec<String>> {
         .collect())
 }
 
+/// The files in `dir` (a folder of the repository) in a snapshot, as paths
+/// in the repository; empty when it has no such folder.
+pub fn files_at(repo: &Path, commit: &str, dir: &str) -> Vec<String> {
+    let dir = format!("{}/", dir.trim_end_matches('/'));
+    crate::run_ok(repo, &["ls-tree", "--name-only", commit, "--", &dir])
+        .map(|out| out.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
 /// A file's content in a snapshot; None when it isn't there.
 pub fn content_at(repo: &Path, commit: &str, path: &str) -> Option<Vec<u8>> {
     let output = std::process::Command::new("git")

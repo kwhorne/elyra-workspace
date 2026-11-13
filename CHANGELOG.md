@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Testing the tests is lighter and safer.** A new message stops it, so its
+  test runs never overlap the next turn's checks (a shared test database made
+  them flaky); changes the tests caught before aren't tried again; and it runs
+  for checks that take at most 30 seconds by default, which Settings → Agents &
+  MCP → Only for checks that take at most changes.
+- **Invariants hold against the turn that breaks them.** They are checked as
+  they were before the message, so editing or removing one doesn't get a turn
+  past it (the thread says it was changed), and agents are told the project's
+  invariants from the start.
+- The thrash guard no longer counts tool calls you turned down in Claude Code
+  as failures.
+
 ## 1.19.0
 
 Rules that get checked, and guards that see more of the code: invariants run

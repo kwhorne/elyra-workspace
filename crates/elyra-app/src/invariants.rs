@@ -30,9 +30,94 @@ pub const FIX_START: &str = "The project's invariants broke with your changes:";
 /// How long a `command` may take.
 const COMMAND_LIMIT: Duration = Duration::from_secs(60);
 
-/// Whether the repository at or above `dir` keeps invariants. Cheap.
+/// Whether the folder (a project's or a worktree's top) keeps invariants.
+/// Only looks at the disk, so it can be asked on the main thread.
 pub fn exist(dir: &Path) -> bool {
-    elyra_git::repo_root(dir).is_ok_and(|root| root.join(DIR).is_dir())
+    dir.join(DIR).is_dir()
+}
+
+/// The invariants as they were in `before` (a checkpoint), with those added
+/// since as they are now, so a turn can't weaken a check by editing it; and
+/// the files a turn changed or removed. Blocking.
+pub fn load_as_of(root: &Path, before: &str) -> (Vec<Invariant>, Vec<String>, Vec<String>) {
+    let (now, mut problems) = load(root);
+    let then: Vec<String> = elyra_git::undo::files_at(root, before, DIR)
+        .into_iter()
+        .filter(|path| path.ends_with(".json"))
+        .collect();
+    if then.is_empty() {
+        return (now, problems, Vec::new());
+    }
+    let mut found = Vec::new();
+    let mut changed = Vec::new();
+    for path in &then {
+        let Some(old) = elyra_git::undo::content_at(root, before, path)
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+        else {
+            continue;
+        };
+        if std::fs::read_to_string(root.join(path)).ok().as_deref() != Some(old.as_str()) {
+            changed.push(path.clone());
+        }
+        match serde_json::from_str::<Invariant>(&old)
+            .map_err(|e| e.to_string())
+            .and_then(|invariant| validate(&invariant).map(|_| invariant))
+        {
+            Ok(invariant) => found.push(invariant),
+            Err(err) => problems.push(format!("{path}: {err}")),
+        }
+    }
+    // Added since (saved from a card, say): as they are.
+    let names: HashSet<&str> = found.iter().map(|i| i.name.as_str()).collect();
+    let added: Vec<Invariant> = now
+        .into_iter()
+        .filter(|invariant| {
+            !names.contains(invariant.name.as_str())
+                && !then
+                    .iter()
+                    .any(|path| path.ends_with(&format!("/{}", file_name(invariant))))
+        })
+        .collect();
+    found.extend(added);
+    (found, problems, changed)
+}
+
+/// What agents are told about the project's invariants, so they keep them
+/// rather than find out from a broken one. None without any.
+pub fn prompt(dir: &Path) -> Option<String> {
+    let (invariants, _) = load(dir);
+    if invariants.is_empty() {
+        return None;
+    }
+    let mut text = format!(
+        "This project has invariants, rules Elyra checks after every turn on the files you change ({DIR}; don't change those files to make a check pass):"
+    );
+    for invariant in invariants.iter().take(20) {
+        let mut what = Vec::new();
+        if let Some(require) = &invariant.require {
+            what.push(format!("each file must match `{require}`"));
+        }
+        if let Some(forbid) = &invariant.forbid {
+            what.push(format!("no new line may match `{forbid}`"));
+        }
+        if let Some(command) = &invariant.command {
+            what.push(format!("`{command}` must succeed"));
+        }
+        let files = if invariant.paths.is_empty() {
+            "all files".to_string()
+        } else {
+            invariant.paths.clone()
+        };
+        text.push_str(&format!(
+            "\n- {} ({files}): {}",
+            invariant.name,
+            what.join("; ")
+        ));
+        if !invariant.why.is_empty() {
+            text.push_str(&format!(". {}", invariant.why));
+        }
+    }
+    Some(text)
 }
 
 /// The invariants in the repository at `root`, and what couldn't be read.
@@ -407,7 +492,9 @@ pub fn fix_prompt(broken: &[BrokenInvariant], attempt: u32, attempts: u32) -> St
 
 #[cfg(test)]
 mod tests {
-    use super::{check, file_name, fix_prompt, glob, load, save, try_on, validate};
+    use super::{
+        check, file_name, fix_prompt, glob, load, load_as_of, prompt, save, try_on, validate,
+    };
     use elyra_core::Invariant;
 
     fn invariant(paths: &str) -> Invariant {
@@ -454,6 +541,62 @@ mod tests {
             file_name(&invariant("")),
             "api-controllers-scope-queries-to-the-tenant.json"
         );
+    }
+
+    #[test]
+    fn a_turn_cant_weaken_an_invariant() {
+        let root =
+            std::env::temp_dir().join(format!("elyra-invariants-asof-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .current_dir(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        git(&["init", "-q"]);
+        save(&root, &invariant("app/**")).unwrap();
+        git(&["add", "-A"]);
+        git(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-qm",
+            "before",
+        ]);
+        let before = git(&["rev-parse", "HEAD"]);
+        // The turn loosens the invariant, and a new one is saved from a card.
+        let path = root.join(".elyra/invariants/api-controllers-scope-queries-to-the-tenant.json");
+        let mut loose = invariant("app/**");
+        loose.require = Some(".".into());
+        std::fs::write(&path, serde_json::to_string(&loose).unwrap()).unwrap();
+        let mut added = invariant("src/**");
+        added.name = "No console.log".into();
+        (added.require, added.forbid) = (None, Some("console\\.log".into()));
+        save(&root, &added).unwrap();
+        let (found, problems, changed) = load_as_of(&root, &before);
+        assert!(problems.is_empty(), "{problems:?}");
+        let requires: Vec<Option<&str>> = found.iter().map(|i| i.require.as_deref()).collect();
+        assert_eq!(
+            requires,
+            [Some("tenant_id"), None],
+            "as it was before the turn, plus the new one"
+        );
+        assert_eq!(
+            changed,
+            [".elyra/invariants/api-controllers-scope-queries-to-the-tenant.json"]
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -539,6 +682,14 @@ mod tests {
                 .detail
                 .contains("exited with 1:\napp/Old.php: no <?php"),
             "{broken:?}"
+        );
+
+        // Agents are told what they are.
+        let told = prompt(&root).unwrap();
+        assert!(told.contains("- API controllers scope queries to the tenant (app/Api/**/*.php): each file must match `tenant_id`; no new line may match `\\bdd\\(`. customers must never see another tenant's orders"), "{told}");
+        assert!(
+            told.contains("PHP files parse (app/**): `for f in"),
+            "{told}"
         );
 
         // Proposed: tried on every matching file as it is.

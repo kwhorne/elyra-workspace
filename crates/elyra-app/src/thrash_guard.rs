@@ -113,6 +113,8 @@ fn declined(output: &str) -> bool {
         "user rejected",
         "user denied",
         "was rejected by the user",
+        // Claude Code: "The user doesn't want to proceed with this tool use."
+        "doesn't want to proceed",
         "permission denied by user",
     ]
     .iter()
@@ -258,6 +260,11 @@ mod tests {
                 guard.observe(&call(&input, true, "The user rejected this tool use.")),
                 None
             );
+        }
+        // Claude Code's words for it.
+        let claude = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file).";
+        for _ in 0..STREAK {
+            assert_eq!(guard.observe(&call(&input, true, claude)), None);
         }
     }
 

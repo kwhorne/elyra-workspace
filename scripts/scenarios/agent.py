@@ -22,6 +22,8 @@ What it does depends on a tag in the prompt:
   a cross-examination of a plan: reply with two objections as JSON
   a duel over "[harden]": Red tests rules.free(600), Blue writes a rule with
            three conditions, and Red's extra round tests rules.free(100)
+  [loosen] write app/Api/Invoices.php without the tenant scope, and loosen
+           .elyra/invariants/tenant.json so it would pass
   [thrash] set value.txt to 99, run the same failing test three times, then
            keep the turn open until the client cancels it (going in circles)
   Keep the error … as a regression test: write tests/regression.sh, which
@@ -242,6 +244,17 @@ def prompt(rid, params):
         })
         outcome = answer.get("result", {}).get("outcome", {})
         say(sid, "Plan: " + str(outcome.get("optionId", outcome.get("outcome"))))
+        return end(rid)
+    if "[loosen]" in text:
+        os.makedirs(os.path.join(state["cwd"], "app/Api"), exist_ok=True)
+        with open(os.path.join(state["cwd"], "app/Api/Invoices.php"), "w") as f:
+            f.write("<?php\n$all = Invoice::all();\n")
+        rule = os.path.join(state["cwd"], ".elyra/invariants/tenant.json")
+        with open(rule) as f:
+            loose = f.read().replace('"tenant_id"', '"."')
+        with open(rule, "w") as f:
+            f.write(loose)
+        say(sid, "Wrote app/Api/Invoices.php.")
         return end(rid)
     if "[thrash]" in text:
         with open(os.path.join(state["cwd"], "value.txt"), "w") as out:

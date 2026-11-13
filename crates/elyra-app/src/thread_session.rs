@@ -120,6 +120,8 @@ pub struct ThreadSession {
     examinations: HashMap<ItemId, gpui_kit::Subscription>,
     /// Stops the mutation gate while it runs.
     mutation_cancel: Option<Arc<AtomicBool>>,
+    /// The thread's folder has kept invariants (`.elyra/invariants`).
+    invariants_seen: bool,
     _events: Option<Task<()>>,
 }
 
@@ -189,6 +191,7 @@ impl ThreadSession {
             start_over: None,
             examinations: HashMap::new(),
             mutation_cancel: None,
+            invariants_seen: false,
             _events: None,
         }
     }
@@ -328,6 +331,12 @@ impl ThreadSession {
 
     fn send(&mut self, mut prompt: Prompt, cx: &mut Context<Self>) {
         prompt.text = prompt.text.trim().to_string();
+        // Testing the tests runs the checks in a temporary checkout: not
+        // beside this turn's own (a shared test database would make them
+        // flaky). It runs again once this turn's checks pass.
+        if let Some(cancel) = &self.mutation_cancel {
+            cancel.store(true, Ordering::Relaxed);
+        }
         if self.items.is_empty() && self.thread.title == "New thread" && !prompt.text.is_empty() {
             self.thread.title = title_from_prompt(&prompt.text);
         }
@@ -1768,7 +1777,10 @@ impl ThreadSession {
         // Done means green: the turn ends when the project's checks and
         // journeys pass.
         let command = self.check_command();
-        let invariants = !self.skip_checks && crate::invariants::exist(&self.working_dir());
+        // Once a thread has seen invariants, a turn that removes them is
+        // still checked against them.
+        self.invariants_seen |= crate::invariants::exist(&self.working_dir());
+        let invariants = !self.skip_checks && self.invariants_seen;
         if !is_error
             && !self.stopped
             && (command.is_some() || invariants || self.journeys_after_turn(cx))
@@ -1946,6 +1958,10 @@ impl ThreadSession {
         }
         if self.thread.debug_mode {
             parts.push(DEBUG_INSTRUCTIONS.to_string());
+        }
+        // The project's invariants, so agents keep them from the start.
+        if let Some(invariants) = crate::invariants::prompt(&self.working_dir()) {
+            parts.push(invariants);
         }
         // Skills the agent doesn't find itself.
         let skills = crate::shared_setup::skills_for(

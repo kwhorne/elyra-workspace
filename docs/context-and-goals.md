@@ -147,6 +147,12 @@ model, before the [checks](#checks-after-each-turn): **2 invariants held**, or
 like failed checks, with the rule and why it matters, and the slower checks wait
 until it holds.
 
+Agents are told the project's invariants from the start (in the instructions
+Elyra gives them), so they keep them rather than find out from a broken one.
+They are checked as they were before the message: a turn that edits or removes
+one to get past it is still checked against the old one, and the thread says
+the invariants were changed, for you to commit if it was meant.
+
 Agents propose them with the gateway's `propose_invariant`, when your correction
 is something a pattern can catch, or when you press **Save as check** on a
 proposed rule. The card shows what it checks and tries it on the code as it is
@@ -205,8 +211,11 @@ checks pass after a turn, Elyra tests the tests, without asking a model:
 - The lines that got through are also marked in Changes, with **Ask for a
   test** for each ([Lines no test guards](git-and-review.md#lines-no-test-guards)).
 
-It only runs when the checks took under 90 seconds, since they run once per
-change. In a [duel](projects-and-threads.md#red-vs-blue) it tests Red's tests
+It only runs when the checks took at most 30 seconds (**Only for checks that
+take at most**, in the same settings), since they run once per change, in the
+background. A change the tests caught before isn't tried again; one that got
+through is, until a test catches it. A new message stops it, so two test runs
+never share a test database; it runs again once that turn's checks pass. In a [duel](projects-and-threads.md#red-vs-blue) it tests Red's tests
 against all of Blue's code, and what gets through goes to Red for one more
 round instead of **Ask for tests**. **Settings → Agents & MCP → Test the
 tests after green checks** sets how many changes are tried (4 by default; 0

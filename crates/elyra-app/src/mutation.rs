@@ -17,8 +17,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// Checks that took longer than this aren't run again for the gate.
-pub const MAX_CHECK_MS: u64 = 90_000;
 /// How the message starts that asks the agent for the missing tests.
 pub const ASK_START: &str = "Elyra tested the tests";
 
@@ -31,15 +29,46 @@ pub struct Candidate {
     pub mutated: String,
 }
 
+/// A change tried before: (path, line as written, change).
+pub type Tried = HashSet<(String, String, String)>;
+
+/// The changes the tests caught in a thread, as the latest gate that tried
+/// each found them (not tried again: the lines are the same).
+pub fn caught_before(items: &[TranscriptItem]) -> Tried {
+    let mut latest: BTreeMap<(String, String, String), bool> = BTreeMap::new();
+    for item in items {
+        if let ItemContent::MutationGate { mutants, .. } = &item.content {
+            for mutant in mutants {
+                if let Some(caught) = mutant.caught {
+                    latest.insert(
+                        (
+                            mutant.path.clone(),
+                            mutant.code.clone(),
+                            mutant.change.clone(),
+                        ),
+                        caught,
+                    );
+                }
+            }
+        }
+    }
+    latest
+        .into_iter()
+        .filter(|(_, caught)| *caught)
+        .map(|(key, _)| key)
+        .collect()
+}
+
 /// Pick up to `max` changes on the lines added between `before` and `after`
-/// (commits of the repository at `root`): first the most telling change on
-/// each line, taking turns between files, then more on the same lines.
-/// Blocking.
+/// (commits of the repository at `root`), leaving out those in `skip`: first
+/// the most telling change on each line, taking turns between files, then
+/// more on the same lines. Blocking.
 pub fn choose(
     root: &Path,
     before: &str,
     after: &str,
     max: usize,
+    skip: &Tried,
 ) -> anyhow::Result<Vec<Candidate>> {
     let added = elyra_git::checkpoint::added_between(root, before, after)?;
     let paths: Vec<String> = added
@@ -71,6 +100,10 @@ pub fn choose(
             .collect();
         // Code, or a Vue or Svelte component's script.
         let mut mutants = elyra_index::mutate::mutants_in(Path::new(&path), &source, &lines);
+        mutants.retain(|m| {
+            let code = code_of(&source, m.line);
+            !skip.contains(&(path.clone(), code, m.describe()))
+        });
         if mutants.is_empty() {
             continue;
         }
@@ -100,14 +133,7 @@ pub fn choose(
             }
             let (source, mutants) = &per_file[&path];
             let mutant = &mutants[index];
-            let code = source
-                .lines()
-                .nth(mutant.line - 1)
-                .unwrap_or("")
-                .trim()
-                .chars()
-                .take(120)
-                .collect();
+            let code = code_of(source, mutant.line);
             picked.push(Candidate {
                 result: MutantResult {
                     path: path.clone(),
@@ -123,6 +149,18 @@ pub fn choose(
     }
     picked.sort_by(|a, b| (&a.result.path, a.result.line).cmp(&(&b.result.path, b.result.line)));
     Ok(picked)
+}
+
+/// Line `line` (1-based) of `source` as the gate keeps it: trimmed, short.
+fn code_of(source: &str, line: usize) -> String {
+    source
+        .lines()
+        .nth(line.saturating_sub(1))
+        .unwrap_or("")
+        .trim()
+        .chars()
+        .take(120)
+        .collect()
 }
 
 /// Reorder so that files take turns: a1 b1 a2 b2 …
@@ -354,8 +392,18 @@ mod tests {
         )
         .unwrap();
         let after = commit("after");
-        let picked = choose(&dir, &before, &after, 4).unwrap();
+        let picked = choose(&dir, &before, &after, 4, &Default::default()).unwrap();
+        // What was caught before isn't tried again.
+        let caught: super::Tried = [(
+            "rules.py".to_string(),
+            "return total > 500 and total != 999".to_string(),
+            "`>` → `<=`".to_string(),
+        )]
+        .into();
+        let again = choose(&dir, &before, &after, 4, &caught).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+        let changes_again: Vec<&str> = again.iter().map(|c| c.result.change.as_str()).collect();
+        assert_eq!(changes_again, ["`!=` → `==`", "`and` → `or`"]);
         let changes: Vec<(usize, &str)> = picked
             .iter()
             .map(|c| (c.result.line, c.result.change.as_str()))
@@ -371,7 +419,10 @@ mod tests {
                 .mutated
                 .contains("return total <= 500 and total != 999")
         );
-        assert_eq!(choose(&std::env::temp_dir(), "x", "y", 4).ok(), None);
+        assert_eq!(
+            choose(&std::env::temp_dir(), "x", "y", 4, &Default::default()).ok(),
+            None
+        );
     }
 
     #[test]
@@ -406,6 +457,13 @@ mod tests {
         );
         let again = gate(vec![mutant(6, "`and` → `or`", true)], GateState::Done);
         let running = gate(vec![mutant(6, "`>` → `<=`", false)], GateState::Running);
+        let caught = super::caught_before(&[first.clone(), again.clone()]);
+        assert!(caught.contains(&(
+            "rules.py".to_string(),
+            "return total > 500 and total != 999".to_string(),
+            "`and` → `or`".to_string()
+        )));
+        assert_eq!(caught.len(), 1, "missed ones are tried again");
         let found = unguarded(&[first.clone(), again, running]);
         let changes: Vec<&str> = found["rules.py"]
             .iter()

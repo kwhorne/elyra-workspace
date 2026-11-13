@@ -71,7 +71,8 @@ fail after a first automatic fix, or when a stuck agent
 | Automatic turns per goal | How many turns a [goal](context-and-goals.md#goal) may take on its own before it pauses (default 10) |
 | Automatic fixes when checks fail | How many times a project's failed [checks](context-and-goals.md#checks-after-each-turn) go back to the agent before the thread is handed to you (default 2; 0 only reports them) |
 | Cross-examine every plan with | An agent that checks every plan against the code in a read-only side chat before you approve it ([Cross-examine a plan](chat.md#cross-examine-a-plan)). *Only when I ask* by default. |
-| Test the tests after green checks | How many small changes (a flipped comparison, `&&` for `\|\|`, …) are made to the lines an instruction added, one at a time, to see whether the checks catch them ([Test the tests](context-and-goals.md#test-the-tests)). Default 4; 0 turns it off. Only for checks under 90 seconds. |
+| Test the tests after green checks | How many small changes (a flipped comparison, `&&` for `\|\|`, …) are made to the lines an instruction added, one at a time, to see whether the checks catch them ([Test the tests](context-and-goals.md#test-the-tests)). Default 4; 0 turns it off. |
+| Only for checks that take at most | The checks run once per change in the background, so slower ones are left out (default 30 seconds) |
 | When an agent goes round in circles | What to do when a turn's calls keep failing ([When an agent goes in circles](context-and-goals.md#when-an-agent-goes-in-circles)): *Ask me* (default), *Start over on its own* (files back to the turn's checkpoint, another try with the escalation model) or *Do nothing* |
 | External clients | Pair, configure and revoke Claude Desktop, Codex and other MCP clients |
 | Activity | The audit log of gateway calls |

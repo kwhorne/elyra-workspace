@@ -91,6 +91,9 @@ pub struct Preferences {
     pub cross_examine_with: String,
     /// Small changes the mutation gate tries after green checks (0: off).
     pub mutation_changes: u32,
+    /// Only when the checks took at most this many seconds (they run once
+    /// per change).
+    pub mutation_max_check_secs: u32,
 }
 
 /// How to launch one provider.
@@ -221,6 +224,7 @@ impl Default for Preferences {
             stuck_agents: "ask".into(),
             cross_examine_with: String::new(),
             mutation_changes: 4,
+            mutation_max_check_secs: 30,
         }
     }
 }

@@ -68,22 +68,27 @@ impl ThreadSession {
             let held = invariants
                 .then(|| {
                     let root = elyra_git::repo_root(&dir).ok()?;
-                    let (invariants, problems) = crate::invariants::load(&root);
+                    let base = instruction.as_deref().or(checkpoint.as_deref())?;
+                    // As they were before the instruction: editing one
+                    // doesn't get a turn past it.
+                    let (invariants, problems, edited) = crate::invariants::load_as_of(&root, base);
                     for problem in problems {
                         log::warn!("invariant: {problem}");
                     }
                     if invariants.is_empty() {
                         return None;
                     }
-                    let base = instruction.as_deref().or(checkpoint.as_deref())?;
                     let changed = crate::invariants::changes(&root, base)
                         .map_err(|err| log::warn!("invariants: {err:#}"))
                         .ok()?;
                     let (checked, broken) = crate::invariants::check(&root, &invariants, &changed);
-                    (!checked.is_empty()).then_some((checked, broken))
+                    (!checked.is_empty() || !edited.is_empty()).then_some((checked, broken, edited))
                 })
                 .flatten();
-            if held.as_ref().is_some_and(|(_, broken)| !broken.is_empty()) {
+            if held
+                .as_ref()
+                .is_some_and(|(_, broken, _)| !broken.is_empty())
+            {
                 return (held, Some(None));
             }
             let outcome = run_command.map(|command| crate::checks::run(&dir, &command, &cancel));
@@ -92,14 +97,26 @@ impl ThreadSession {
         cx.spawn(async move |this, cx| {
             let (held, outcome) = job.await;
             let _ = this.update(cx, |this, cx| {
-                if let Some((checked, broken)) = held {
-                    this.append(
-                        ItemContent::Invariants {
-                            checked,
-                            broken: broken.clone(),
-                        },
-                        cx,
-                    );
+                if let Some((checked, broken, edited)) = held {
+                    if !edited.is_empty() {
+                        this.notice(
+                            format!(
+                                "This message's turns changed the project's invariants ({}); they were checked as they were before it. Commit the change yourself if it was meant.",
+                                edited.join(", ")
+                            ),
+                            false,
+                            cx,
+                        );
+                    }
+                    if !checked.is_empty() {
+                        this.append(
+                            ItemContent::Invariants {
+                                checked,
+                                broken: broken.clone(),
+                            },
+                            cx,
+                        );
+                    }
                     if !broken.is_empty() && !this.stopped {
                         this.check_cancel = None;
                         this.fix_or_hand_over(
