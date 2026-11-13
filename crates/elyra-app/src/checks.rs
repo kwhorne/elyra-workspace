@@ -193,10 +193,16 @@ fn kill_tree(child: &mut std::process::Child) {
 
 /// How every follow-up message for a failed check begins.
 pub(crate) const FIX_PROMPT_START: &str = "The project's checks failed after your changes:";
+/// How the message starts that sends a stuck agent at its request again
+/// (the thrash guard): Elyra's follow-up, like a fix.
+pub(crate) const START_OVER_PROMPT_START: &str = "That attempt went in circles";
 
 /// "automatic fix 1 of 2" when `text` is a follow-up message for a failed
 /// check (shown folded in the transcript).
 pub fn fix_prompt_label(text: &str) -> Option<String> {
+    if text.starts_with(START_OVER_PROMPT_START) {
+        return Some("starting over".into());
+    }
     if !text.starts_with(FIX_PROMPT_START) && !text.starts_with("The browser journey ") {
         return None;
     }

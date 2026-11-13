@@ -162,6 +162,17 @@ pub enum ProposalOutcome {
     Dismissed,
 }
 
+/// What the user did about an agent that was going round in circles.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StuckOutcome {
+    /// Stopped, files put back to the turn's checkpoint, tried again.
+    StartedOver,
+    Stopped,
+    /// Left to carry on.
+    LetRun,
+}
+
 /// Where a proposed rule went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -357,6 +368,15 @@ pub enum ItemContent {
         /// The user accepted the new layout as it is.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         layout_accepted: bool,
+    },
+    /// The agent went round in circles during a turn (the thrash guard): the
+    /// same call failing the same way, or call after call failing.
+    Stuck {
+        reason: String,
+        /// The end of the last failure's output.
+        detail: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<StuckOutcome>,
     },
     /// The project's checks, run after a turn that changed files.
     Check {

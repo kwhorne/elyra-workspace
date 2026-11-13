@@ -18,6 +18,8 @@ What it does depends on a tag in the prompt:
   [edit PATH] TEXT   the same, as an ACP edit tool call (what Elyra sees of
            a real agent's edit)
   [replace PATH] OLD => NEW  replace the first OLD in PATH with NEW
+  [thrash] set value.txt to 99, run the same failing test three times, then
+           keep the turn open until the client cancels it (going in circles)
   Keep the error … as a regression test: write tests/regression.sh, which
            checks that price.txt says "fixed"
   A duel: as Red, write tests/feature.sh (and notes.txt, which isn't a test);
@@ -205,6 +207,19 @@ def prompt(rid, params):
             return end(rid)
         say(sid, call_gateway(call.group(1), json.loads(call.group(2))))
         return end(rid)
+    if "[thrash]" in text:
+        with open(os.path.join(state["cwd"], "value.txt"), "w") as out:
+            out.write("99\n")
+        for run in range(1, 4):
+            send({"method": "session/update", "params": {"sessionId": sid, "update": {
+                "sessionUpdate": "tool_call", "toolCallId": f"t{run}", "title": "Run the tests",
+                "kind": "execute", "status": "in_progress", "rawInput": {"command": "php artisan test"}}}})
+            send({"method": "session/update", "params": {"sessionId": sid, "update": {
+                "sessionUpdate": "tool_call_update", "toolCallId": f"t{run}", "status": "failed",
+                "content": [{"type": "content", "content": {"type": "text",
+                            "text": f"FAILED Tests\\CartTest > total is rounded (0.{run}s)"}}]}}})
+        state["waiting"] = rid
+        return
     if "[wait]" in text:
         say(sid, "Working on it…")
         state["waiting"] = rid

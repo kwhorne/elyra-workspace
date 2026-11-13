@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **The thrash guard: when an agent goes in circles.** While a turn runs,
+  Elyra watches its tool calls for the same command failing the same way three
+  times, or six calls in a row failing. The conversation then says so, with
+  **Start over** (stop, put the files back to before the turn, and try again
+  with the escalation model), **Stop** or **Let it run**. Settings → Agents &
+  MCP → When an agent goes round in circles can also start over on its own, or
+  do nothing. See
+  [When an agent goes in circles](docs/context-and-goals.md#when-an-agent-goes-in-circles).
+
 ## 1.17.0
 
 The right agent for the part of the code you're working on, from how each has

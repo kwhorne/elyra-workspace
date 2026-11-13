@@ -167,6 +167,8 @@ class World:
             prefs["providers"]["gemini"] = {
                 "path": sys.executable, "args": os.path.join(HERE, "agent.py")}
             prefs["check_fix_attempts"] = 2
+            # Stuck agents start over without asking (nobody clicks here).
+            prefs["stuck_agents"] = "start_over"
             prefs["agent_gateway"] = True
             prefs["check_updates"] = False
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('preferences', ?)",
@@ -952,6 +954,26 @@ def an_agent_comes_back_to_its_thread(world, project):
                text='[call schedule_followup {"message": "Look again", "in_minutes": 60}]')
     reply = world.wait(too_many, 30)
     expect("3 follow-ups waiting" in reply, "at most three: " + reply[-300:])
+
+
+@scenario()
+def an_agent_going_in_circles_starts_over(world, project):
+    thread = world.new_thread(project, "[thrash] Make the cart total right")
+    reply = world.wait(thread)
+    expect("Status: idle" in reply, reply[-300:])
+    stuck = [i for i in world.items(thread) if i["kind"] == "stuck"]
+    expect(len(stuck) == 1 and stuck[0].get("outcome") == "started_over", f"stuck: {stuck}")
+    expect("failed the same way 3 times" in stuck[0]["reason"], stuck[0]["reason"])
+    prompts = world.prompts(project)
+    expect(len(prompts) == 2 and prompts[1].startswith("That attempt went in circles"),
+           f"sent at it again: {prompts}")
+    expect(world.value(project) == 1, f"the new attempt starts from the files before: {world.value(project)}")
+    models = os.path.join(world.projects[project]["path"], "models.log")
+    switched = open(models).read().split() if os.path.exists(models) else []
+    expect(switched == ["big"], f"with the escalation model: {switched}")
+    with world.db() as db:
+        model = db.execute("SELECT model FROM threads WHERE id = ?", (thread,)).fetchone()[0]
+    expect(model is None, f"back to its own model, not {model}")
 
 
 def main():

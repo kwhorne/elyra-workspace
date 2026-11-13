@@ -61,6 +61,7 @@ mod stats;
 mod tasks;
 mod terminal_view;
 mod themes;
+mod thrash_guard;
 mod thread_access;
 mod thread_search;
 mod thread_session;

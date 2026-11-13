@@ -48,6 +48,9 @@ pub fn markdown(title: &str, items: &[elyra_core::TranscriptItem]) -> String {
                 "\n> Checks {}: `{command}`\n",
                 if *passed { "passed" } else { "failed" }
             )),
+            ItemContent::Stuck { reason, .. } => {
+                out.push_str(&format!("\n> Going in circles: {reason}\n"))
+            }
             _ => {}
         }
     }

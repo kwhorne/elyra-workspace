@@ -83,6 +83,9 @@ pub struct Preferences {
     /// Give a new thread to the agent that did best in the areas its first
     /// message names (otherwise it is only suggested).
     pub auto_route: bool,
+    /// What to do when an agent goes round in circles during a turn (see
+    /// `thrash_guard`): "ask", "start_over" or "off".
+    pub stuck_agents: String,
 }
 
 /// How to launch one provider.
@@ -210,6 +213,7 @@ impl Default for Preferences {
             felagi_runtime_name: String::new(),
             warm_start: false,
             auto_route: false,
+            stuck_agents: "ask".into(),
         }
     }
 }

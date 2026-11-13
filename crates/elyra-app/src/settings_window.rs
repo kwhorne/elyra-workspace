@@ -1026,6 +1026,26 @@ fn external_page() -> SettingPage {
                 ),
         )
         .group(
+            SettingGroup::new().title("Stuck agents").item(
+                SettingItem::new(
+                    "When an agent goes round in circles",
+                    dropdown(
+                        options([
+                            ("ask".to_string(), "Ask me".to_string()),
+                            ("start_over".to_string(), "Start over on its own".to_string()),
+                            ("off".to_string(), "Do nothing".to_string()),
+                        ]),
+                        |p| p.stuck_agents.clone(),
+                        |p, v| p.stuck_agents = v,
+                    )
+                    .default_value(SharedString::from("ask")),
+                )
+                .description(
+                    "While a turn runs, Elyra watches for the same command failing the same way three times, or six tool calls failing in a row. Starting over stops the agent, puts the files back to how they were before the turn and has it try again with the escalation model.",
+                ),
+            ),
+        )
+        .group(
             SettingGroup::new()
                 .title("External clients")
                 .description(

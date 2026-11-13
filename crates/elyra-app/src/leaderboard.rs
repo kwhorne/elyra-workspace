@@ -71,6 +71,12 @@ pub fn outcomes(items: &[TranscriptItem]) -> Vec<Outcome> {
                     outcomes.push(Outcome::default());
                 }
             }
+            // Stopped going in circles: not done on the first try.
+            ItemContent::Stuck { .. } => {
+                if let Some(last) = outcomes.last_mut() {
+                    last.first_try.get_or_insert(false);
+                }
+            }
             ItemContent::Check { passed, .. } => {
                 if let Some(last) = outcomes.last_mut() {
                     last.first_try.get_or_insert(*passed);

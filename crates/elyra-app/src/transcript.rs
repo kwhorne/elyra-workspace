@@ -456,7 +456,13 @@ fn render_item(
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child(Icon::new(IconName::CornerDownLeft).xsmall())
-                        .child(format!("Sent the failures to the agent · {label}"))
+                        .child(
+                            if text.starts_with(crate::checks::START_OVER_PROMPT_START) {
+                                "Sent the agent at it again".to_string()
+                            } else {
+                                format!("Sent the failures to the agent · {label}")
+                            },
+                        )
                         .on_click(cx.listener(move |this, _, _, cx| this.toggle_expanded(id, cx))),
                 )
                 .when(open, |this| {
@@ -980,6 +986,11 @@ fn render_item(
             cx,
         ),
         ItemContent::Bisect { command, verdict } => bisect_card(command, verdict, cx),
+        ItemContent::Stuck {
+            reason,
+            detail,
+            outcome,
+        } => stuck_card(id, reason, detail, *outcome, session, cx),
         ItemContent::Undo {
             instruction,
             reverted,
@@ -1296,6 +1307,116 @@ fn error_fixed_card(
             }
             Some(_) => this,
         }))
+        .into_any_element()
+}
+
+/// The thrash guard saw the agent going in circles: start over, stop, or
+/// let it run (while the turn runs and nobody has decided).
+fn stuck_card(
+    id: ItemId,
+    reason: &str,
+    detail: &str,
+    outcome: Option<elyra_core::StuckOutcome>,
+    session: &ThreadSession,
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    use elyra_core::StuckOutcome;
+    let muted = cx.theme().muted_foreground;
+    let open = !detail.is_empty() && outcome.is_none();
+    let answer = |key: &'static str, label: &'static str, outcome: StuckOutcome| {
+        Button::new(SharedString::from(format!("stuck-{key}-{id}")))
+            .xsmall()
+            .label(label)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.session
+                    .update(cx, |session, cx| session.resolve_stuck(id, outcome, cx))
+            }))
+    };
+    let escalation = crate::preferences::Preferences::global(cx)
+        .provider(session.thread.provider)
+        .escalation_model
+        .trim()
+        .to_string();
+    let start_over_tip = if escalation.is_empty() {
+        "Stop it, put the files back to how they were before this turn, and have it try again at the highest effort".to_string()
+    } else {
+        format!(
+            "Stop it, put the files back to how they were before this turn, and have {escalation} try again"
+        )
+    };
+    v_flex()
+        .w_full()
+        .p_2()
+        .gap_1()
+        .rounded_md()
+        .border_1()
+        .border_color(if outcome.is_none() {
+            cx.theme().warning
+        } else {
+            cx.theme().border
+        })
+        .child(
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .child(
+                    Icon::new(IconName::RotateCcwClock)
+                        .small()
+                        .text_color(cx.theme().warning),
+                )
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("The agent is going in circles"),
+                ),
+        )
+        .child(
+            div()
+                .text_xs()
+                .whitespace_normal()
+                .text_color(muted)
+                .child(format!("{reason}.")),
+        )
+        .when(open, |this| {
+            this.child(
+                div()
+                    .p_1()
+                    .rounded_sm()
+                    .bg(cx.theme().muted)
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_xs()
+                    .child(detail.to_string()),
+            )
+        })
+        .map(|this| match outcome {
+            None if session.running => this.child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        answer("over", "Start over", StuckOutcome::StartedOver)
+                            .primary()
+                            .tooltip(start_over_tip),
+                    )
+                    .child(
+                        answer("stop", "Stop", StuckOutcome::Stopped)
+                            .outline()
+                            .tooltip("Stop the turn and leave the files as they are"),
+                    )
+                    .child(
+                        answer("run", "Let it run", StuckOutcome::LetRun)
+                            .ghost()
+                            .tooltip("It's fine: don't ask again this turn"),
+                    ),
+            ),
+            None => this,
+            Some(outcome) => this.child(div().text_xs().text_color(muted).child(match outcome {
+                StuckOutcome::StartedOver => {
+                    "Stopped and started over from the files before this turn."
+                }
+                StuckOutcome::Stopped => "Stopped.",
+                StuckOutcome::LetRun => "Left to carry on.",
+            })),
+        })
         .into_any_element()
 }
 

@@ -96,6 +96,10 @@ pub struct ThreadSession {
     stopped: bool,
     /// Model and effort to go back to after an escalated fix.
     escalated_from: Option<(Option<String>, Option<String>)>,
+    /// Watches the running turn's tool calls for an agent going in circles.
+    thrash: crate::thrash_guard::Guard,
+    /// Why the running turn is being stopped to start over, once it ends.
+    start_over: Option<String>,
     _events: Option<Task<()>>,
 }
 
@@ -160,6 +164,8 @@ impl ThreadSession {
             check_attempts: 0,
             stopped: false,
             escalated_from: None,
+            thrash: Default::default(),
+            start_over: None,
             _events: None,
         }
     }
@@ -313,6 +319,7 @@ impl ThreadSession {
         let item_id = self.items.last().map(|item| item.id);
         self.set_running(true, cx);
         self.stopped = false;
+        self.thrash.reset();
         self.set_status(ThreadStatus::Running, cx);
         cx.emit(SessionEvent::TurnStarted);
 
@@ -449,22 +456,7 @@ impl ThreadSession {
             self.notice("Stop the agent before restoring files.", true, cx);
             return;
         }
-        let cwd = self.working_dir();
-        let snapshot = self
-            .db_snapshots(cx)
-            .into_iter()
-            .find(|(s, _)| *s == sha)
-            .map(|(_, r)| r);
-        let job = cx.background_executor().spawn(async move {
-            let root = elyra_git::repo_root(&cwd)?;
-            elyra_git::checkpoint::restore(&root, &sha)?;
-            // The database too, when the checkpoint has it.
-            let database = snapshot.and_then(|reference| {
-                let database = crate::grove::database_of(&cwd)?;
-                Some(crate::grove::restore_database(&database, &reference))
-            });
-            anyhow::Ok(database)
-        });
+        let job = self.restore_job(sha, cx);
         cx.spawn(async move |this, cx| {
             let result = job.await;
             let _ = this.update(cx, |this, cx| {
@@ -490,6 +482,30 @@ impl ThreadSession {
             });
         })
         .detach();
+    }
+
+    /// Put the files (and the database, when the checkpoint has it) back to
+    /// a checkpoint, in the background: the database's result, if it had one.
+    fn restore_job(
+        &self,
+        sha: String,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Option<anyhow::Result<()>>>> {
+        let cwd = self.working_dir();
+        let snapshot = self
+            .db_snapshots(cx)
+            .into_iter()
+            .find(|(s, _)| *s == sha)
+            .map(|(_, r)| r);
+        cx.background_executor().spawn(async move {
+            let root = elyra_git::repo_root(&cwd)?;
+            elyra_git::checkpoint::restore(&root, &sha)?;
+            let database = snapshot.and_then(|reference| {
+                let database = crate::grove::database_of(&cwd)?;
+                Some(crate::grove::restore_database(&database, &reference))
+            });
+            anyhow::Ok(database)
+        })
     }
 
     /// Deliver a queued message into the running turn now.
@@ -1505,23 +1521,36 @@ impl ThreadSession {
                 is_error,
             } => {
                 self.tool_progress.remove(&tool_use_id);
-                if !is_error
-                    && let Some(edit) =
-                        self.items
-                            .iter()
-                            .rev()
-                            .find_map(|item| match &item.content {
-                                ItemContent::ToolUse {
-                                    tool_use_id: id,
-                                    name,
-                                    input,
-                                    ..
-                                } if *id == tool_use_id => {
-                                    crate::intent_board::edited_file(name, input)
-                                }
-                                _ => None,
-                            })
+                let (mut edit, mut stuck) = (None, None);
+                if let Some((name, input, parent)) =
+                    self.items
+                        .iter()
+                        .rev()
+                        .find_map(|item| match &item.content {
+                            ItemContent::ToolUse {
+                                tool_use_id: id,
+                                name,
+                                input,
+                                parent_tool_use_id,
+                            } if *id == tool_use_id => Some((name, input, parent_tool_use_id)),
+                            _ => None,
+                        })
                 {
+                    if !is_error {
+                        edit = crate::intent_board::edited_file(name, input);
+                    }
+                    // Red in a duel runs tests that fail on purpose.
+                    if !self.skip_checks {
+                        stuck = self.thrash.observe(&crate::thrash_guard::Call {
+                            name,
+                            input,
+                            parent: parent.as_deref(),
+                            is_error,
+                            output: &content,
+                        });
+                    }
+                }
+                if let Some(edit) = edit {
                     self.publish_changes(vec![edit], cx);
                 }
                 self.append(
@@ -1532,6 +1561,9 @@ impl ThreadSession {
                     },
                     cx,
                 );
+                if let Some(stuck) = stuck {
+                    self.on_stuck(stuck, cx);
+                }
             }
             ProviderEvent::PermissionRequest(request) => {
                 self.append(
@@ -1643,6 +1675,9 @@ impl ThreadSession {
                 if was_running {
                     cx.emit(SessionEvent::TurnCompleted);
                 }
+                if let Some(reason) = self.start_over.take().filter(|_| was_running) {
+                    self.start_over_now(reason, cx);
+                }
                 cx.notify();
             }
         }
@@ -1709,6 +1744,15 @@ impl ThreadSession {
     fn finish_turn(&mut self, is_error: bool, spent_before: f64, cx: &mut Context<Self>) {
         if let Some((model, effort)) = self.escalated_from.take() {
             self.apply_model_effort(model, effort, cx);
+        }
+        // Stopped because it went in circles: try again, still running.
+        if let Some(reason) = self.start_over.take() {
+            if self.refuse_at_budget(cx) {
+                self.notice("So the agent isn't started over.", false, cx);
+            } else {
+                self.start_over_now(reason, cx);
+                return;
+            }
         }
         self.set_running(false, cx);
         self.activity = None;
@@ -1854,7 +1898,7 @@ impl ThreadSession {
             self.check_attempts += 1;
             // A fix already failed: the next one gets a stronger model.
             if self.check_attempts >= 2 {
-                self.escalate(cx);
+                self.escalate("The first fix didn't do it; the next one", cx);
             }
             let prompt = prompt(self.check_attempts, attempts);
             self.activity = None;
@@ -2295,9 +2339,131 @@ impl ThreadSession {
         crate::intent_board::context(&rows)
     }
 
+    // ---- the thrash guard -------------------------------------------------
+
+    /// The agent is going in circles: say so, and ask what to do or start
+    /// over (Settings → Stuck agents).
+    fn on_stuck(&mut self, stuck: crate::thrash_guard::Stuck, cx: &mut Context<Self>) {
+        let mode = crate::preferences::Preferences::global(cx)
+            .stuck_agents
+            .clone();
+        if mode == "off" || !self.running || self.stopped {
+            return;
+        }
+        let start_over = mode == "start_over";
+        self.append(
+            ItemContent::Stuck {
+                reason: stuck.reason.clone(),
+                detail: stuck.detail,
+                outcome: start_over.then_some(elyra_core::StuckOutcome::StartedOver),
+            },
+            cx,
+        );
+        if start_over {
+            self.begin_start_over(stuck.reason, cx);
+        } else {
+            cx.emit(SessionEvent::NeedsAttention);
+        }
+    }
+
+    /// The user's answer on a stuck card.
+    pub fn resolve_stuck(
+        &mut self,
+        item: ItemId,
+        outcome: elyra_core::StuckOutcome,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.items.iter().position(|i| i.id == item) else {
+            return;
+        };
+        let ItemContent::Stuck {
+            reason,
+            outcome: current,
+            ..
+        } = &mut self.items[index].content
+        else {
+            return;
+        };
+        if current.is_some() {
+            return;
+        }
+        *current = Some(outcome);
+        let reason = reason.clone();
+        self.persist_item(index, cx);
+        match outcome {
+            elyra_core::StuckOutcome::StartedOver => self.begin_start_over(reason, cx),
+            elyra_core::StuckOutcome::Stopped => self.interrupt(cx),
+            elyra_core::StuckOutcome::LetRun => cx.notify(),
+        }
+    }
+
+    /// Stop the turn; it starts over once it has ended.
+    fn begin_start_over(&mut self, reason: String, cx: &mut Context<Self>) {
+        if self.running {
+            self.start_over = Some(reason);
+            self.interrupt(cx);
+        } else {
+            self.start_over_now(reason, cx);
+        }
+    }
+
+    /// Put the files back to the stuck turn's checkpoint and send the agent
+    /// at it again, with the escalation model.
+    fn start_over_now(&mut self, reason: String, cx: &mut Context<Self>) {
+        let checkpoint = self
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match &item.content {
+                ItemContent::User { checkpoint, .. } => Some(checkpoint.clone()),
+                _ => None,
+            })
+            .flatten();
+        self.set_running(true, cx);
+        self.activity = Some("Putting the files back…".into());
+        cx.notify();
+        let job = checkpoint.map(|sha| self.restore_job(sha, cx));
+        cx.spawn(async move |this, cx| {
+            let restored = match job {
+                Some(job) => Some(job.await),
+                None => None,
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.activity = None;
+                let files = match restored {
+                    Some(Ok(None | Some(Ok(())))) => {
+                        "the files were put back to how they were before it"
+                    }
+                    Some(Ok(Some(Err(err)))) => {
+                        this.notice(format!("Files restored, but not the database: {err:#}"), true, cx);
+                        "the files were put back to how they were before it (the database wasn't)"
+                    }
+                    Some(Err(err)) => {
+                        this.notice(format!("Could not restore files: {err:#}"), true, cx);
+                        "the files couldn't be put back, so they are as it left them"
+                    }
+                    None => "the files are as it left them (there was no checkpoint)",
+                };
+                cx.emit(SessionEvent::FilesChanged);
+                this.check_attempts = 0;
+                this.escalate("The new attempt", cx);
+                this.send(
+                    Prompt::text(format!(
+                        "{} ({reason}), so Elyra Workspace stopped it; {files}. \
+                         Start again on the same request with a different approach, and don't repeat what failed.",
+                        crate::checks::START_OVER_PROMPT_START
+                    )),
+                    cx,
+                );
+            });
+        })
+        .detach();
+    }
+
     /// Switch to the escalation model and the highest effort for the next
     /// fix, remembering what to go back to.
-    fn escalate(&mut self, cx: &mut Context<Self>) {
+    /// `lead` says what gets it ("The next attempt").
+    fn escalate(&mut self, lead: &str, cx: &mut Context<Self>) {
         if self.escalated_from.is_some() {
             return;
         }
@@ -2327,10 +2493,7 @@ impl ThreadSession {
             parts.push(format!("effort {}", effort.as_deref().unwrap_or("default")));
         }
         self.notice(
-            format!(
-                "The first fix didn't do it; the next one gets {} (back afterwards).",
-                parts.join(" and ")
-            ),
+            format!("{lead} gets {} (back afterwards).", parts.join(" and ")),
             false,
             cx,
         );

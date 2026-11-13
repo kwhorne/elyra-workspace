@@ -140,6 +140,37 @@ tries it.
 
 The command applies to every thread in the project. Empty turns it off.
 
+### When an agent goes in circles
+
+Some turns never get to the checks: the agent runs the same failing command
+again and again, or one call after another fails, and the turn burns context
+and money. While a turn runs, Elyra watches its tool calls (no model is asked)
+for two signs:
+
+- the same call failing the same way three times (numbers such as times and
+  line numbers aside), so what the agent changed in between made no difference;
+- six tool calls in a row failing, with nothing working in between (each
+  subagent counts on its own).
+
+Calls you turned down don't count, and neither do Red's in a
+[duel](projects-and-threads.md#red-vs-blue), whose tests fail on purpose. Then **The agent is going in
+circles** appears in the conversation with the reason and the end of the last
+failure, and you are notified:
+
+- **Start over** stops the turn, puts the files (and the database, when the
+  checkpoint has it) back to how they were before it, and sends the agent at
+  the same request again (*Sent the agent at it again*), with what went wrong
+  and the **Escalation model** and highest effort, as a second fix gets. The
+  thread goes back to its own model afterwards.
+- **Stop** stops the turn and leaves the files as they are.
+- **Let it run** dismisses it for the rest of the turn.
+
+**Settings → Agents & MCP → When an agent goes round in circles**: *Ask me*
+(default), *Start over on its own*, or *Do nothing*. A turn that was started
+over doesn't count as green on the first try in the
+[agents' numbers](#how-the-agents-do-on-your-code). A start-over is skipped when
+the thread's budget is used up.
+
 ### Which agent for this part of the code
 
 The numbers above are for the whole project, but agents differ within one: one
