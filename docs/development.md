@@ -160,7 +160,7 @@ Main modules of `elyra-app`:
 | Module | Responsibility |
 | --- | --- |
 | `app_state` | Store, project and thread lists, live sessions, fork, handoff, import |
-| `thread_session` | One thread's agent process, transcript, queue, goals |
+| `thread_session` | One thread's agent process, transcript and queue; what happens around a turn is in its submodules: `checks` (and the automatic fixes), `journeys`, `lines` (the line record, intent guard and board), `kept_tests`, `mutation_gate`, `cross_examination`, `stuck` (the thrash guard), `proposals` and `goals` (and the budget) |
 | `workspace` | Window layout, tabs, panels, actions |
 | `thread_view`, `transcript`, `composer` | The conversation and the message box |
 | `sidebar`, `dialogs`, `palette`, `shortcuts` | Navigation and dialogs |
