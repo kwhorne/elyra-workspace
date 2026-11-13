@@ -11,6 +11,7 @@ use elyra_core::{
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::text::{TextView, TextViewState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
@@ -459,6 +460,8 @@ fn render_item(
                         .child(
                             if text.starts_with(crate::checks::START_OVER_PROMPT_START) {
                                 "Sent the agent at it again".to_string()
+                            } else if text.starts_with(crate::cross_examine::REVISE_START) {
+                                "Sent the objections you took to the agent".to_string()
                             } else {
                                 format!("Sent the failures to the agent · {label}")
                             },
@@ -612,7 +615,18 @@ fn render_item(
             decision,
         } => {
             if tool_name == "ExitPlanMode" {
-                return Some(plan_card(id, request_id, input, *decision, cx));
+                let examining = session.items.iter().any(|item| {
+                    matches!(&item.content, ItemContent::CrossExamination { request_id: r, .. } if r == request_id)
+                });
+                return Some(plan_card(
+                    id,
+                    request_id,
+                    input,
+                    *decision,
+                    session.thread.provider,
+                    examining || session.thread.parent_id.is_some(),
+                    cx,
+                ));
             }
             approval_card(id, request_id, tool_name, description, input, *decision, cx)
         }
@@ -986,6 +1000,15 @@ fn render_item(
             cx,
         ),
         ItemContent::Bisect { command, verdict } => bisect_card(command, verdict, cx),
+        ItemContent::CrossExamination {
+            request_id,
+            examiner,
+            chat,
+            objections,
+            state,
+        } => cross_examination_card(
+            id, request_id, *examiner, *chat, objections, state, session, cx,
+        ),
         ItemContent::Stuck {
             reason,
             detail,
@@ -2314,11 +2337,14 @@ fn approval_card(
         .into_any_element()
 }
 
+/// `examined`: a cross-examination was started (or can't be: a side chat).
 fn plan_card(
     id: ItemId,
     request_id: &str,
     input: &Value,
     decision: Option<ApprovalDecision>,
+    provider: elyra_core::ProviderKind,
+    examined: bool,
     cx: &Context<ThreadView>,
 ) -> AnyElement {
     let plan = input["plan"].as_str().unwrap_or("").to_string();
@@ -2390,10 +2416,222 @@ fn plan_card(
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.approve_plan(&keep, None, cx)),
                         ),
-                ),
+                )
+                .when(!examined, |this| {
+                    let examiners: Vec<elyra_core::ProviderKind> =
+                        crate::preferences::Preferences::global(cx)
+                            .enabled_providers()
+                            .into_iter()
+                            .filter(|kind| *kind != provider)
+                            .collect();
+                    if examiners.is_empty() {
+                        return this;
+                    }
+                    let (view, request) = (cx.weak_entity(), request_id.to_string());
+                    this.child(
+                        Button::new(SharedString::from(format!("plan-examine-{id}")))
+                            .ghost()
+                            .small()
+                            .icon(IconName::MessagesSquare)
+                            .label("Cross-examine")
+                            .tooltip("Have another agent check the plan against the code before anything is written")
+                            .dropdown_caret(true)
+                            .dropdown_menu(move |mut menu, _, _| {
+                                for kind in &examiners {
+                                    let (view, request, kind) = (view.clone(), request.clone(), *kind);
+                                    menu = menu.item(PopupMenuItem::new(kind.label()).on_click(
+                                        move |_, _, cx| {
+                                            let _ = view.update(cx, |this, cx| {
+                                                this.session.update(cx, |session, cx| {
+                                                    session.cross_examine(&request, kind, cx)
+                                                })
+                                            });
+                                        },
+                                    ));
+                                }
+                                menu
+                            }),
+                    )
+                }),
         );
     }
     card.into_any_element()
+}
+
+/// Another agent's objections to a plan, each to take or leave, and the
+/// way back to the planning agent.
+#[allow(clippy::too_many_arguments)]
+fn cross_examination_card(
+    id: ItemId,
+    request_id: &str,
+    examiner: elyra_core::ProviderKind,
+    chat: elyra_core::ThreadId,
+    objections: &[elyra_core::Objection],
+    state: &elyra_core::ExamState,
+    session: &ThreadSession,
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    use elyra_core::ExamState;
+    let muted = cx.theme().muted_foreground;
+    let decidable = matches!(state, ExamState::Done) && session.plan_pending(request_id);
+    let taken = objections.iter().filter(|o| o.taken == Some(true)).count();
+    let title = match state {
+        ExamState::Running => format!("{} is cross-examining the plan…", examiner.label()),
+        ExamState::Done | ExamState::Sent if objections.is_empty() => {
+            format!("{} found nothing to change in the plan", examiner.label())
+        }
+        ExamState::Done | ExamState::Sent => format!(
+            "{} objects to the plan ({})",
+            examiner.label(),
+            objections.len()
+        ),
+        ExamState::Failed { .. } => format!("{}'s cross-examination", examiner.label()),
+    };
+    let open_chat = move |window: &mut Window, cx: &mut App| {
+        if let Some(hub) = cx.try_global::<crate::browser_tools::BrowserHub>() {
+            let workspace = hub.workspace.clone();
+            let _ = workspace.update(cx, |this, cx| this.show_side_chat(chat, window, cx));
+        }
+    };
+    v_flex()
+        .w_full()
+        .p_2()
+        .gap_2()
+        .rounded_md()
+        .border_1()
+        .border_color(if decidable && !objections.is_empty() {
+            cx.theme().info
+        } else {
+            cx.theme().border
+        })
+        .child(
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .map(|this| match state {
+                    ExamState::Running => this.child(Spinner::new().small()),
+                    _ => this.child(
+                        Icon::new(IconName::MessagesSquare)
+                            .small()
+                            .text_color(cx.theme().info),
+                    ),
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(title),
+                )
+                .child(
+                    Button::new(SharedString::from(format!("exam-chat-{id}")))
+                        .xsmall()
+                        .ghost()
+                        .label("Open the chat")
+                        .on_click(move |_, window, cx| open_chat(window, cx)),
+                ),
+        )
+        .when_some(
+            match state {
+                ExamState::Failed { reason } => Some(reason.clone()),
+                _ => None,
+            },
+            |this, reason| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .whitespace_normal()
+                        .text_color(muted)
+                        .child(reason),
+                )
+            },
+        )
+        .children(objections.iter().enumerate().map(|(at, objection)| {
+            let choice = |key: &'static str, label: &'static str, take: bool| {
+                let chosen = objection.taken == Some(take);
+                Button::new(SharedString::from(format!("exam-{key}-{id}-{at}")))
+                    .xsmall()
+                    .label(label)
+                    .map(|b| if chosen { b.primary() } else { b.outline() })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.session
+                            .update(cx, |session, cx| session.set_objection(id, at, take, cx))
+                    }))
+            };
+            v_flex()
+                .gap_0p5()
+                .pl_2()
+                .border_l_2()
+                .border_color(match objection.taken {
+                    Some(true) => cx.theme().success,
+                    Some(false) => cx.theme().border,
+                    None => cx.theme().warning,
+                })
+                .child(
+                    div()
+                        .text_sm()
+                        .whitespace_normal()
+                        .when(objection.taken == Some(false), |this| {
+                            this.text_color(muted)
+                        })
+                        .child(objection.point.clone()),
+                )
+                .when(!objection.why.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .whitespace_normal()
+                            .text_color(muted)
+                            .child(objection.why.clone()),
+                    )
+                })
+                .when(!objection.instead.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .whitespace_normal()
+                            .text_color(muted)
+                            .child(format!("Instead: {}", objection.instead)),
+                    )
+                })
+                .when(decidable, |this| {
+                    this.child(
+                        h_flex()
+                            .pt_0p5()
+                            .gap_2()
+                            .child(choice("take", "Take it", true))
+                            .child(choice("keep", "Keep the plan", false)),
+                    )
+                })
+                .into_any_element()
+        }))
+        .when(decidable && !objections.is_empty(), |this| {
+            this.child(
+                h_flex().gap_2().child(
+                    Button::new(SharedString::from(format!("exam-revise-{id}")))
+                        .small()
+                        .primary()
+                        .label(if taken == 0 {
+                            "Revise the plan".to_string()
+                        } else {
+                            format!("Revise the plan ({taken})")
+                        })
+                        .disabled(taken == 0)
+                        .tooltip("Send the planning agent back with the points you took")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.session
+                                .update(cx, |session, cx| session.revise_plan(id, cx))
+                        })),
+                ),
+            )
+        })
+        .when(matches!(state, ExamState::Sent), |this| {
+            this.child(div().text_xs().text_color(muted).child(format!(
+                "Sent back to the planning agent with {taken} point{}.",
+                if taken == 1 { "" } else { "s" }
+            )))
+        })
+        .into_any_element()
 }
 
 fn answer_summary(request: &QuestionRequest, answer: &QuestionAnswer) -> String {

@@ -162,6 +162,37 @@ pub enum ProposalOutcome {
     Dismissed,
 }
 
+/// One thing another agent found wrong with a plan.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Objection {
+    /// What is wrong, in a line.
+    pub point: String,
+    /// The evidence: files, callers, what breaks.
+    #[serde(default)]
+    pub why: String,
+    /// What to do instead.
+    #[serde(default)]
+    pub instead: String,
+    /// The user's call: take it into the plan (true) or keep the plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taken: Option<bool>,
+}
+
+/// Where cross-examining a plan stands.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ExamState {
+    Running,
+    /// The objections are in (perhaps none).
+    Done,
+    /// The examiner gave no answer that could be read.
+    Failed {
+        reason: String,
+    },
+    /// The objections taken went back to the planning agent.
+    Sent,
+}
+
 /// What the user did about an agent that was going round in circles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -377,6 +408,18 @@ pub enum ItemContent {
         detail: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         outcome: Option<StuckOutcome>,
+    },
+    /// Another agent cross-examined a plan before any code was written, in
+    /// a read-only side chat.
+    CrossExamination {
+        /// The plan's approval request.
+        request_id: String,
+        examiner: ProviderKind,
+        /// The side chat it ran in.
+        chat: ThreadId,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        objections: Vec<Objection>,
+        state: ExamState,
     },
     /// The project's checks, run after a turn that changed files.
     Check {

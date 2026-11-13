@@ -70,6 +70,7 @@ fail after a first automatic fix, or when a stuck agent
 | Grove tools for agents | In projects [Elyra Grove](context-and-goals.md#grove) runs as an app, agents also get Grove's MCP server, read-only: sites, recent requests, request chains and explanations, logs and database schema. On by default. |
 | Automatic turns per goal | How many turns a [goal](context-and-goals.md#goal) may take on its own before it pauses (default 10) |
 | Automatic fixes when checks fail | How many times a project's failed [checks](context-and-goals.md#checks-after-each-turn) go back to the agent before the thread is handed to you (default 2; 0 only reports them) |
+| Cross-examine every plan with | An agent that checks every plan against the code in a read-only side chat before you approve it ([Cross-examine a plan](chat.md#cross-examine-a-plan)). *Only when I ask* by default. |
 | When an agent goes round in circles | What to do when a turn's calls keep failing ([When an agent goes in circles](context-and-goals.md#when-an-agent-goes-in-circles)): *Ask me* (default), *Start over on its own* (files back to the turn's checkpoint, another try with the escalation model) or *Do nothing* |
 | External clients | Pair, configure and revoke Claude Desktop, Codex and other MCP clients |
 | Activity | The audit log of gateway calls |

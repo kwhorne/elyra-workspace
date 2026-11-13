@@ -18,6 +18,8 @@ What it does depends on a tag in the prompt:
   [edit PATH] TEXT   the same, as an ACP edit tool call (what Elyra sees of
            a real agent's edit)
   [replace PATH] OLD => NEW  replace the first OLD in PATH with NEW
+  [plan]   present a plan (ExitPlanMode) and say what the answer was
+  a cross-examination of a plan: reply with two objections as JSON
   [thrash] set value.txt to 99, run the same failing test three times, then
            keep the turn open until the client cancels it (going in circles)
   Keep the error … as a regression test: write tests/regression.sh, which
@@ -206,6 +208,25 @@ def prompt(rid, params):
             say(sid, "No gateway was given to this agent.")
             return end(rid)
         say(sid, call_gateway(call.group(1), json.loads(call.group(2))))
+        return end(rid)
+    if text.startswith("You are cross-examining a plan"):
+        say(sid, "I checked the callers.\n\n```json\n" + json.dumps({"objections": [
+            {"point": "CartTotal is also used by the invoice PDF", "why": "app/Pdf/Invoice.php:40 calls total()",
+             "instead": "Add discount() next to total()"},
+            {"point": "Codes are compared case-sensitively"}]}) + "\n```")
+        return end(rid)
+    if "[plan]" in text:
+        answer = request("session/request_permission", {
+            "sessionId": sid,
+            "toolCall": {"title": "ExitPlanMode", "kind": "switch_mode",
+                         "rawInput": {"plan": "1. Add `discount` to CartTotal\n2. Apply it in checkout"}},
+            "options": [
+                {"optionId": "yes", "name": "Approve", "kind": "allow_once"},
+                {"optionId": "no", "name": "Keep planning", "kind": "reject_once"},
+            ],
+        })
+        outcome = answer.get("result", {}).get("outcome", {})
+        say(sid, "Plan: " + str(outcome.get("optionId", outcome.get("outcome"))))
         return end(rid)
     if "[thrash]" in text:
         with open(os.path.join(state["cwd"], "value.txt"), "w") as out:

@@ -248,6 +248,22 @@ impl AppState {
         provider: ProviderKind,
         cx: &mut Context<Self>,
     ) -> Result<Entity<ThreadSession>> {
+        self.create_read_only_chat(
+            parent_id,
+            provider,
+            format!("Second opinion · {}", provider.label()),
+            cx,
+        )
+    }
+
+    /// A read-only side chat of `parent_id` with `provider`, in its folder.
+    pub fn create_read_only_chat(
+        &mut self,
+        parent_id: ThreadId,
+        provider: ProviderKind,
+        title: String,
+        cx: &mut Context<Self>,
+    ) -> Result<Entity<ThreadSession>> {
         let parent = self
             .thread(parent_id)
             .cloned()
@@ -259,14 +275,14 @@ impl AppState {
             elyra_core::PermissionMode::Plan,
             parent.environment.clone(),
         )?;
-        thread.title = format!("Second opinion · {}", provider.label());
+        thread.title = title;
         thread.parent_id = Some(parent_id);
         self.store.update_thread(&thread)?;
         let id = thread.id;
         self.threads.insert(0, thread);
         let session = self
             .session(id, cx)
-            .ok_or_else(|| anyhow::anyhow!("could not start the review"))?;
+            .ok_or_else(|| anyhow::anyhow!("could not start the side chat"))?;
         cx.notify();
         Ok(session)
     }

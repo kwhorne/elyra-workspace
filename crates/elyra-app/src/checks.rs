@@ -203,6 +203,9 @@ pub fn fix_prompt_label(text: &str) -> Option<String> {
     if text.starts_with(START_OVER_PROMPT_START) {
         return Some("starting over".into());
     }
+    if text.starts_with(crate::cross_examine::REVISE_START) {
+        return Some("revising the plan".into());
+    }
     if !text.starts_with(FIX_PROMPT_START) && !text.starts_with("The browser journey ") {
         return None;
     }

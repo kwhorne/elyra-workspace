@@ -1026,6 +1026,28 @@ fn external_page() -> SettingPage {
                 ),
         )
         .group(
+            SettingGroup::new().title("Plans").item(
+                SettingItem::new(
+                    "Cross-examine every plan with",
+                    dropdown(
+                        options(
+                            std::iter::once((String::new(), "Only when I ask".to_string())).chain(
+                                elyra_core::ProviderKind::ALL
+                                    .into_iter()
+                                    .map(|kind| (kind.as_str().to_string(), kind.label().to_string())),
+                            ),
+                        ),
+                        |p| p.cross_examine_with.clone(),
+                        |p, v| p.cross_examine_with = v,
+                    )
+                    .default_value(SharedString::from("")),
+                )
+                .description(
+                    "When an agent presents a plan, this agent checks it against the code in a read-only side chat before you approve it, and its objections appear under the plan. Not for plans by the same agent.",
+                ),
+            ),
+        )
+        .group(
             SettingGroup::new().title("Stuck agents").item(
                 SettingItem::new(
                     "When an agent goes round in circles",

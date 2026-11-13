@@ -16,6 +16,7 @@ mod conflicts;
 mod context_report;
 mod context_view;
 mod conventional;
+mod cross_examine;
 mod day_summary;
 mod dialogs;
 mod duel;

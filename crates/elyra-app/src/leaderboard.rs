@@ -76,7 +76,10 @@ pub fn outcomes(items: &[TranscriptItem], survival: &crate::survival::Survival) 
         match &item.content {
             ItemContent::User { text, .. } => {
                 if crate::checks::fix_prompt_label(text).is_some() {
-                    if let Some(last) = outcomes.last_mut() {
+                    // A plan sent back for revision isn't a fix.
+                    if let Some(last) = outcomes.last_mut()
+                        && !text.starts_with(crate::cross_examine::REVISE_START)
+                    {
                         last.fixes += 1;
                     }
                 } else {

@@ -170,6 +170,8 @@ class World:
             prefs["check_fix_attempts"] = 2
             # Stuck agents start over without asking (nobody clicks here).
             prefs["stuck_agents"] = "start_over"
+            # Plans are cross-examined by the scripted agent standing in for Gemini.
+            prefs["cross_examine_with"] = "gemini"
             prefs["agent_gateway"] = True
             prefs["check_updates"] = False
             db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('preferences', ?)",
@@ -1003,6 +1005,29 @@ def the_code_you_keep_is_measured(world, project):
     survival = wait_for("the turns to be measured", measured, 30)
     expect(survival[items[0]] == (1, 0), f"the rewritten line isn't kept: {survival}")
     expect(survival[items[1]] == (1, 1), f"the other is: {survival}")
+
+
+@scenario()
+def another_agent_cross_examines_the_plan(world, project):
+    thread = world.new_thread(project, "[plan] Add discount codes to checkout")
+
+    def card():
+        cards = [i for i in world.items(thread) if i["kind"] == "cross_examination"]
+        return cards[0] if cards and cards[0]["state"]["state"] != "running" else None
+    exam = wait_for("the cross-examination", card, 40)
+    expect(exam["state"]["state"] == "done" and exam["examiner"] == "gemini", str(exam))
+    points = [o["point"] for o in exam["objections"]]
+    expect(points == ["CartTotal is also used by the invoice PDF", "Codes are compared case-sensitively"], str(points))
+    expect(exam["objections"][0]["instead"] == "Add discount() next to total()", str(exam["objections"][0]))
+    with world.db() as db:
+        parent, mode, title = db.execute(
+            "SELECT parent_id, permission_mode, title FROM threads WHERE id = ?", (exam["chat"],)).fetchone()
+    expect(parent == thread and title.startswith("Cross-examination"), f"a side chat: {parent} {title}")
+    expect(mode == "plan", f"read-only: {mode}")
+    examined = [p for p in world.prompts(project) if p.startswith("You are cross-examining a plan")]
+    expect(examined and "1. Add `discount` to CartTotal" in examined[0], f"it got the plan: {examined}")
+    expect(world.status(thread) == "needs_approval", f"the plan still waits for you: {world.status(thread)}")
+    world.tool("interrupt_thread", thread_id=thread)
 
 
 def main():

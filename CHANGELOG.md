@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Cross-examine a plan before any code is written.** A plan waiting for
+  approval has **Cross-examine ▾**: another agent gets the request, the plan and
+  where the names in it are defined, checks it against the code in a read-only
+  side chat, and answers with concrete objections only. They come back under
+  the plan to take or leave one by one, and **Revise the plan** sends the
+  planning agent back with the ones you took. Settings → Agents & MCP →
+  Cross-examine every plan with does it for every plan. See
+  [Cross-examine a plan](docs/chat.md#cross-examine-a-plan).
 - **Code kept: whether you keep what an agent writes.** Three days after each
   turn, Elyra counts how many of the lines it wrote are still in the code (in
   the project's folder, the thread's worktree or the remote's default branch),

@@ -174,6 +174,32 @@ In *Plan only* mode, Claude Code presents its plan as a card:
 - **Approve, accept edits**: carry out the plan; edits don't need approval
 - **Approve, ask for edits**: carry out the plan, asking before each edit
 - **Keep planning**: stay in plan mode and keep refining
+- **Cross-examine ▾**: have another agent check the plan first (below)
+
+### Cross-examine a plan
+
+The cheapest time to disagree is before any code is written. **Cross-examine ▾**
+on a plan waiting for approval picks another agent (Codex against Claude Code,
+say), which gets the request, the plan and what Elyra knows about the names in
+them (where they are defined, which instructions last changed those files, as
+in [warm start](context-and-goals.md#warm-start-experiment)). It works in a
+read-only side chat, *Cross-examination · Codex*, and is asked for concrete
+objections only, checked in the code: callers of what the plan changes that it
+misses, cases it doesn't handle, code it should reuse, a clearly simpler way.
+
+Its answer comes back under the plan as **Codex objects to the plan**, one point
+each with the evidence and what to do instead (or *found nothing to change*):
+
+- **Take it** or **Keep the plan** on each point.
+- **Revise the plan** sends the planning agent back with the points you took
+  (and those you didn't, so it leaves them). Claude Code gets them with the
+  refusal of the plan; other agents get them as the next message. It then
+  presents a revised plan, which you approve as usual.
+- **Open the chat** shows the whole cross-examination, where you can ask more.
+
+You can also approve the plan without waiting. **Settings → Agents & MCP →
+Cross-examine every plan with** picks an agent that cross-examines every plan as
+it is presented (not plans by the same agent).
 
 ## Message actions
 
