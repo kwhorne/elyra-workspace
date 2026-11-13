@@ -583,6 +583,7 @@ impl SettingsView {
             code,
             terminal,
             providers,
+            turns_page(),
             external_page(),
             felagi_page(),
         ]
@@ -909,101 +910,10 @@ fn felagi_connect_dialog(
     });
 }
 
-fn external_page() -> SettingPage {
-    SettingPage::new("Agents & MCP")
-        .icon(IconName::Network)
-        .group(
-            SettingGroup::new()
-                .title("Agent gateway")
-                .item(
-                    SettingItem::new(
-                        "Let agents manage threads",
-                        switch(|p| p.agent_gateway, |p, v| p.agent_gateway = v)
-                            .default_value(false),
-                    )
-                    .description(
-                        "Gives Claude Code, Codex, Elyra and ACP agents MCP tools to list, read, create, message and wait for threads, so one agent can fan out work, and to look at local pages in the thread's browser. Applies to agents started afterwards.",
-                    ),
-                )
-                .item(SettingItem::new(
-                    "Server",
-                    SettingField::render(|_, _, cx| {
-                        div()
-                            .text_sm()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_color(cx.theme().muted_foreground)
-                            .child(crate::gateway::url(cx).unwrap_or_else(|| "not running".into()))
-                    }),
-                ))
-                .item(
-                    SettingItem::new(
-                        "Grove tools for agents",
-                        switch(|p| p.grove_mcp, |p, v| p.grove_mcp = v).default_value(true),
-                    )
-                    .description(
-                        "In projects Elyra Grove runs as an app, agents also get Grove's MCP server, read-only: its sites, recent requests, request chains and explain bundles, logs and database schema. Applies to agents started afterwards.",
-                    ),
-                )
-                .item(
-                    SettingItem::new(
-                        "Grove runs worktrees",
-                        switch(|p| p.grove_worktrees, |p, v| p.grove_worktrees = v)
-                            .default_value(true),
-                    )
-                    .description(
-                        "In projects Elyra Grove runs as an app, a thread's new worktree is made by Grove (grove try): it gets its own copy of the database, migrated, and its own .test address, which opens in the thread's browser.",
-                    ),
-                )
-                .item(
-                    SettingItem::new(
-                        "Database in checkpoints",
-                        switch(|p| p.grove_db_checkpoints, |p, v| p.grove_db_checkpoints = v)
-                            .default_value(true),
-                    )
-                    .description(
-                        "In projects Elyra Grove runs as an app, the checkpoint before each turn also snapshots the app's database (SQLite, MySQL, PostgreSQL or ElyraSQL), and restoring the checkpoint restores it. The latest 10 per thread are kept.",
-                    ),
-                )
-                .item(
-                    SettingItem::new(
-                        "Pick the agent from your stats",
-                        switch(|p| p.auto_route, |p, v| p.auto_route = v).default_value(false),
-                    )
-                    .description(
-                        "When a new thread's first message points at a part of the code where one agent has clearly done better (checks green on the first try, then cost), give it that agent. Off: it is only suggested above the message box.",
-                    ),
-                )
-                .item(
-                    SettingItem::new(
-                        "Warm start (experiment)",
-                        switch(|p| p.warm_start, |p, v| p.warm_start = v).default_value(false),
-                    )
-                    .description(
-                        "Before a new thread's first message reaches the agent, Elyra looks its names up in the project's symbol index and earlier threads and puts what it found first, to save the agent its first searches. Half the new threads start without it, for comparison; Stats shows how the first turns of both went.",
-                    ),
-                )
-                .item(
-                    SettingItem::new(
-                        "Agents changing other threads",
-                        SettingField::render(|_, _, cx| render_thread_pairs(cx)),
-                    )
-                    .description(
-                        "The first time an agent messages, stops, renames or archives another thread, or opens a page in its browser, you are asked. Always allow remembers the pair.",
-                    ),
-                ),
-        )
-        .group(
-            SettingGroup::new().title("Thread goals").item(
-                SettingItem::new(
-                    "Automatic turns per goal",
-                    number_field(number(1., 100., 1.), |p| p.goal_max_turns as f64, |p, v| {
-                        p.goal_max_turns = v.max(1.).round() as u32
-                    })
-                    .default_value(10.),
-                )
-                .description("A goal pauses after this many turns without being achieved."),
-            ),
-        )
+fn turns_page() -> SettingPage {
+    SettingPage::new("After each turn")
+        .icon(IconName::ShieldCheck)
+        .resettable(true)
         .group(
             SettingGroup::new()
                 .title("Checks after each turn")
@@ -1054,6 +964,26 @@ fn external_page() -> SettingPage {
                 ),
         )
         .group(
+            SettingGroup::new().title("Stuck agents").item(
+                SettingItem::new(
+                    "When an agent goes round in circles",
+                    dropdown(
+                        options([
+                            ("ask".to_string(), "Ask me".to_string()),
+                            ("start_over".to_string(), "Start over on its own".to_string()),
+                            ("off".to_string(), "Do nothing".to_string()),
+                        ]),
+                        |p| p.stuck_agents.clone(),
+                        |p, v| p.stuck_agents = v,
+                    )
+                    .default_value(SharedString::from("ask")),
+                )
+                .description(
+                    "While a turn runs, Elyra watches for the same command failing the same way three times, or six tool calls failing in a row. Starting over stops the agent, puts the files back to how they were before the turn and has it try again with the escalation model.",
+                ),
+            ),
+        )
+        .group(
             SettingGroup::new().title("Plans").item(
                 SettingItem::new(
                     "Cross-examine every plan with",
@@ -1076,24 +1006,111 @@ fn external_page() -> SettingPage {
             ),
         )
         .group(
-            SettingGroup::new().title("Stuck agents").item(
+            SettingGroup::new().title("Thread goals").item(
                 SettingItem::new(
-                    "When an agent goes round in circles",
-                    dropdown(
-                        options([
-                            ("ask".to_string(), "Ask me".to_string()),
-                            ("start_over".to_string(), "Start over on its own".to_string()),
-                            ("off".to_string(), "Do nothing".to_string()),
-                        ]),
-                        |p| p.stuck_agents.clone(),
-                        |p, v| p.stuck_agents = v,
-                    )
-                    .default_value(SharedString::from("ask")),
+                    "Automatic turns per goal",
+                    number_field(number(1., 100., 1.), |p| p.goal_max_turns as f64, |p, v| {
+                        p.goal_max_turns = v.max(1.).round() as u32
+                    })
+                    .default_value(10.),
                 )
-                .description(
-                    "While a turn runs, Elyra watches for the same command failing the same way three times, or six tool calls failing in a row. Starting over stops the agent, puts the files back to how they were before the turn and has it try again with the escalation model.",
-                ),
+                .description("A goal pauses after this many turns without being achieved."),
             ),
+        )
+        .group(
+            SettingGroup::new()
+                .title("Choosing the agent")
+                .description("From how the agents have done on your code: checks green on the first try, the code you kept, and cost.")
+                .item(
+                    SettingItem::new(
+                        "Pick the agent from your stats",
+                        switch(|p| p.auto_route, |p, v| p.auto_route = v).default_value(false),
+                    )
+                    .description(
+                        "When a new thread's first message points at a part of the code where one agent has clearly done better (checks green on the first try, then cost), give it that agent. Off: it is only suggested above the message box.",
+                    ),
+                )
+.item(
+                    SettingItem::new(
+                        "Warm start (experiment)",
+                        switch(|p| p.warm_start, |p, v| p.warm_start = v).default_value(false),
+                    )
+                    .description(
+                        "Before a new thread's first message reaches the agent, Elyra looks its names up in the project's symbol index and earlier threads and puts what it found first, to save the agent its first searches. Half the new threads start without it, for comparison; Stats shows how the first turns of both went.",
+                    ),
+                ),
+        )
+}
+
+fn external_page() -> SettingPage {
+    SettingPage::new("Agents & MCP")
+        .icon(IconName::Network)
+        .group(
+            SettingGroup::new()
+                .title("Agent gateway")
+                .item(
+                    SettingItem::new(
+                        "Let agents manage threads",
+                        switch(|p| p.agent_gateway, |p, v| p.agent_gateway = v)
+                            .default_value(false),
+                    )
+                    .description(
+                        "Gives Claude Code, Codex, Elyra and ACP agents MCP tools to list, read, create, message and wait for threads, so one agent can fan out work, and to look at local pages in the thread's browser. Applies to agents started afterwards.",
+                    ),
+                )
+.item(SettingItem::new(
+                    "Server",
+                    SettingField::render(|_, _, cx| {
+                        div()
+                            .text_sm()
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_color(cx.theme().muted_foreground)
+                            .child(crate::gateway::url(cx).unwrap_or_else(|| "not running".into()))
+                    }),
+                ))
+.item(
+                    SettingItem::new(
+                        "Agents changing other threads",
+                        SettingField::render(|_, _, cx| render_thread_pairs(cx)),
+                    )
+                    .description(
+                        "The first time an agent messages, stops, renames or archives another thread, or opens a page in its browser, you are asked. Always allow remembers the pair.",
+                    ),
+                ),
+        )
+        .group(
+            SettingGroup::new()
+                .title("Grove")
+                .description("For projects Elyra Grove runs as an app.")
+                .item(
+                    SettingItem::new(
+                        "Grove tools for agents",
+                        switch(|p| p.grove_mcp, |p, v| p.grove_mcp = v).default_value(true),
+                    )
+                    .description(
+                        "In projects Elyra Grove runs as an app, agents also get Grove's MCP server, read-only: its sites, recent requests, request chains and explain bundles, logs and database schema. Applies to agents started afterwards.",
+                    ),
+                )
+.item(
+                    SettingItem::new(
+                        "Grove runs worktrees",
+                        switch(|p| p.grove_worktrees, |p, v| p.grove_worktrees = v)
+                            .default_value(true),
+                    )
+                    .description(
+                        "In projects Elyra Grove runs as an app, a thread's new worktree is made by Grove (grove try): it gets its own copy of the database, migrated, and its own .test address, which opens in the thread's browser.",
+                    ),
+                )
+.item(
+                    SettingItem::new(
+                        "Database in checkpoints",
+                        switch(|p| p.grove_db_checkpoints, |p, v| p.grove_db_checkpoints = v)
+                            .default_value(true),
+                    )
+                    .description(
+                        "In projects Elyra Grove runs as an app, the checkpoint before each turn also snapshots the app's database (SQLite, MySQL, PostgreSQL or ElyraSQL), and restoring the checkpoint restores it. The latest 10 per thread are kept.",
+                    ),
+                ),
         )
         .group(
             SettingGroup::new()

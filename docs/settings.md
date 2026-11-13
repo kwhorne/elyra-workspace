@@ -2,8 +2,8 @@
 
 Open Settings with **⌘,**, the gear in the title bar, or **Elyra Workspace →
 Settings…**. Changes apply right away and are saved automatically. Use the search
-field to find a setting. Every page except *Agents & MCP* has a reset button
-that restores its defaults.
+field to find a setting. Every page except *Agents & MCP* and *Félagi* has a
+reset button that restores its defaults.
 
 ## General
 
@@ -59,21 +59,32 @@ fix gets when the [checks](context-and-goals.md#checks-after-each-turn) still
 fail after a first automatic fix, or when a stuck agent
 [starts over](context-and-goals.md#when-an-agent-goes-in-circles). See [Providers](providers.md).
 
+## After each turn
+
+What Elyra does once an agent's turn ends, and with which agent a thread
+starts.
+
+| Setting | Meaning |
+| --- | --- |
+| Automatic fixes when checks fail | How many times a project's failed [checks](context-and-goals.md#checks-after-each-turn) go back to the agent before the thread is handed to you (default 2; 0 only reports them) |
+| Cross-examine every plan with | An agent that checks every plan against the code in a read-only side chat before you approve it ([Cross-examine a plan](chat.md#cross-examine-a-plan)). *Only when I ask* by default. |
+| Test the tests after green checks | How many small changes (a flipped comparison, `&&` for `\|\|`, …) are made to the lines an instruction added, one at a time, to see whether the checks catch them ([Test the tests](context-and-goals.md#test-the-tests)). Default 4; 0 turns it off. |
+| Only for checks that take at most | The checks run once per change in the background, so slower ones are left out (default 30 seconds) |
+| When an agent goes round in circles | What to do when a turn's calls keep failing ([When an agent goes in circles](context-and-goals.md#when-an-agent-goes-in-circles)): *Ask me* (default), *Start over on its own* (files back to the turn's checkpoint, another try with the escalation model) or *Do nothing* |
+| Automatic turns per goal | How many turns a [goal](context-and-goals.md#goal) may take on its own before it pauses (default 10) |
+| Pick the agent from your stats | Give a new thread the agent that did clearly best in the part of the code its first message names ([Which agent](context-and-goals.md#which-agent-for-this-part-of-the-code)); off, it is only suggested. Off by default. |
+| Warm start (experiment) | Look a new thread's first message up in the symbol index and earlier threads, and put what was found first ([Warm start](context-and-goals.md#warm-start-experiment)). Off by default. |
+
 ## Agents & MCP
 
 | Setting | Meaning |
 | --- | --- |
 | Let agents manage threads | Gives Claude Code, Codex, Elyra and ACP agents tools to list, read, create and steer threads and to look at local pages in the browser ([Agent gateway](agent-gateway.md)). Off by default. |
 | Server | The address of Elyra's local MCP server |
+| Agents changing other threads | The thread pairs you allowed with **Always allow** |
+| Grove tools for agents | In projects [Elyra Grove](context-and-goals.md#grove) runs as an app, agents also get Grove's MCP server, read-only: sites, recent requests, request chains and explanations, logs and database schema. On by default. |
 | Grove runs worktrees | In Grove apps, new worktrees come from Grove with their own database copy and address ([Worktrees](git-and-review.md#worktrees-with-their-own-running-app)). On by default. |
 | Database in checkpoints | In Grove apps, each checkpoint also snapshots the database, and restoring puts it back ([Checkpoints](chat.md#checkpoints)). On by default. |
-| Grove tools for agents | In projects [Elyra Grove](context-and-goals.md#grove) runs as an app, agents also get Grove's MCP server, read-only: sites, recent requests, request chains and explanations, logs and database schema. On by default. |
-| Automatic turns per goal | How many turns a [goal](context-and-goals.md#goal) may take on its own before it pauses (default 10) |
-| Automatic fixes when checks fail | How many times a project's failed [checks](context-and-goals.md#checks-after-each-turn) go back to the agent before the thread is handed to you (default 2; 0 only reports them) |
-| Cross-examine every plan with | An agent that checks every plan against the code in a read-only side chat before you approve it ([Cross-examine a plan](chat.md#cross-examine-a-plan)). *Only when I ask* by default. |
-| Test the tests after green checks | How many small changes (a flipped comparison, `&&` for `\|\|`, …) are made to the lines an instruction added, one at a time, to see whether the checks catch them ([Test the tests](context-and-goals.md#test-the-tests)). Default 4; 0 turns it off. |
-| Only for checks that take at most | The checks run once per change in the background, so slower ones are left out (default 30 seconds) |
-| When an agent goes round in circles | What to do when a turn's calls keep failing ([When an agent goes in circles](context-and-goals.md#when-an-agent-goes-in-circles)): *Ask me* (default), *Start over on its own* (files back to the turn's checkpoint, another try with the escalation model) or *Do nothing* |
 | External clients | Pair, configure and revoke Claude Desktop, Codex and other MCP clients |
 | Activity | The audit log of gateway calls |
 

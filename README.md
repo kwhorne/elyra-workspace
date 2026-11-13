@@ -26,10 +26,25 @@ updates itself after that.
 - **Done means green**: give a project a check command (tests, lint) and it runs
   after every turn that changed files; failures go back to the agent, and the
   thread is done when they pass.
+- **Proof, not a feeling**: once the checks pass, Elyra tests the tests by
+  changing the new code in small ways and showing what no test noticed. Project
+  rules can be invariants, checked after every turn without a model. A stuck
+  agent is stopped and started over, another agent can cross-examine a plan
+  before any code exists, and in Red vs. Blue one agent writes the tests and
+  another the code.
+- **Every line has a history**: Elyra remembers which message wrote each line.
+  Ask the agent that wrote a line why, take one instruction back while keeping
+  the work after it, find the turn that broke the checks (*Who broke it?*), and
+  see which lines agents wrote that nobody has read.
+- **The right agent for the job**: per part of your code, how often each agent
+  was green on the first try, how much of its code you kept, and what it cost;
+  a new thread can go to the one that did best.
 - **Agents that try their work**: a built-in browser for your dev servers where
   agents read the page, console and network calls, and (once you allow it) click,
   fill in forms and press keys. A flow they walked through becomes a journey that
-  is replayed after later changes, like a test nobody had to write.
+  is replayed after later changes, like a test nobody had to write; it also
+  catches a broken layout (at a phone's width too) and, in apps Elyra Grove
+  runs, a page that suddenly runs many more database queries.
 - **One setup for every agent**: the project's `.mcp.json` servers (once you allow
   them) and skills reach Codex, Elyra, Pi and ACP agents too, not only Claude Code.
 - **Automation**: scheduled prompts (an agent can propose one), a task board, and

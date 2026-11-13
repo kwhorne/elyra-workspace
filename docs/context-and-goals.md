@@ -41,7 +41,7 @@ reached. For example: *All tests pass and the checkout flow handles discounts*.
    - the agent ends a reply with **GOAL BLOCKED** because it needs you, or a turn
      fails: the goal is *Paused*, or
    - the turn budget runs out (10 automatic turns by default, set in
-     **Settings → Agents & MCP**): the goal stops.
+     **Settings → After each turn**): the goal stops.
 
    You get a notification in each case.
 3. **Pause** stops after the current turn. **Resume** continues with a fresh
@@ -173,7 +173,7 @@ tries it.
   failed** appears in the conversation; click it for the output.
 - When they fail, the end of the output goes back to the agent to fix
   (*Sent the failures to the agent*), and the checks run again. After **Settings
-  → Agents & MCP → Automatic fixes when checks fail** (2 by default) the thread
+  → After each turn → Automatic fixes when checks fail** (2 by default) the thread
   stops, marked failed, and you are told. 0 only reports the failure. No
   automatic fix is sent when you have queued a message or the budget is used up.
 - **A stronger fix**: when a first automatic fix didn't make them pass, the next
@@ -217,7 +217,7 @@ background. A change the tests caught before isn't tried again; one that got
 through is, until a test catches it. A new message stops it, so two test runs
 never share a test database; it runs again once that turn's checks pass. In a [duel](projects-and-threads.md#red-vs-blue) it tests Red's tests
 against all of Blue's code, and what gets through goes to Red for one more
-round instead of **Ask for tests**. **Settings → Agents & MCP → Test the
+round instead of **Ask for tests**. **Settings → After each turn → Test the
 tests after green checks** sets how many changes are tried (4 by default; 0
 turns it off).
 
@@ -246,7 +246,7 @@ failure, and you are notified:
 - **Stop** stops the turn and leaves the files as they are.
 - **Let it run** dismisses it for the rest of the turn.
 
-**Settings → Agents & MCP → When an agent goes round in circles**: *Ask me*
+**Settings → After each turn → When an agent goes round in circles**: *Ask me*
 (default), *Start over on its own*, or *Do nothing*. A turn that was started
 over doesn't count as green on the first try in the
 [agents' numbers](#how-the-agents-do-on-your-code). A start-over is skipped when
@@ -266,7 +266,7 @@ more often, or as often and much cheaper, with at least three checked
 instructions there for each agent compared), a line above the message box says
 so (*In app/Http, Codex has been green on the first try in 8 of 9 instructions
 ($0.12 each); Claude Code 4 of 7 ($0.40 each).*), and **Use Codex** gives the
-thread to it. With **Settings → Agents & MCP → Pick the agent from your stats**
+thread to it. With **Settings → After each turn → Pick the agent from your stats**
 on, that happens by itself when you send, and the thread says why.
 
 Once at least 30 lines of every compared agent's code there have been measured
@@ -277,7 +277,7 @@ with 95 % kept, and the line says so (*… and you kept 95 % of its lines*).
 ### Warm start (experiment)
 
 At the start of most threads an agent spends its first tool calls finding where
-things are. With **Settings → Agents & MCP → Warm start (experiment)** on, Elyra
+things are. With **Settings → After each turn → Warm start (experiment)** on, Elyra
 looks the names in a new thread's first message up before it reaches the agent:
 
 - where those symbols are defined, from the project's symbol index (as it is;

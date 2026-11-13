@@ -202,7 +202,7 @@ app you can look at.
 Removing such a worktree (deleting its thread with the worktree, or in Manage
 Worktrees) takes its site and database copy down with it; the branch stays. If
 Grove can't start the branch, the thread gets a plain worktree and says why.
-Turn this off in **Settings → Agents & MCP → Grove runs worktrees**.
+Turn this off in **Settings → Agents & MCP → Grove → Grove runs worktrees**.
 
 ## Pull requests
 

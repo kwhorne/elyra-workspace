@@ -197,7 +197,7 @@ each with the evidence and what to do instead (or *found nothing to change*):
   presents a revised plan, which you approve as usual.
 - **Open the chat** shows the whole cross-examination, where you can ask more.
 
-You can also approve the plan without waiting. **Settings → Agents & MCP →
+You can also approve the plan without waiting. **Settings → After each turn →
 Cross-examine every plan with** picks an agent that cross-examines every plan as
 it is presented (not plans by the same agent).
 
@@ -255,4 +255,4 @@ file, or a `grove db snapshot` of MySQL, PostgreSQL or ElyraSQL, found from the
 app's `.env`. **Restore files** then puts the database back too, so data and
 migrations the agent changed are undone with the code. The latest 10 database
 snapshots per thread are kept; turn this off in **Settings → Agents & MCP →
-Database in checkpoints**.
+Grove → Database in checkpoints**.

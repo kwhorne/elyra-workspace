@@ -858,6 +858,12 @@ fn render_item(
             }
             card.into_any_element()
         }
+        // Held, with checks after them: said on the checks' row instead.
+        ItemContent::Invariants { broken, .. }
+            if broken.is_empty() && checks_follow(&session.items, id) =>
+        {
+            return None;
+        }
         ItemContent::Invariants { checked, broken } => invariants_card(checked, broken, cx),
         ItemContent::InvariantProposal {
             invariant,
@@ -1061,6 +1067,7 @@ fn render_item(
                 exit_code: *exit_code,
                 duration_ms: *duration_ms,
                 output,
+                invariants: invariants_held_before(&session.items, id),
             },
             expanded.contains(&id),
             !*passed && !session.running,
@@ -1866,6 +1873,40 @@ struct Check<'a> {
     exit_code: Option<i32>,
     duration_ms: u64,
     output: &'a str,
+    /// Invariants that held just before (shown on this row).
+    invariants: usize,
+}
+
+/// Whether checks ran after the item `id` in the same turn.
+fn checks_follow(items: &[TranscriptItem], id: ItemId) -> bool {
+    let Some(at) = items.iter().position(|i| i.id == id) else {
+        return false;
+    };
+    items[at + 1..]
+        .iter()
+        .take_while(|i| !matches!(i.content, ItemContent::User { .. }))
+        .any(|i| matches!(i.content, ItemContent::Check { .. }))
+}
+
+/// How many invariants held right before the checks `id` (same turn).
+fn invariants_held_before(items: &[TranscriptItem], id: ItemId) -> usize {
+    let Some(at) = items.iter().position(|i| i.id == id) else {
+        return 0;
+    };
+    items[..at]
+        .iter()
+        .rev()
+        .take_while(|i| {
+            !matches!(
+                i.content,
+                ItemContent::User { .. } | ItemContent::Check { .. }
+            )
+        })
+        .find_map(|i| match &i.content {
+            ItemContent::Invariants { checked, broken } if broken.is_empty() => Some(checked.len()),
+            _ => None,
+        })
+        .unwrap_or(0)
 }
 
 fn check_row(
@@ -1881,6 +1922,7 @@ fn check_row(
         exit_code,
         duration_ms,
         output,
+        invariants,
     } = check;
     let bisect_command = command.to_string();
     let mut summary = vec![
@@ -1916,6 +1958,25 @@ fn check_row(
                 .text_sm()
                 .child(Icon::new(icon).small().text_color(color))
                 .child(div().font_weight(FontWeight::MEDIUM).child(label))
+                .when(invariants > 0, |this| {
+                    this.child(
+                        h_flex()
+                            .flex_none()
+                            .gap_0p5()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(
+                                Icon::new(IconName::ShieldCheck)
+                                    .xsmall()
+                                    .text_color(cx.theme().success),
+                            )
+                            .child(if invariants == 1 {
+                                "1 invariant".to_string()
+                            } else {
+                                format!("{invariants} invariants")
+                            }),
+                    )
+                })
                 .child(
                     div()
                         .flex_1()

@@ -117,6 +117,7 @@ def rich_items():
              "change": "`&&` → `||`", "caught": False},
             {"path": "app/Models/Order.php", "line": 88, "code": "return $this->total >= 500;", "change": "`>=` → `<`", "caught": True},
             {"path": "app/Models/Order.php", "line": 91, "code": "return true;", "change": "`true` → `false`", "caught": True}]},
+        {"kind": "invariants", "checked": ["API controllers scope queries to the tenant", "No dd( in committed code"]},
         {"kind": "check", "command": "vendor/bin/pint --test && php artisan test --parallel --stop-on-failure", "passed": True,
          "duration_ms": 39800, "output": "Tests: 214 passed"},
     ]
