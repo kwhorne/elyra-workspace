@@ -10,7 +10,8 @@
 //! the `read` tool uses [`extract`] for outlines of large files in languages
 //! the regex outlines do not cover.
 //!
-//! Supported: Rust, TypeScript, TSX, JavaScript, Python, Go, PHP and C.
+//! Supported: Rust, TypeScript, TSX, JavaScript, Python, Go, PHP and C, and
+//! the templates of Vue, Svelte and Laravel Blade (see [`templates`]).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -25,8 +26,12 @@ use thiserror::Error;
 use tree_sitter::{Parser, Query, QueryCursor};
 
 pub mod mutate;
+pub mod templates;
 
-const SCHEMA_VERSION: i64 = 1;
+pub use templates::Template;
+
+/// 2: templates (`.blade.php` was PHP before, so everything is read again).
+const SCHEMA_VERSION: i64 = 2;
 /// Files larger than this are not parsed.
 pub const MAX_FILE_BYTES: u64 = 1_000_000;
 const MAX_SIGNATURE_CHARS: usize = 120;
@@ -147,6 +152,52 @@ impl Language {
             Language::Php => tree_sitter_php::TAGS_QUERY.to_string(),
             Language::C => tree_sitter_c::TAGS_QUERY.to_string(),
         }
+    }
+}
+
+/// What the index reads a file as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FileKind {
+    Code(Language),
+    Template(Template),
+}
+
+impl FileKind {
+    /// By name: a template first (`.blade.php` isn't PHP to read).
+    pub fn from_path(path: &Path) -> Option<FileKind> {
+        Template::from_path(path)
+            .map(FileKind::Template)
+            .or_else(|| Language::from_path(path).map(FileKind::Code))
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            FileKind::Code(language) => language.name(),
+            FileKind::Template(template) => template.name(),
+        }
+    }
+}
+
+/// A file's source as a grammar parses it, by its name: code as it is, a
+/// Vue or Svelte file's script in place with the rest blank (same lines and
+/// byte offsets). None for other files and Blade.
+pub fn parseable<'a>(
+    path: &Path,
+    source: &'a str,
+) -> Option<(Language, std::borrow::Cow<'a, str>)> {
+    match FileKind::from_path(path)? {
+        FileKind::Code(language) => Some((language, std::borrow::Cow::Borrowed(source))),
+        FileKind::Template(template) => templates::script(template, source)
+            .map(|(language, code)| (language, std::borrow::Cow::Owned(code))),
+    }
+}
+
+/// Definitions and references of a file of any kind the index reads (`rel`:
+/// its path in the project, which names a template's view or component).
+pub fn extract_file(kind: FileKind, rel: &str, source: &str) -> Result<Extraction, IndexError> {
+    match kind {
+        FileKind::Code(language) => extract(language, source),
+        FileKind::Template(template) => Ok(templates::extract(template, rel, source)),
     }
 }
 
@@ -525,7 +576,7 @@ impl SymbolIndex {
         Ok(())
     }
 
-    fn walk(&self) -> Vec<(PathBuf, Language, u64, i64)> {
+    fn walk(&self) -> Vec<(PathBuf, FileKind, u64, i64)> {
         let mut files = Vec::new();
         let mut builder = ignore::WalkBuilder::new(&self.root);
         builder
@@ -548,7 +599,7 @@ impl SymbolIndex {
             if !entry.file_type().is_some_and(|t| t.is_file()) {
                 continue;
             }
-            let Some(language) = Language::from_path(path) else {
+            let Some(language) = FileKind::from_path(path) else {
                 continue;
             };
             let Ok(meta) = entry.metadata() else {
@@ -643,7 +694,7 @@ impl SymbolIndex {
         };
         let rel = to_posix(absolute.strip_prefix(&self.root).unwrap_or(&absolute));
         let (Some(language), Ok(meta)) =
-            (Language::from_path(&absolute), std::fs::metadata(&absolute))
+            (FileKind::from_path(&absolute), std::fs::metadata(&absolute))
         else {
             self.remove_file(&rel)?;
             return Ok(false);
@@ -675,12 +726,12 @@ impl SymbolIndex {
         &mut self,
         path: &Path,
         rel: &str,
-        language: Language,
+        language: FileKind,
         size: i64,
         mtime: i64,
     ) -> Result<(), IndexError> {
         let source = std::fs::read_to_string(path)?;
-        let extraction = extract(language, &source)?;
+        let extraction = extract_file(language, rel, &source)?;
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM symbols WHERE file = ?1", params![rel])?;
         tx.execute("DELETE FROM refs WHERE file = ?1", params![rel])?;
@@ -933,7 +984,7 @@ pub fn lookup(
     let refreshed = index.refresh_if_stale(REFRESH_MAX_AGE)?;
     let stats = index.stats()?;
     if stats.files == 0 {
-        return Ok("The symbol index is empty: no Rust, TypeScript, JavaScript, Python, Go, PHP or C files under \
+        return Ok("The symbol index is empty: no Rust, TypeScript, JavaScript, Python, Go, PHP, C, Vue, Svelte or Blade files under \
 		 the project directory (respecting .gitignore). Use grep instead."
 			.into());
     }
@@ -1182,6 +1233,55 @@ export function boot(options: Options): Runtime {
             py.references
                 .iter()
                 .any(|r| r.name == "helper" && r.kind == "call")
+        );
+    }
+
+    #[test]
+    fn indexes_templates() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("resources/views/orders")).unwrap();
+        std::fs::create_dir_all(root.join("src/components")).unwrap();
+        std::fs::write(
+            root.join("resources/views/orders/index.blade.php"),
+            "@foreach($orders as $order)\n  @include('orders.row')\n@endforeach\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("resources/views/orders/row.blade.php"),
+            "<td>{{ $order->total() }}</td>\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("src/components/OrderTable.vue"),
+            "<template><OrderRow /></template>\n<script setup>\nfunction sortBy(key) {}\n</script>\n",
+        )
+        .unwrap();
+        let mut index = SymbolIndex::open_in_memory(root).unwrap();
+        index.refresh().unwrap();
+        let view = index.definitions("orders.row", false, None, 5).unwrap();
+        assert_eq!(
+            (view[0].file.as_str(), view[0].kind.as_str()),
+            ("resources/views/orders/row.blade.php", "view")
+        );
+        let used = index.references("orders.row", None, 5).unwrap();
+        assert_eq!(used[0].file, "resources/views/orders/index.blade.php");
+        assert_eq!((used[0].language.as_str(), used[0].line), ("blade", 2));
+        let component = index.definitions("OrderTable", false, None, 5).unwrap();
+        assert_eq!(component[0].file, "src/components/OrderTable.vue");
+        assert_eq!(
+            index.definitions("sortBy", false, None, 5).unwrap()[0].line,
+            3
+        );
+        let calls = index.references("total", None, 5).unwrap();
+        assert_eq!(
+            calls[0].container.as_deref(),
+            Some("orders.row"),
+            "inside the view"
+        );
+        assert_eq!(
+            index.references("OrderRow", None, 5).unwrap()[0].kind,
+            "component"
         );
     }
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Vue, Svelte and Blade in the symbol index.** Components and views are
+  where much of a web project's wiring is, and they were invisible to symbol
+  lookups. A Vue or Svelte component's script is read in place, the file
+  defines its component, and its markup refers to the components and functions
+  it uses. A Blade view defines itself (`orders.row`) and refers to the views,
+  components (`<x-…>`, Livewire) and methods it uses. Finding a symbol, the
+  agents' `symbols` tool, warm start and cross-examining a plan see them, and
+  Test the tests also changes the scripts of Vue and Svelte components. The
+  index is built again once. See
+  [Go to symbol](docs/files-and-search.md#go-to-symbol-t).
+
 ## 1.18.1
 
 A fix for the checks Elyra runs in temporary checkouts, which in JavaScript

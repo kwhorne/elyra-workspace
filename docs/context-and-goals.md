@@ -148,7 +148,8 @@ conditions they add could be turned around without a test failing. So once the
 checks pass after a turn, Elyra tests the tests, without asking a model:
 
 - It finds the conditions in the lines the instruction added (with tree-sitter,
-  in Rust, TypeScript, JavaScript, Python, Go, PHP and C) and picks up to four
+  in Rust, TypeScript, JavaScript, Python, Go, PHP and C, and the scripts of
+  Vue and Svelte components) and picks up to four
   small changes, spread over the files: a flipped comparison (`>` to `<=`,
   `===` to `!==`), `&&` for `||`, a dropped `!` or `not`, `true` for `false`.
   Test files are left alone.

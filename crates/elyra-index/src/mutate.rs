@@ -76,6 +76,15 @@ fn flipped(operator: &str) -> Option<(&'static str, Kind)> {
     })
 }
 
+/// The mutants on `lines` of the file at `path` (by its name: code, or a
+/// Vue or Svelte file's script). Their offsets are the file's own.
+pub fn mutants_in(path: &std::path::Path, source: &str, lines: &HashSet<usize>) -> Vec<Mutant> {
+    match crate::parseable(path, source) {
+        Some((language, code)) => mutants(language, &code, lines),
+        None => Vec::new(),
+    }
+}
+
 /// The mutants on `lines` (1-based) of `source`, in order. Nothing when it
 /// doesn't parse.
 pub fn mutants(language: Language, source: &str, lines: &HashSet<usize>) -> Vec<Mutant> {
@@ -243,6 +252,28 @@ mod tests {
         let found = on(Language::TypeScript, ts, &[1]);
         assert_eq!(found.len(), 3, "{found:?}");
         assert!(super::Kind::Comparison < Kind::Literal);
+    }
+
+    #[test]
+    fn changes_a_components_script_in_place() {
+        let vue = "<template>\n  <p v-if=\"a > b\">{{ total }}</p>\n</template>\n<script setup lang=\"ts\">\nconst free = total > 500\n</script>\n";
+        let lines: HashSet<usize> = [2, 5].into_iter().collect();
+        let found = super::mutants_in(std::path::Path::new("Cart.vue"), vue, &lines);
+        assert_eq!(found.len(), 1, "the script's, not the markup's: {found:?}");
+        assert_eq!(found[0].line, 5);
+        assert!(
+            found[0]
+                .apply(vue)
+                .contains("const free = total <= 500\n</script>")
+        );
+        assert!(
+            super::mutants_in(
+                std::path::Path::new("row.blade.php"),
+                "@if($a > $b)\n",
+                &[1].into()
+            )
+            .is_empty()
+        );
     }
 
     #[test]

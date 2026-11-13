@@ -13,7 +13,7 @@ token, and every call is written to an audit log. The address is shown in
 
 | Tool | What it does | Read-only clients |
 | --- | --- | --- |
-| `symbols` | Where a function, method, class or type is defined and who calls it, from a tree-sitter index of the project (Rust, TypeScript, JavaScript, Python, Go, PHP, C); in the agent's own folder, or a named project or thread | ✓ |
+| `symbols` | Where a function, method, class or type is defined and who calls it, from a tree-sitter index of the project (Rust, TypeScript, JavaScript, Python, Go, PHP, C, and Vue, Svelte and Blade templates); in the agent's own folder, or a named project or thread | ✓ |
 | `why` | Why a line is there: the thread and message that had an agent write it, when, what the agent said afterwards, and whether a person has read it, plus git blame | ✓ |
 | `ask_author` | Ask the agent that wrote a line why: a read-only side chat with that agent (same provider and model) picked up where the turn that wrote it ended, with what the turn changed and the code around the line now; waits for its answer and returns it ([Ask why](git-and-review.md#ask-why)) | |
 | `error_origin` | The Laravel app's latest logged errors, each with the line in the app's own code it failed on and the instruction that had an agent write it ([Laravel Boost](context-and-goals.md#laravel-boost)) | ✓ |

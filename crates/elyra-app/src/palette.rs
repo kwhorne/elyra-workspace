@@ -499,7 +499,7 @@ impl Palette {
                 match result {
                     Ok(symbols) if symbols.is_empty() => {
                         this.symbols_note = Some(
-                            "No symbols: the folder has no Rust, TypeScript, JavaScript, Python, Go, PHP or C files."
+                            "No symbols: the folder has no Rust, TypeScript, JavaScript, Python, Go, PHP, C, Vue, Svelte or Blade files."
                                 .into(),
                         )
                     }

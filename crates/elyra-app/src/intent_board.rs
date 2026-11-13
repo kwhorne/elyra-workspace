@@ -337,10 +337,10 @@ pub fn rows_for(
 /// The definitions in `source` that the text `snippets` sit in (the
 /// innermost one around each) or that start inside them. At most four.
 pub fn symbols_in(path: &str, source: &str, snippets: &[String]) -> Vec<Symbol> {
-    let Some(language) = elyra_index::Language::from_path(Path::new(path)) else {
+    let Some(kind) = elyra_index::FileKind::from_path(Path::new(path)) else {
         return Vec::new();
     };
-    let Ok(extraction) = elyra_index::extract(language, source) else {
+    let Ok(extraction) = elyra_index::extract_file(kind, path, source) else {
         return Vec::new();
     };
     let mut found: Vec<Symbol> = Vec::new();

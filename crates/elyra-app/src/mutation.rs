@@ -53,9 +53,9 @@ pub fn choose(
     let mut per_file: BTreeMap<String, (String, Vec<elyra_index::mutate::Mutant>)> =
         BTreeMap::new();
     for path in paths {
-        let Some(language) = elyra_index::Language::from_path(Path::new(&path)) else {
+        if elyra_index::FileKind::from_path(Path::new(&path)).is_none() {
             continue;
-        };
+        }
         let Some(source) = elyra_git::undo::content_at(root, after, &path)
             .and_then(|bytes| String::from_utf8(bytes).ok())
         else {
@@ -69,7 +69,8 @@ pub fn choose(
             .filter(|line| line.kind == elyra_git::DiffLineKind::Added)
             .filter_map(|line| line.new_line.map(|n| n as usize))
             .collect();
-        let mut mutants = elyra_index::mutate::mutants(language, &source, &lines);
+        // Code, or a Vue or Svelte component's script.
+        let mut mutants = elyra_index::mutate::mutants_in(Path::new(&path), &source, &lines);
         if mutants.is_empty() {
             continue;
         }

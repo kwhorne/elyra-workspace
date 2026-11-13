@@ -52,7 +52,22 @@ an exact name comes first. Each row shows the kind, the class or module it
 belongs to, and `file:line`.
 
 It reads the same symbol index the agents use with the gateway's `symbols` tool:
-Rust, TypeScript, TSX, JavaScript, Python, Go, PHP and C, following `.gitignore`.
+Rust, TypeScript, TSX, JavaScript, Python, Go, PHP and C, following `.gitignore`,
+and the templates where much of a web project's wiring is:
+
+- **Vue and Svelte components**: what their `<script>` defines, the component
+  the file is (`OrderTable.vue` is `OrderTable`), and in the markup the
+  components it uses (`<OrderRow>`, `<order-row>`) and the functions it calls
+  (`{{ formatTotal(total) }}`, `@click="save"`, `on:click={save}`).
+- **Laravel Blade views**: each is a view by its name (`orders.row`), and one
+  under `views/components` also the component (`<x-order.line-item>` is
+  `LineItem`). It refers to the views it includes or extends (`@include`,
+  `@extends`, `@each`), the components it uses (`<x-…>`, `<livewire:…>`,
+  `@livewire(…)`) and the methods it calls (`$order->total()`).
+
+So looking up `orders.row` or `OrderTable` also finds the templates that use
+them, for you, the agents, [warm start](context-and-goals.md#warm-start-experiment)
+and [cross-examining a plan](chat.md#cross-examine-a-plan).
 The first time in a project the index is built (a few seconds for a few thousand
 files); after that it's refreshed in the background as files change.
 

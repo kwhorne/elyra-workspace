@@ -114,7 +114,7 @@ fn tools() -> Vec<Tool> {
     vec![
         tool(
             "symbols",
-            "Look up code symbols in a tree-sitter index of the project: where a function, method, class, interface, type or module is defined, and where it is referenced (calls, implementations, type uses). Rust, TypeScript, TSX, JavaScript, Python, Go, PHP and C. Use it before grep or read when you need a definition or the callers of something: it returns file:line locations with signatures, so you can read only the relevant range. It works in your thread's folder; other callers name a project or thread.",
+            "Look up code symbols in a tree-sitter index of the project: where a function, method, class, interface, type or module is defined, and where it is referenced (calls, implementations, type uses). Rust, TypeScript, TSX, JavaScript, Python, Go, PHP and C, and templates: Vue and Svelte components (their scripts, the component each file defines, and the components and calls in their markup) and Laravel Blade views (each defines its view, such as orders.row, and refers to the views, components and methods it uses, so references of orders.row or OrderTable finds where they are used). Use it before grep or read when you need a definition or the callers of something: it returns file:line locations with signatures, so you can read only the relevant range. It works in your thread's folder; other callers name a project or thread.",
             json!({ "type": "object", "properties": {
                 "name": { "type": "string", "description": "Symbol name (function, method, class, type, module); case-insensitive" },
                 "mode": { "type": "string", "enum": ["definitions", "references", "all"], "description": "What to return (default: all)" },

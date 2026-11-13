@@ -1101,6 +1101,27 @@ def the_tests_are_tested_in_a_javascript_workspace(world, project):
     expect(missed == ["`&&` → `||`"], f"only what the check can't see: {card['mutants']}")
 
 
+@scenario(files={
+    "resources/views/orders/index.blade.php":
+        "@extends('layouts.app')\n@section('content')\n  @foreach($orders as $order)\n    @include('orders.row')\n  @endforeach\n  <x-order-total :orders=\"$orders\" />\n@endsection\n",
+    "resources/views/orders/row.blade.php": "<tr><td>{{ $order->number }}</td><td>{{ $order->total() }}</td></tr>\n",
+    "resources/js/components/OrderTable.vue":
+        "<template>\n  <OrderRow v-for=\"o in orders\" :order=\"o\" @select=\"pick\" />\n</template>\n"
+        "<script setup lang=\"ts\">\nfunction pick(order) { emit('picked', order) }\n</script>\n",
+})
+def agents_find_what_templates_use(world, project):
+    thread = world.new_thread(project, '[call symbols {"name": "orders.row"}]')
+    reply = world.wait(thread, 60)
+    expect("orders/row.blade.php:1" in reply, "the view: " + reply[-500:])
+    expect("orders/index.blade.php:4" in reply, "and where it's included: " + reply[-500:])
+    text = world.tool("symbols", name="total", mode="references", project=project)
+    expect("orders/row.blade.php:1" in text, "a method a view calls: " + text)
+    text = world.tool("symbols", name="OrderTable", mode="definitions", project=project)
+    expect("OrderTable.vue:1" in text, "a Vue component: " + text)
+    text = world.tool("symbols", name="pick", project=project)
+    expect("OrderTable.vue:5" in text and "OrderTable.vue:2" in text, "its handler and its use: " + text)
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]
