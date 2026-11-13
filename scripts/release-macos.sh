@@ -3,13 +3,16 @@
 #   target/release/dist/Elyra-Workspace-<version>-<arch>.dmg (+ .sha256)
 #
 # Needs:
-#   CODESIGN_IDENTITY  "Developer ID Application: …" (default: the GETS AS identity)
-#   NOTARY_PROFILE     notarytool keychain profile (default: elyra-workspace)
+#   CODESIGN_IDENTITY  "Developer ID Application: …" (default: Knut Horne's identity)
+#   NOTARY_PROFILE     notarytool keychain profile (default: "Knut Horne")
 #
 # Store the notarization credentials once (an app-specific password from
 # appleid.apple.com, or use --key/--key-id/--issuer for an App Store Connect key):
-#   xcrun notarytool store-credentials elyra-workspace \
-#     --apple-id you@example.com --team-id 7G383N3VY7
+#   xcrun notarytool store-credentials "Knut Horne" \
+#     --apple-id you@example.com --team-id 52AT44QFCM
+#
+# For GETS AS instead: CODESIGN_IDENTITY="Developer ID Application: GETS AS (7G383N3VY7)"
+# with a profile for team 7G383N3VY7 (NOTARY_PROFILE, or NOTARY_TEAM_ID in CI).
 #
 # In CI, set NOTARY_APPLE_ID, NOTARY_PASSWORD (app-specific) and NOTARY_TEAM_ID
 # instead of a keychain profile.
@@ -21,10 +24,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NAME="Elyra Workspace"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 ARCH=arm64  # Apple Silicon only; bundle-macos.sh refuses other hosts
-export CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: GETS AS (7G383N3VY7)}"
-PROFILE="${NOTARY_PROFILE:-elyra-workspace}"
+export CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: Knut Horne (52AT44QFCM)}"
+PROFILE="${NOTARY_PROFILE:-Knut Horne}"
 if [ -n "${NOTARY_APPLE_ID:-}" ]; then
-  NOTARY_AUTH=(--apple-id "$NOTARY_APPLE_ID" --password "${NOTARY_PASSWORD:?}" --team-id "${NOTARY_TEAM_ID:-7G383N3VY7}")
+  NOTARY_AUTH=(--apple-id "$NOTARY_APPLE_ID" --password "${NOTARY_PASSWORD:?}" --team-id "${NOTARY_TEAM_ID:-52AT44QFCM}")
 else
   NOTARY_AUTH=(--keychain-profile "$PROFILE")
 fi
@@ -43,7 +46,7 @@ notarize() {
 
 if [ "${SKIP_NOTARIZE:-}" != "1" ] && ! xcrun notarytool history "${NOTARY_AUTH[@]}" >/dev/null 2>&1; then
   echo "Notarization credentials don't work (profile \"$PROFILE\" or NOTARY_* variables). Store them once with:" >&2
-  echo "  xcrun notarytool store-credentials $PROFILE --apple-id <apple id> --team-id 7G383N3VY7" >&2
+  echo "  xcrun notarytool store-credentials \"$PROFILE\" --apple-id <apple id> --team-id 52AT44QFCM" >&2
   exit 1
 fi
 

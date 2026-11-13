@@ -229,16 +229,16 @@ Check with `gh secret list --repo kwhorne/elyra-workspace`, and delete the expor
 ### Releasing from a Mac
 
 ```console
-xcrun notarytool store-credentials elyra-workspace --apple-id <apple id> --team-id 7G383N3VY7   # once
+xcrun notarytool store-credentials "Knut Horne" --apple-id <apple id> --team-id 52AT44QFCM   # once
 scripts/release-macos.sh       # -> target/release/dist/Elyra-Workspace-<version>-arm64.dmg
 ```
 
-To sign and notarize with Knut Horne's team instead of GETS AS, which is how 1.3.0
-and 1.3.1 were released:
+This signs and notarizes with Knut Horne's team (52AT44QFCM). To use GETS AS
+instead, as the release workflow does:
 
 ```console
-CODESIGN_IDENTITY="Developer ID Application: Knut Horne (52AT44QFCM)" \
-  NOTARY_PROFILE="Knut Horne" scripts/release-macos.sh
+CODESIGN_IDENTITY="Developer ID Application: GETS AS (7G383N3VY7)" \
+  NOTARY_PROFILE=elyra-workspace scripts/release-macos.sh
 ```
 
 Official copies accept updates signed by either team (`RELEASE_TEAMS` in
