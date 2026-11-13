@@ -192,6 +192,14 @@ def build_world():
             if offset == 1:
                 db.execute("INSERT INTO line_survival (thread_id, item_id, lines, kept, measured_at) "
                            "VALUES (?, ?, 48, 41, '2026-01-04T00:00:00Z')", (rich, item_id))
+    # A change in the working tree with a line the tests don't guard (Changes).
+    controller = os.path.join(world.projects["outside"]["path"], "app/Http/Controllers/OrderController.php")
+    os.makedirs(os.path.dirname(controller), exist_ok=True)
+    with open(controller, "w") as f:
+        f.write("<?php\n\nclass OrderController\n{\n    public function index(Request $request, Customer $customer)\n    {\n"
+                "        if ($customer->address === null && ! $request->boolean('draft')) {\n"
+                "            return response()->json(['error' => 'no address'], 422);\n        }\n"
+                "        return OrderResource::collection($customer->orders);\n    }\n}\n")
     return world, {"all": threads + [rich], "rich": [rich]}
 
 

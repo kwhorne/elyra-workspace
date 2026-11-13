@@ -1,7 +1,9 @@
 //! The Git panel of a thread: branch and sync, staged and unstaged changes,
 //! diffs of the working tree, of individual agent turns or against another
 //! branch, blame and line comments for the agent, and committing. Lines an
-//! agent wrote that nobody has marked as read carry a dot until someone does.
+//! agent wrote that nobody has marked as read carry a dot until someone does;
+//! lines no test guards (the mutation gate changed them and the checks still
+//! passed) carry a flask, with a way to ask the agent for the missing test.
 
 use crate::app_state::AppState;
 use crate::thread_session::ThreadSession;
@@ -86,6 +88,11 @@ pub struct ChangesView {
     unread: HashMap<String, (HashSet<i64>, usize)>,
     /// The session's `lines_recorded` when `unread` was counted.
     lines_recorded: usize,
+    /// Per changed file: changes to its lines the tests still passed with
+    /// (the mutation gate), for lines the file still has.
+    unguarded: HashMap<String, Vec<crate::mutation::Unguarded>>,
+    /// The session's `gates_done` when `unguarded` was looked up.
+    gates_seen: usize,
     diff_scroll: ScrollHandle,
     change_rows: Vec<usize>,
     change_cursor: usize,
@@ -182,6 +189,11 @@ impl ChangesView {
                     this.count_unread(cx);
                     cx.notify();
                 }
+                let gates = session.read(cx).gates_done;
+                if gates != this.gates_seen {
+                    this.gates_seen = gates;
+                    this.find_unguarded(cx);
+                }
             }));
         }
         let mut this = Self {
@@ -210,6 +222,8 @@ impl ChangesView {
             origin: None,
             unread: HashMap::new(),
             lines_recorded: 0,
+            unguarded: HashMap::new(),
+            gates_seen: 0,
             diff_scroll: ScrollHandle::new(),
             change_rows: Vec::new(),
             change_cursor: 0,
@@ -310,6 +324,7 @@ impl ChangesView {
                 }
                 this.keep_selection(cx);
                 this.count_unread(cx);
+                this.find_unguarded(cx);
                 cx.notify();
             });
         })
@@ -364,6 +379,97 @@ impl ChangesView {
             });
         })
         .detach();
+    }
+
+    /// The lines no test guards, from the thread's mutation gates: those the
+    /// files still have.
+    fn find_unguarded(&mut self, cx: &mut Context<Self>) {
+        let (Some(session), Some(root)) = (
+            self.session.as_ref().and_then(|s| s.upgrade()),
+            self.root.clone(),
+        ) else {
+            self.unguarded.clear();
+            return;
+        };
+        let found = crate::mutation::unguarded(&session.read(cx).items);
+        if found.is_empty() {
+            if !self.unguarded.is_empty() {
+                self.unguarded.clear();
+                cx.notify();
+            }
+            return;
+        }
+        let job = cx.background_executor().spawn(async move {
+            found
+                .into_iter()
+                .filter_map(|(path, list)| {
+                    let content = std::fs::read_to_string(root.join(&path)).ok()?;
+                    let still: Vec<_> = list
+                        .into_iter()
+                        .filter(|u| {
+                            content
+                                .lines()
+                                .any(|line| crate::mutation::is_line(&u.result.code, line))
+                        })
+                        .collect();
+                    (!still.is_empty()).then_some((path, still))
+                })
+                .collect::<HashMap<_, _>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let unguarded = job.await;
+            let _ = this.update(cx, |this, cx| {
+                this.unguarded = unguarded;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// The changes to this line of the selected file the tests missed.
+    fn unguarded_on(&self, line: &DiffLine) -> Vec<&crate::mutation::Unguarded> {
+        if line.kind == DiffLineKind::Removed {
+            return Vec::new();
+        }
+        self.selected
+            .as_ref()
+            .and_then(|s| self.unguarded.get(&s.change.path))
+            .map(|list| {
+                list.iter()
+                    .filter(|u| crate::mutation::is_line(&u.result.code, &line.text))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Ask the agent for a test that catches the changes to the selected line.
+    fn ask_for_test(&mut self, cx: &mut Context<Self>) {
+        let Some(line) = self.selected_line.clone() else {
+            return;
+        };
+        let line = DiffLine {
+            kind: DiffLineKind::Added,
+            old_line: None,
+            new_line: line.number,
+            text: line.text,
+        };
+        let missed = self.unguarded_on(&line);
+        let Some(command) = missed.first().map(|u| u.command.clone()) else {
+            return;
+        };
+        let results: Vec<elyra_core::MutantResult> =
+            missed.iter().map(|u| u.result.clone()).collect();
+        let (Some(prompt), Some(session)) = (
+            crate::mutation::ask_prompt(&command, &results),
+            self.session.as_ref().and_then(|s| s.upgrade()),
+        ) else {
+            return;
+        };
+        session.update(cx, |session, cx| {
+            session.submit(elyra_provider::Prompt::text(prompt), cx)
+        });
+        self.message = Some(("Asked the agent for a test that catches it.".into(), false));
+        cx.notify();
     }
 
     /// Mark what agents wrote in `path` as read.
@@ -1278,6 +1384,28 @@ impl ChangesView {
                     )
                 },
             )
+            .when_some(
+                self.unguarded
+                    .get(&change.path)
+                    .map(|list| {
+                        let mut lines: Vec<&str> =
+                            list.iter().map(|u| u.result.code.as_str()).collect();
+                        lines.dedup();
+                        lines.len()
+                    })
+                    .filter(|count| *count > 0),
+                |this, count| {
+                    this.child(
+                        h_flex()
+                            .flex_none()
+                            .gap_1()
+                            .text_xs()
+                            .text_color(cx.theme().warning)
+                            .child(Icon::new(IconName::FlaskConical).xsmall())
+                            .child(format!("{count} unguarded")),
+                    )
+                },
+            )
             .when(in_tree, |this| {
                 this.child(
                     h_flex()
@@ -1520,6 +1648,7 @@ impl ChangesView {
                             let (bg, _) =
                                 line.map(|l| self.line_cells(l, cx)).unwrap_or((None, " "));
                             let unread = line.is_some_and(|l| self.is_unread(l));
+                            let unguarded = line.is_some_and(|l| !self.unguarded_on(l).is_empty());
                             let index = offset + pair;
                             h_flex()
                                 .id(SharedString::from(format!(
@@ -1545,7 +1674,16 @@ impl ChangesView {
                                     h_flex()
                                         .w(px(10.))
                                         .flex_none()
-                                        .when(unread, |this| this.child(unread_dot(cx))),
+                                        .when(unguarded, |this| {
+                                            this.child(
+                                                Icon::new(IconName::FlaskConical)
+                                                    .xsmall()
+                                                    .text_color(cx.theme().warning),
+                                            )
+                                        })
+                                        .when(unread && !unguarded, |this| {
+                                            this.child(unread_dot(cx))
+                                        }),
                                 )
                                 .child(self.code(line.map(|l| l.text.as_str()).unwrap_or("")))
                                 .when(line.is_some(), |this| {
@@ -1569,6 +1707,7 @@ impl ChangesView {
                 let line = &hunk.lines[i];
                 let (bg, sign) = self.line_cells(line, cx);
                 let unread = self.is_unread(line);
+                let unguarded = !self.unguarded_on(line).is_empty();
                 let index = i;
                 let is_selected = selected_line
                     .as_ref()
@@ -1601,13 +1740,19 @@ impl ChangesView {
                                 .text_color(gutter)
                                 .child(number(line.new_line)),
                         )
-                        .child(
-                            h_flex()
-                                .w(px(14.))
-                                .flex_none()
-                                .when(unread, |this| this.child(unread_dot(cx)))
-                                .when(!unread, |this| this.child(sign)),
-                        )
+                        .child(h_flex().w(px(14.)).flex_none().map(|this| {
+                            if unguarded {
+                                this.child(
+                                    Icon::new(IconName::FlaskConical)
+                                        .xsmall()
+                                        .text_color(cx.theme().warning),
+                                )
+                            } else if unread {
+                                this.child(unread_dot(cx))
+                            } else {
+                                this.child(sign)
+                            }
+                        }))
                         .child(self.code(&line.text))
                         .on_click(cx.listener(move |this, _, _, cx| this.select_line(h, index, cx)))
                         .into_any_element(),
@@ -1626,6 +1771,21 @@ impl ChangesView {
     }
 
     fn render_line_tools(&self, cx: &Context<Self>) -> AnyElement {
+        let missed: Vec<String> = self
+            .selected_line
+            .as_ref()
+            .map(|line| {
+                self.unguarded_on(&DiffLine {
+                    kind: DiffLineKind::Added,
+                    old_line: None,
+                    new_line: line.number,
+                    text: line.text.clone(),
+                })
+                .into_iter()
+                .map(|u| u.result.change.clone())
+                .collect()
+            })
+            .unwrap_or_default();
         v_flex()
             .mx_2()
             .my_1()
@@ -1644,6 +1804,33 @@ impl ChangesView {
                         .text_color(cx.theme().muted_foreground)
                         .child(Icon::new(IconName::GitCommitHorizontal).xsmall())
                         .child(blame),
+                )
+            })
+            .when(!missed.is_empty(), |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(cx.theme().warning)
+                        .child(Icon::new(IconName::FlaskConical).xsmall())
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .whitespace_normal()
+                                .child(format!(
+                                    "No test guards this line: the checks still passed with {}.",
+                                    missed.join(", ")
+                                )),
+                        )
+                        .child(
+                            Button::new("ask-for-test")
+                                .xsmall()
+                                .outline()
+                                .label("Ask for a test")
+                                .tooltip("Have the agent add a test that fails with this change, without changing the code")
+                                .on_click(cx.listener(|this, _, _, cx| this.ask_for_test(cx))),
+                        ),
                 )
             })
             .when_some(self.origin.clone(), |this, (origin, thread)| {

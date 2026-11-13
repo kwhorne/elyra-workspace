@@ -10,8 +10,8 @@
 //! Only for checks that are quick enough to run a few more times, and not on
 //! test files.
 
-use elyra_core::MutantResult;
-use std::collections::{BTreeMap, HashSet};
+use elyra_core::{GateState, ItemContent, MutantResult, TranscriptItem};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -207,6 +207,60 @@ pub fn limit_for(check_ms: u64) -> Duration {
     Duration::from_millis((check_ms * 3).max(30_000))
 }
 
+/// A line no test guards: a change the checks still passed with, and the
+/// command they were.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Unguarded {
+    pub result: MutantResult,
+    pub command: String,
+}
+
+/// The changes the tests missed in a thread, as the latest gate that tried
+/// each found them (a later gate that caught it clears it), by path.
+pub fn unguarded(items: &[TranscriptItem]) -> HashMap<String, Vec<Unguarded>> {
+    let mut latest: BTreeMap<(String, String, String), Unguarded> = BTreeMap::new();
+    for item in items {
+        let ItemContent::MutationGate {
+            command,
+            mutants,
+            state: GateState::Done | GateState::Stopped,
+            ..
+        } = &item.content
+        else {
+            continue;
+        };
+        for mutant in mutants.iter().filter(|m| m.caught.is_some()) {
+            latest.insert(
+                (
+                    mutant.path.clone(),
+                    mutant.code.clone(),
+                    mutant.change.clone(),
+                ),
+                Unguarded {
+                    result: mutant.clone(),
+                    command: command.clone(),
+                },
+            );
+        }
+    }
+    let mut by_path: HashMap<String, Vec<Unguarded>> = HashMap::new();
+    for unguarded in latest.into_values() {
+        if unguarded.result.caught == Some(false) {
+            by_path
+                .entry(unguarded.result.path.clone())
+                .or_default()
+                .push(unguarded);
+        }
+    }
+    by_path
+}
+
+/// Whether a line of code is the one a mutant was made on (`code`: trimmed,
+/// as the gate keeps it).
+pub fn is_line(code: &str, text: &str) -> bool {
+    text.trim().chars().take(120).eq(code.chars())
+}
+
 /// The message asking the agent for tests that catch what got through.
 pub fn ask_prompt(command: &str, mutants: &[MutantResult]) -> Option<String> {
     let missed: Vec<&MutantResult> = mutants.iter().filter(|m| m.caught == Some(false)).collect();
@@ -315,6 +369,60 @@ mod tests {
                 .contains("return total <= 500 and total != 999")
         );
         assert_eq!(choose(&std::env::temp_dir(), "x", "y", 4).ok(), None);
+    }
+
+    #[test]
+    fn a_later_gate_that_catches_it_clears_it() {
+        use super::{is_line, unguarded};
+        use elyra_core::{GateState, ItemContent, TranscriptItem};
+        let mutant = |line, change: &str, caught| MutantResult {
+            path: "rules.py".into(),
+            line,
+            code: "return total > 500 and total != 999".into(),
+            change: change.into(),
+            caught: Some(caught),
+        };
+        let gate = |mutants, state| TranscriptItem {
+            id: elyra_core::new_id(),
+            thread_id: elyra_core::new_id(),
+            seq: 0,
+            content: ItemContent::MutationGate {
+                command: "pytest".into(),
+                mutants,
+                state,
+                asked: false,
+            },
+            created_at: chrono::Utc::now(),
+        };
+        let first = gate(
+            vec![
+                mutant(5, "`and` → `or`", false),
+                mutant(5, "`!=` → `==`", false),
+            ],
+            GateState::Done,
+        );
+        let again = gate(vec![mutant(6, "`and` → `or`", true)], GateState::Done);
+        let running = gate(vec![mutant(6, "`>` → `<=`", false)], GateState::Running);
+        let found = unguarded(&[first.clone(), again, running]);
+        let changes: Vec<&str> = found["rules.py"]
+            .iter()
+            .map(|u| u.result.change.as_str())
+            .collect();
+        assert_eq!(
+            changes,
+            ["`!=` → `==`"],
+            "caught later, and not run yet, don't count"
+        );
+        assert_eq!(found["rules.py"][0].command, "pytest");
+        assert_eq!(unguarded(&[first])["rules.py"].len(), 2);
+        assert!(is_line(
+            "return total > 500 and total != 999",
+            "    return total > 500 and total != 999  "
+        ));
+        assert!(!is_line(
+            "return total > 500",
+            "return total > 500 and total != 999"
+        ));
     }
 
     #[test]

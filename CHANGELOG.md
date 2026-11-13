@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Lines no test guards, in Changes.** A line the mutation gate changed
+  without the checks noticing has a flask in the diff instead of `+`, and the
+  file list says how many a file has (*1 unguarded*). Click it for the change
+  that got through and **Ask for a test** for that line. The mark goes once a
+  later run catches it. See
+  [Lines no test guards](docs/git-and-review.md#lines-no-test-guards).
 - **Red vs. Blue: Red's tests are tested.** Once Blue wins a duel, the
   mutation gate runs on all the code Blue wrote. Small changes to it that
   Red's tests still pass with go back to Red for one more round: tests that

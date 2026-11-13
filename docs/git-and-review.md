@@ -103,6 +103,21 @@ Only you marking a file counts as reading it. An agent's review doesn't. The mar
 stay on this Mac with the rest of the record; nothing is added to the repository.
 Agents see them too: `why` says whether a person has read the line.
 
+### Lines no test guards
+
+When [Test the tests](context-and-goals.md#test-the-tests) changed a line the
+thread's agent wrote and the checks still passed, Changes shows it where you
+review the code:
+
+- The file says how many such lines it has in the file list (*1 unguarded*),
+  and in its diff each of them has a flask instead of `+`.
+- Click the line: *No test guards this line: the checks still passed with
+  `&&` → `||`*, and **Ask for a test** has the agent add a test that fails with
+  that change, without changing the code.
+- A line is marked as long as the file still has it, until a later run of the
+  gate catches the change (after the test is written, say).
+
+
 ### Scopes
 
 The scope menu chooses what the diff compares:

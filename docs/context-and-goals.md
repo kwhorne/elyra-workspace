@@ -161,6 +161,8 @@ checks pass after a turn, Elyra tests the tests, without asking a model:
   changes, without changing the code (*Asked the agent for tests that catch the
   changes*). Once its checks pass, the same changes are tried again, so you see
   whether the new tests catch them. **Stop** stops it.
+- The lines that got through are also marked in Changes, with **Ask for a
+  test** for each ([Lines no test guards](git-and-review.md#lines-no-test-guards)).
 
 It only runs when the checks took under 90 seconds, since they run once per
 change. In a [duel](projects-and-threads.md#red-vs-blue) it tests Red's tests

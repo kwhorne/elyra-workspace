@@ -46,6 +46,8 @@ pub struct ThreadSession {
     /// How many turns have had their lines recorded, so views that show
     /// what agents wrote know when to look again.
     pub lines_recorded: usize,
+    /// How many times the mutation gate finished, for the same reason.
+    pub gates_done: usize,
     /// What the last turn took out of other instructions, for the agent's
     /// next message.
     rewrite_note: Option<String>,
@@ -145,6 +147,7 @@ impl ThreadSession {
             streaming_text: String::new(),
             streaming_thinking: String::new(),
             lines_recorded: 0,
+            gates_done: 0,
             rewrite_note: None,
             errors_in_turn: Vec::new(),
             kept_test: None,
@@ -2507,6 +2510,7 @@ impl ThreadSession {
             }
         }
         self.persist_item(index, cx);
+        self.gates_done += 1;
         if done {
             cx.emit(SessionEvent::TestsTested);
         }
