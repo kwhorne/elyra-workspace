@@ -456,6 +456,100 @@ pub fn mail_count() -> usize {
         .unwrap_or(0)
 }
 
+/// The site Grove serves at `host` (`shop.test`), if any.
+pub fn site_at(host: &str) -> Option<Site> {
+    sites()
+        .into_iter()
+        .find(|site| site.hostname.eq_ignore_ascii_case(host))
+}
+
+/// How many queries a request ran and their SQL (`grove explain`): the
+/// count from its metrics, which a shortened list of queries doesn't change.
+pub fn queries_of(id: u64) -> Result<(usize, Vec<String>)> {
+    let data = run(&["explain", &id.to_string()])?;
+    let chain = &data["explain"]["chain"];
+    let sql = queries_in(chain);
+    let count = chain["metrics"]["query_count"]
+        .as_u64()
+        .map(|n| n as usize)
+        .unwrap_or(0)
+        .max(sql.len());
+    Ok((count, sql))
+}
+
+fn queries_in(chain: &Value) -> Vec<String> {
+    chain["queries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|query| {
+            query
+                .get("sql")
+                .or_else(|| query.get("query"))
+                .unwrap_or(query)
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| query.to_string())
+        })
+        .collect()
+}
+
+/// A query's shape: literals as `?`, lists as `(?)`, spacing and case
+/// evened, so the same query with other values compares equal.
+pub fn query_shape(sql: &str) -> String {
+    let mut out = String::new();
+    let mut chars = sql.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' | '"' => {
+                // A quoted value (quoted names are rare in logged SQL).
+                for d in chars.by_ref() {
+                    if d == c {
+                        break;
+                    }
+                }
+                out.push('?');
+            }
+            c if c.is_ascii_digit()
+                && !out.ends_with(|p: char| p.is_alphanumeric() || p == '_') =>
+            {
+                while chars
+                    .peek()
+                    .is_some_and(|d| d.is_ascii_digit() || *d == '.')
+                {
+                    chars.next();
+                }
+                out.push('?');
+            }
+            c if c.is_whitespace() => {
+                if !out.ends_with(' ') {
+                    out.push(' ');
+                }
+            }
+            c => out.extend(c.to_lowercase()),
+        }
+    }
+    // `in (?, ?, ?)` → `in (?)`.
+    let mut shape = out.trim().to_string();
+    while shape.contains("?, ?") || shape.contains("?,?") {
+        shape = shape.replace("?, ?", "?").replace("?,?", "?");
+    }
+    shape
+}
+
+/// The query run most often in `queries`, and how often (None when none
+/// repeats).
+pub fn most_repeated(queries: &[String]) -> Option<(String, usize)> {
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for query in queries {
+        *counts.entry(query_shape(query)).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|(_, n)| *n > 1)
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+}
+
 /// `grove explain <id>`: the request, the SQL and mail around it and the
 /// error log, as text for an agent.
 pub fn explain(id: u64) -> Result<String> {
@@ -537,7 +631,9 @@ pub fn format_explain(explain: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Request, Site, format_explain, new_server_errors, site_for};
+    use super::{
+        Request, Site, format_explain, most_repeated, new_server_errors, query_shape, site_for,
+    };
     use serde_json::json;
     use std::path::PathBuf;
 
@@ -549,6 +645,43 @@ mod tests {
             driver: driver.into(),
             secure: true,
         }
+    }
+
+    #[test]
+    fn counts_a_requests_queries() {
+        let chain = json!({
+            "metrics": {"duration_ms": 14, "query_count": 3},
+            "queries": [{"sql": "select * from orders"}, {"query": "select 1"}, "select 2"]
+        });
+        assert_eq!(
+            super::queries_in(&chain),
+            ["select * from orders", "select 1", "select 2"]
+        );
+        assert_eq!(
+            super::queries_in(&json!({"metrics": {"query_count": 0}})),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn finds_the_query_repeated_most() {
+        assert_eq!(
+            query_shape("SELECT * FROM `customers` WHERE `id` = 42 AND name = 'Kari'"),
+            "select * from `customers` where `id` = ? and name = ?"
+        );
+        assert_eq!(
+            query_shape("select * from orders where id in (1, 2, 3) and v2 = 1.5"),
+            "select * from orders where id in (?) and v2 = ?"
+        );
+        let queries: Vec<String> = ["select * from orders where tenant_id = 1".to_string()]
+            .into_iter()
+            .chain((1..=5).map(|id| format!("select * from customers where id = {id}")))
+            .collect();
+        assert_eq!(
+            most_repeated(&queries),
+            Some(("select * from customers where id = ?".to_string(), 5))
+        );
+        assert_eq!(most_repeated(&queries[..2]), None, "nothing repeats");
     }
 
     #[test]

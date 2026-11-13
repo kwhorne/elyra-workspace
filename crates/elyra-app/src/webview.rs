@@ -377,6 +377,8 @@ pub fn configuration() -> Retained<WKWebViewConfiguration> {
 pub struct WebView {
     view: Retained<ElyraWebView>,
     last_frame: Cell<Option<Bounds<Pixels>>>,
+    /// Its frame before [`WebView::narrow_to`].
+    narrowed: Cell<Option<NSRect>>,
 }
 
 impl WebView {
@@ -404,6 +406,31 @@ impl WebView {
         Self {
             view,
             last_frame: Cell::new(None),
+            narrowed: Cell::new(None),
+        }
+    }
+
+    /// Make the page `width` points wide for a moment (to see it at a phone's
+    /// width), keeping where it is; false when it isn't wider already.
+    /// [`WebView::restore_width`] puts it back, as does a new frame.
+    pub fn narrow_to(&self, width: f64) -> bool {
+        if self.narrowed.get().is_some() {
+            return true;
+        }
+        let frame = self.view.frame();
+        if frame.size.width <= width || !self.is_attached() {
+            return false;
+        }
+        self.narrowed.set(Some(frame));
+        let mut narrow = frame;
+        narrow.size.width = width;
+        self.view.setFrame(narrow);
+        true
+    }
+
+    pub fn restore_width(&self) {
+        if let Some(frame) = self.narrowed.take() {
+            self.view.setFrame(frame);
         }
     }
 
@@ -430,6 +457,7 @@ impl WebView {
         if self.last_frame.get() == Some(bounds) {
             return;
         }
+        self.narrowed.set(None);
         self.last_frame.set(Some(bounds));
         self.view.setFrame(host.native_frame(bounds));
     }

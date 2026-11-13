@@ -460,9 +460,12 @@ pub enum ItemContent {
         /// saved, with this many problems already there.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         layout_saved: Option<usize>,
-        /// The user accepted the new layout as it is.
+        /// The user accepted the new layout (and query counts) as it is.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         layout_accepted: bool,
+        /// Steps whose database queries jumped (from Grove).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        queries: Vec<QueryJump>,
     },
     /// The agent went round in circles during a turn (the thrash guard): the
     /// same call failing the same way, or call after call failing.
@@ -549,6 +552,24 @@ pub struct LayoutProblem {
     pub detail: String,
     /// The same between runs, for comparing.
     pub key: String,
+    /// Found with the page at a phone's width.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub phone: bool,
+}
+
+/// A journey step that made many more database queries than before (an N+1
+/// query, typically): the counts, and the query repeated most.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueryJump {
+    pub step: usize,
+    pub step_text: String,
+    pub before: usize,
+    pub after: usize,
+    /// The query repeated most, with literals as `?`, and how often.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repeated: Option<String>,
+    #[serde(default)]
+    pub times: usize,
 }
 
 /// Where keeping an error as a test stands.

@@ -874,15 +874,23 @@ fn render_item(
             layout,
             layout_saved,
             layout_accepted,
+            queries,
         } => {
-            let layout_changed = !layout.is_empty();
+            // Still works, but looks or queries differently.
+            let layout_changed = !layout.is_empty() || !queries.is_empty();
             let (icon, color, label) = if *passed {
                 (IconName::Route, cx.theme().success, "Journey passed")
             } else if layout_changed && *layout_accepted {
                 (
                     IconName::Route,
                     cx.theme().muted_foreground,
-                    "Journey layout accepted",
+                    "Journey change accepted",
+                )
+            } else if !queries.is_empty() {
+                (
+                    IconName::Route,
+                    cx.theme().warning,
+                    "Journey queries jumped",
                 )
             } else if layout_changed {
                 (
@@ -953,6 +961,41 @@ fn render_item(
                             .pb_1()
                             .gap_1()
                             .text_xs()
+                            .children(queries.iter().map(|jump| {
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .text_color(cx.theme().warning)
+                                            .child(Icon::new(IconName::Database).xsmall())
+                                            .child(div().flex_1().min_w_0().whitespace_normal().child(
+                                                format!(
+                                                    "after \u{201c}{}\u{201d}, {} database queries instead of {}",
+                                                    jump.step_text, jump.after, jump.before
+                                                ),
+                                            )),
+                                    )
+                                    .when_some(jump.repeated.clone(), |this, repeated| {
+                                        this.child(
+                                            h_flex()
+                                                .pl_4()
+                                                .gap_2()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .min_w_0()
+                                                        .overflow_hidden()
+                                                        .whitespace_nowrap()
+                                                        .text_ellipsis()
+                                                        .font_family(cx.theme().mono_font_family.clone())
+                                                        .child(repeated),
+                                                )
+                                                .child(div().flex_none().child(format!("{}×", jump.times))),
+                                        )
+                                    })
+                            }))
                             .children(layout.iter().take(8).map(|problem| {
                                 div()
                                     .whitespace_normal()
@@ -967,7 +1010,11 @@ fn render_item(
                                         )))
                                         .xsmall()
                                         .outline()
-                                        .label("Accept this layout")
+                                        .label(match (layout.is_empty(), queries.is_empty()) {
+                                            (false, false) => "Accept as it is now",
+                                            (true, false) => "Accept these query counts",
+                                            _ => "Accept this layout",
+                                        })
                                         .tooltip("The change is intended: don't report these again")
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {

@@ -103,6 +103,12 @@ def rich_items():
             "name": "API controllers scope queries to the tenant", "paths": "app/Http/Controllers/Api/**/*.php",
             "require": "tenant_id", "why": "Customers must never see another tenant's orders."},
          "holds": [{"name": "x", "path": "app/Http/Controllers/Api/ExportController.php", "detail": "doesn't have `tenant_id`"}]},
+        {"kind": "journey", "name": "Orders list", "passed": False, "steps_run": 3, "total_steps": 3,
+         "failure": "the database queries jumped", "duration_ms": 4200,
+         "queries": [{"step": 0, "step_text": "open http://shop.test/orders", "before": 5, "after": 120,
+                      "repeated": "select * from `customers` where `customers`.`id` = ? limit ?", "times": 115}],
+         "layout": [{"step": 2, "step_text": "expect “Orders”", "kind": "overflow", "element": "table.orders",
+                     "detail": "612 px wide in 390", "key": "overflow:table.orders", "phone": True}]},
         {"kind": "notice", "text": "The checks still fail after 2 automatic fixes; over to you.", "is_error": True},
         {"kind": "mutation_gate", "command": "php artisan test --parallel", "state": {"state": "done"}, "mutants": [
             {"path": "app/Http/Controllers/OrderController.php", "line": 42, "code": "if ($customer->address === null && ! $request->boolean('draft')) {",

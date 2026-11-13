@@ -568,6 +568,7 @@ fn save_journey(
             .trim()
             .to_string(),
         steps,
+        phone: true,
     };
     let path = crate::journeys::save(&dir, &journey)?;
     Ok(format!(
@@ -628,7 +629,7 @@ async fn run_journeys(
     let mut failed = 0;
     for journey in &journeys {
         let mut outcome = replay(thread, journey, cx).await;
-        crate::journeys::guard_layout(&dir, journey, &mut outcome);
+        crate::journeys::guard(&dir, journey, &mut outcome);
         if !outcome.passed {
             failed += 1;
         }
@@ -639,6 +640,9 @@ async fn run_journeys(
                 outcome.steps_run,
                 outcome.duration_ms as f64 / 1000.
             ),
+            Some(why) if !outcome.query_jumps.is_empty() => {
+                format!("QUERIES {}: {why}", journey.name)
+            }
             Some(why) if !outcome.layout_new.is_empty() => {
                 format!("LAYOUT  {}: {why}", journey.name)
             }
@@ -689,6 +693,8 @@ pub async fn replay(
     use crate::journeys::{Outcome, Step};
     let started = std::time::Instant::now();
     let mut layout = Vec::new();
+    let mut phone_layout = Vec::new();
+    let mut queries = Vec::new();
     let fail = |steps_run: usize, step: &Step, why: String| Outcome {
         passed: false,
         steps_run,
@@ -702,6 +708,39 @@ pub async fn replay(
             .filter(|url| webview::is_local_address(url))
             .and_then(|url| crate::journeys::origin_of(&url))
     });
+    // In an app Grove runs, each step's database queries are counted: the
+    // requests it logs after a mark.
+    let first_url = match journey.steps.first() {
+        Some(Step::Open(url)) => Some(crate::journeys::rebase(url, origin.as_deref())),
+        _ => None,
+    };
+    let host = first_url
+        .as_deref()
+        .and_then(crate::journeys::origin_of)
+        .map(|o| {
+            o.split("://")
+                .nth(1)
+                .unwrap_or(&o)
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .to_string()
+        });
+    let grove = cx
+        .background_executor()
+        .spawn(async move {
+            let site = crate::grove::site_at(host.as_deref()?)?;
+            let mark = crate::grove::requests(&site.name, 1)
+                .ok()
+                .and_then(|r| r.first().map(|r| r.id))
+                .unwrap_or(0);
+            Some((site.name, mark))
+        })
+        .await;
+    let (site, mut mark) = match grove {
+        Some((site, mark)) => (Some(site), mark),
+        None => (None, 0),
+    };
     for (index, step) in journey.steps.iter().enumerate() {
         let result = match step {
             Step::Open(url) => {
@@ -744,8 +783,27 @@ pub async fn replay(
         if let Err(why) = result {
             return fail(index, step, why);
         }
-        // How the page looks now, for the layout guard.
+        // How the page looks now, for the layout guard: as it is, and at a
+        // phone's width.
         layout.push((index, measure_layout(thread, cx).await));
+        if journey.phone
+            && let Some(measured) = measure_at_phone_width(thread, cx).await
+        {
+            phone_layout.push((index, measured));
+        }
+        if let Some(site) = site.clone() {
+            let since = mark;
+            let (count, repeated, newest) = cx
+                .background_executor()
+                .spawn(async move { step_queries(&site, since) })
+                .await;
+            mark = newest;
+            queries.push(crate::journeys::StepQueries {
+                step: index,
+                count,
+                repeated,
+            });
+        }
     }
     Outcome {
         passed: true,
@@ -753,8 +811,55 @@ pub async fn replay(
         failure: None,
         duration_ms: started.elapsed().as_millis() as u64,
         layout,
+        phone_layout,
+        queries,
         ..Default::default()
     }
+}
+
+/// The queries of the requests `site` logged after `since`: how many, the
+/// one repeated most, and the newest request's id. Blocking.
+fn step_queries(site: &str, since: u64) -> (usize, Option<(String, usize)>, u64) {
+    // Grove logs a request once it has answered.
+    std::thread::sleep(Duration::from_millis(250));
+    let mut requests: Vec<crate::grove::Request> = crate::grove::requests(site, 50)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.id > since)
+        .collect();
+    requests.sort_by_key(|r| r.id);
+    let newest = requests.last().map(|r| r.id).unwrap_or(since);
+    let (mut count, mut sql) = (0, Vec::new());
+    for request in &requests {
+        if let Ok((n, queries)) = crate::grove::queries_of(request.id) {
+            count += n;
+            sql.extend(queries);
+        }
+    }
+    (count, crate::grove::most_repeated(&sql), newest)
+}
+
+/// The page's layout problems at a phone's width: the web view narrowed for
+/// a moment, measured and put back. None when it is that narrow already.
+async fn measure_at_phone_width(
+    thread: ThreadId,
+    cx: &mut AsyncApp,
+) -> Option<Vec<crate::journeys::Measured>> {
+    let page = cx.update(|cx| browser_of(thread, cx).and_then(|b| b.read(cx).web_view()))?;
+    if !page.narrow_to(crate::journeys::PHONE_WIDTH) {
+        return None;
+    }
+    // Let the page lay itself out at the new width (media queries, resize
+    // handlers).
+    cx.background_executor()
+        .timer(Duration::from_millis(300))
+        .await;
+    let measured = measure_layout(thread, cx).await;
+    page.restore_width();
+    cx.background_executor()
+        .timer(Duration::from_millis(150))
+        .await;
+    Some(measured)
 }
 
 /// The page's layout problems now (agent-act.js `layout()`).

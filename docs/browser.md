@@ -138,6 +138,34 @@ the agent like a broken step, to fix in the CSS or markup. When the change is
 intended, **Accept this layout** stops reporting those. Commit the layout file
 with the journey, so everyone compares with the same.
 
+**At a phone's width.** After each step the page is also measured 390 px wide,
+as on an iPhone: the browser narrows for a moment, the page lays itself out at
+that width (its media queries and resize handlers run), and it is measured and
+put back. The steps aren't done twice, so a journey that places an order still
+places one. A problem found there says so (*after "open …" at 390 px wide, the
+page is too wide: table.orders*). The first replay that measures a phone's width
+saves how it looks there, also for a journey whose layout was saved before. A
+journey with `"phone": false` in its file is measured at the browser's width
+only.
+
+### The query guard
+
+A journey can pass while each page runs a hundred times the database queries it
+used to: an N+1 query, a loop that loads a relation per row, usually doesn't
+fail a test. In an app [Elyra Grove](context-and-goals.md#grove) runs, the
+replay also counts the queries of the requests each step makes (from Grove's
+request log), without a model:
+
+- The first replay saves each step's count with the layout.
+- A step whose queries at least doubled, and by at least 20 (*5* became *120*),
+  fails the journey: *Journey queries jumped*, with the counts and the query
+  repeated most (`select * from customers where id = ? limit ?`, 115×). After a
+  turn it goes back to the agent, which is told what an N+1 query is and to load
+  the relation up front.
+- Fewer queries become the new count; a few more aren't news.
+- When the new count is intended, **Accept these query counts** (or **Accept as
+  it is now**, with a layout change too) makes it the count to compare with.
+
 Replaying clicks and types on the page, like the agent's own actions: an agent
 asks first unless the thread is in Full access.
 

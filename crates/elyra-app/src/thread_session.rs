@@ -3066,7 +3066,7 @@ impl ThreadSession {
                 }
                 let mut outcome = crate::browser_tools::replay(thread, &journey, cx).await;
                 let _ = this.update(cx, |this, _| {
-                    crate::journeys::guard_layout(&this.working_dir(), &journey, &mut outcome)
+                    crate::journeys::guard(&this.working_dir(), &journey, &mut outcome)
                 });
                 let failed = this
                     .update(cx, |this, cx| {
@@ -3112,6 +3112,7 @@ impl ThreadSession {
                 layout: outcome.layout_new.clone(),
                 layout_saved: outcome.layout_saved,
                 layout_accepted: false,
+                queries: outcome.query_jumps.clone(),
             },
             cx,
         );
@@ -3127,10 +3128,11 @@ impl ThreadSession {
             name,
             layout,
             layout_accepted,
+            queries,
             ..
         } = &mut self.items[index].content
         {
-            crate::journeys::accept_layout(&dir, name, layout);
+            crate::journeys::accept_layout(&dir, name, layout, queries);
             *layout_accepted = true;
             self.persist_item(index, cx);
             cx.notify();
@@ -3155,7 +3157,7 @@ impl ThreadSession {
             for journey in journeys {
                 let mut outcome = crate::browser_tools::replay(thread, &journey, cx).await;
                 let _ = this.update(cx, |this, cx| {
-                    crate::journeys::guard_layout(&this.working_dir(), &journey, &mut outcome);
+                    crate::journeys::guard(&this.working_dir(), &journey, &mut outcome);
                     this.append_journey(&journey, &outcome, cx)
                 });
             }

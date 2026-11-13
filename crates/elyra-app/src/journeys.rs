@@ -6,10 +6,13 @@
 //!
 //! After every step, the page's layout is measured as well (the page wider
 //! than the window, controls outside it or covering each other, text cut
-//! off). The first replay saves how it looks in
-//! `.elyra/journeys/layout/<name>.json`; later replays report only problems
-//! the page didn't have, and those fail the journey like a broken step, until
-//! fixed or accepted as the new layout.
+//! off), at the browser's width and at a phone's ([`PHONE_WIDTH`]). In an app
+//! Elyra Grove runs, the database queries of the step's requests are counted
+//! too. The first replay saves how it looks and how many queries each step
+//! makes in `.elyra/journeys/layout/<name>.json`; later replays report only
+//! layout problems the page didn't have, and steps whose queries jumped (an
+//! N+1 query: 5 became 120), and those fail the journey like a broken step,
+//! until fixed or accepted as the new normal.
 //!
 //! This module is the file format and the words around it; replaying lives in
 //! `browser_tools`, which drives the page.
@@ -19,6 +22,8 @@ use std::path::{Path, PathBuf};
 
 /// Where a project keeps its journeys.
 pub const DIR: &str = ".elyra/journeys";
+/// The width pages are also measured at, in points (an iPhone's).
+pub const PHONE_WIDTH: f64 = 390.;
 
 /// An element: by CSS selector, by visible text (label, placeholder), or both.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -82,6 +87,17 @@ pub struct Journey {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     pub steps: Vec<Step>,
+    /// Measure the layout at a phone's width too (`"phone": false` turns it off).
+    #[serde(default = "yes", skip_serializing_if = "is_yes")]
+    pub phone: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn is_yes(value: &bool) -> bool {
+    *value
 }
 
 impl Journey {
@@ -190,10 +206,30 @@ pub struct Outcome {
     pub duration_ms: u64,
     /// The layout after each step that ran: (step, problems).
     pub layout: Vec<(usize, Vec<Measured>)>,
-    /// Problems the page didn't have before (filled in by `guard_layout`).
+    /// The same at a phone's width (steps it could be measured after).
+    pub phone_layout: Vec<(usize, Vec<Measured>)>,
+    /// The database queries of each step's requests (with Grove).
+    pub queries: Vec<StepQueries>,
+    /// Problems the page didn't have before (filled in by [`guard`]).
     pub layout_new: Vec<elyra_core::LayoutProblem>,
+    /// Steps whose queries jumped (filled in by [`guard`]).
+    pub query_jumps: Vec<elyra_core::QueryJump>,
     /// The first guarded replay saved the layout, with this many problems.
     pub layout_saved: Option<usize>,
+}
+
+/// How many queries a step's requests made, and the one repeated most.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StepQueries {
+    pub step: usize,
+    pub count: usize,
+    pub repeated: Option<(String, usize)>,
+}
+
+/// Whether a step's queries went from `before` to `after` the way an N+1
+/// query does: at least doubled, and by at least 20.
+pub fn jumped(before: usize, after: usize) -> bool {
+    after >= before * 2 && after >= before + 20
 }
 
 /// A layout problem as agent-act.js measures it.
@@ -229,6 +265,12 @@ struct Baseline {
 struct BaselineStep {
     step: String,
     keys: Vec<String>,
+    /// The problems at a phone's width (None: not measured there yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    phone_keys: Option<Vec<String>>,
+    /// How many database queries the step made (None: not counted yet).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    queries: Option<usize>,
 }
 
 fn baseline_path(dir: &Path, name: &str) -> PathBuf {
@@ -256,11 +298,12 @@ fn write_baseline(dir: &Path, name: &str, baseline: &Baseline) {
     }
 }
 
-/// Compare a replay's layout with how the journey's pages looked before:
-/// new problems fail it. The first time, and for steps that changed, the
-/// layout is saved as it is.
-pub fn guard_layout(dir: &Path, journey: &Journey, outcome: &mut Outcome) {
-    if !outcome.passed || outcome.layout.is_empty() {
+/// Compare a replay with how the journey's pages looked before, and how
+/// many queries its steps made: new layout problems (at either width) and
+/// queries that jumped fail it. The first time, and for steps that changed,
+/// what it found is saved as it is; fewer queries become the new count.
+pub fn guard(dir: &Path, journey: &Journey, outcome: &mut Outcome) {
+    if !outcome.passed || (outcome.layout.is_empty() && outcome.queries.is_empty()) {
         return;
     }
     let step_text = |index: usize| {
@@ -273,41 +316,105 @@ pub fn guard_layout(dir: &Path, journey: &Journey, outcome: &mut Outcome) {
     let saved = read_baseline(dir, &journey.name);
     let mut baseline = saved.clone().unwrap_or_default();
     let mut new = Vec::new();
-    for (index, measured) in &outcome.layout {
-        let text = step_text(*index);
-        let keys: Vec<String> = measured.iter().map(|m| m.key.clone()).collect();
-        if baseline.steps.len() <= *index {
-            baseline.steps.resize(*index + 1, BaselineStep::default());
+    let mut jumps = Vec::new();
+    let slot = |baseline: &mut Baseline, index: usize| -> bool {
+        if baseline.steps.len() <= index {
+            baseline.steps.resize(index + 1, BaselineStep::default());
         }
+        // A step that does something else now starts over.
+        let text = step_text(index);
+        let known = &mut baseline.steps[index];
+        let fresh = saved.is_none() || known.step != text;
+        if fresh {
+            *known = BaselineStep {
+                step: text,
+                ..Default::default()
+            };
+        }
+        fresh
+    };
+    let mut fresh_steps = std::collections::HashSet::new();
+    for index in outcome
+        .layout
+        .iter()
+        .map(|(i, _)| *i)
+        .chain(outcome.phone_layout.iter().map(|(i, _)| *i))
+        .chain(outcome.queries.iter().map(|q| q.step))
+    {
+        if !fresh_steps.contains(&index) && slot(&mut baseline, index) {
+            fresh_steps.insert(index);
+        }
+    }
+    let problem = |index: usize, m: &Measured, phone: bool| elyra_core::LayoutProblem {
+        step: index,
+        step_text: step_text(index),
+        kind: m.kind.clone(),
+        element: m.element.clone(),
+        detail: m.detail.clone(),
+        key: m.key.clone(),
+        phone,
+    };
+    for (index, measured) in &outcome.layout {
+        let keys: Vec<String> = measured.iter().map(|m| m.key.clone()).collect();
         let known = &mut baseline.steps[*index];
-        if saved.is_none() || known.step != text {
-            // Not seen before: this is how it looks.
-            *known = BaselineStep { step: text, keys };
+        if fresh_steps.contains(index) {
+            known.keys = keys;
             continue;
         }
-        for m in measured {
-            if !known.keys.contains(&m.key) {
-                new.push(elyra_core::LayoutProblem {
-                    step: *index,
-                    step_text: text.clone(),
-                    kind: m.kind.clone(),
-                    element: m.element.clone(),
-                    detail: m.detail.clone(),
-                    key: m.key.clone(),
-                });
-            }
+        new.extend(
+            measured
+                .iter()
+                .filter(|m| !known.keys.contains(&m.key))
+                .map(|m| problem(*index, m, false)),
+        );
+    }
+    for (index, measured) in &outcome.phone_layout {
+        let keys: Vec<String> = measured.iter().map(|m| m.key.clone()).collect();
+        let known = &mut baseline.steps[*index];
+        match &known.phone_keys {
+            // Not seen at a phone's width before: this is how it looks.
+            None => known.phone_keys = Some(keys),
+            Some(old) => new.extend(
+                measured
+                    .iter()
+                    .filter(|m| !old.contains(&m.key))
+                    .map(|m| problem(*index, m, true)),
+            ),
+        }
+    }
+    for counted in &outcome.queries {
+        let known = &mut baseline.steps[counted.step];
+        match known.queries {
+            Some(before) if jumped(before, counted.count) => jumps.push(elyra_core::QueryJump {
+                step: counted.step,
+                step_text: step_text(counted.step),
+                before,
+                after: counted.count,
+                repeated: counted.repeated.as_ref().map(|(shape, _)| shape.clone()),
+                times: counted.repeated.as_ref().map(|(_, n)| *n).unwrap_or(0),
+            }),
+            // Fewer is the new normal; a little more isn't news.
+            Some(before) if counted.count >= before => {}
+            _ => known.queries = Some(counted.count),
         }
     }
     baseline.steps.truncate(journey.steps.len());
     if saved.is_none() {
-        outcome.layout_saved = Some(outcome.layout.iter().map(|(_, m)| m.len()).sum());
+        outcome.layout_saved = Some(
+            outcome
+                .layout
+                .iter()
+                .chain(&outcome.phone_layout)
+                .map(|(_, m)| m.len())
+                .sum(),
+        );
     }
     if saved.as_ref() != Some(&baseline) {
         write_baseline(dir, &journey.name, &baseline);
     }
+    let mut why = Vec::new();
     if !new.is_empty() {
-        outcome.passed = false;
-        outcome.failure = Some(format!(
+        why.push(format!(
             "the layout changed: {}",
             new.iter()
                 .take(5)
@@ -315,28 +422,78 @@ pub fn guard_layout(dir: &Path, journey: &Journey, outcome: &mut Outcome) {
                 .collect::<Vec<_>>()
                 .join("; ")
         ));
+    }
+    if !jumps.is_empty() {
+        why.push(format!(
+            "the database queries jumped: {}",
+            jumps
+                .iter()
+                .map(describe_jump)
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+    if !why.is_empty() {
+        outcome.passed = false;
+        outcome.failure = Some(why.join("; and "));
         outcome.layout_new = new;
+        outcome.query_jumps = jumps;
     }
 }
 
-/// Accept the problems as how the pages look now.
-pub fn accept_layout(dir: &Path, name: &str, problems: &[elyra_core::LayoutProblem]) {
+/// Accept the problems, and the query counts, as how the pages are now.
+pub fn accept_layout(
+    dir: &Path,
+    name: &str,
+    problems: &[elyra_core::LayoutProblem],
+    jumps: &[elyra_core::QueryJump],
+) {
     let mut baseline = read_baseline(dir, name).unwrap_or_default();
+    let mut slot = |step: usize, text: &str| {
+        if baseline.steps.len() <= step {
+            baseline.steps.resize(step + 1, BaselineStep::default());
+        }
+        let known = &mut baseline.steps[step];
+        if known.step.is_empty() {
+            known.step = text.to_string();
+        }
+        step
+    };
+    let mut accepted: Vec<(usize, &elyra_core::LayoutProblem)> = Vec::new();
     for problem in problems {
-        if baseline.steps.len() <= problem.step {
-            baseline
-                .steps
-                .resize(problem.step + 1, BaselineStep::default());
-        }
-        let step = &mut baseline.steps[problem.step];
-        if step.step.is_empty() {
-            step.step = problem.step_text.clone();
-        }
-        if !step.keys.contains(&problem.key) {
-            step.keys.push(problem.key.clone());
+        accepted.push((slot(problem.step, &problem.step_text), problem));
+    }
+    let jumps: Vec<(usize, usize)> = jumps
+        .iter()
+        .map(|jump| (slot(jump.step, &jump.step_text), jump.after))
+        .collect();
+    for (step, problem) in accepted {
+        let known = &mut baseline.steps[step];
+        let keys = if problem.phone {
+            known.phone_keys.get_or_insert_with(Vec::new)
+        } else {
+            &mut known.keys
+        };
+        if !keys.contains(&problem.key) {
+            keys.push(problem.key.clone());
         }
     }
+    for (step, after) in jumps {
+        baseline.steps[step].queries = Some(after);
+    }
     write_baseline(dir, name, &baseline);
+}
+
+/// A jump in words.
+pub fn describe_jump(jump: &elyra_core::QueryJump) -> String {
+    let mut text = format!(
+        "after \u{201c}{}\u{201d}, {} queries instead of {}",
+        jump.step_text, jump.after, jump.before
+    );
+    if let Some(repeated) = &jump.repeated {
+        text.push_str(&format!(" (`{repeated}` {}×)", jump.times));
+    }
+    text
 }
 
 /// One problem in words.
@@ -349,13 +506,41 @@ pub fn describe_problem(problem: &elyra_core::LayoutProblem) -> String {
         other => other,
     };
     format!(
-        "after “{}”, {what}: {} ({})",
-        problem.step_text, problem.element, problem.detail
+        "after “{}”{}, {what}: {} ({})",
+        problem.step_text,
+        if problem.phone {
+            format!(" at {PHONE_WIDTH} px wide")
+        } else {
+            String::new()
+        },
+        problem.element,
+        problem.detail
     )
 }
 
 /// The message that sends a failed journey back to the agent.
 pub fn fix_prompt(name: &str, outcome: &Outcome, attempt: u32, attempts: u32) -> String {
+    if !outcome.query_jumps.is_empty() {
+        let jumps: Vec<String> = outcome
+            .query_jumps
+            .iter()
+            .map(|jump| format!("- {}", describe_jump(jump)))
+            .collect();
+        let layout: String = outcome
+            .layout_new
+            .iter()
+            .map(|p| format!("\n- {}", describe_problem(p)))
+            .collect();
+        return format!(
+            "The browser journey \u{201c}{name}\u{201d} still works, but your changes made its steps run many more database queries than before:\n{}\n\nA query repeated per row is an N+1 query: load the relation up front (eager loading, a join or one query for all of them). Then finish your turn; the journeys run again (automatic fix {attempt} of {attempts}). If the new count is intended, say so: the user can accept it.{}",
+            jumps.join("\n"),
+            if layout.is_empty() {
+                String::new()
+            } else {
+                format!("\n\nIts pages' layout changed too:{layout}")
+            }
+        );
+    }
     if !outcome.layout_new.is_empty() {
         let problems: Vec<String> = outcome
             .layout_new
@@ -399,7 +584,7 @@ mod tests {
 
     #[test]
     fn the_layout_guard_reports_only_what_changed() {
-        use super::{Measured, Outcome, Step, Target, guard_layout};
+        use super::{Measured, Outcome, Step, Target, guard as guard_layout};
         let dir = std::env::temp_dir().join(format!("elyra-layout-guard-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -413,6 +598,7 @@ mod tests {
                     text: Some("Pay".into()),
                 }),
             ],
+            phone: true,
         };
         let measured = |key: &str| Measured {
             key: key.into(),
@@ -461,7 +647,7 @@ mod tests {
             .contains("broke its pages' layout")
         );
         // Accepted, it isn't reported again.
-        super::accept_layout(&dir, "Checkout", &broken.layout_new);
+        super::accept_layout(&dir, "Checkout", &broken.layout_new, &[]);
         let mut again = replay(vec![
             (0, vec![measured("clipped:td.price")]),
             (1, vec![measured("overlap:button.pay")]),
@@ -471,6 +657,124 @@ mod tests {
         // The baseline lives beside the journeys, not among them.
         assert!(dir.join(".elyra/journeys/layout/checkout.json").is_file());
         assert!(super::load_all(&dir).is_empty());
+
+        // At a phone's width: the first time is saved (also for a baseline
+        // from before), then only what's new counts.
+        let phone = |layout: Vec<(usize, Vec<Measured>)>| Outcome {
+            passed: true,
+            steps_run: 2,
+            layout: vec![
+                (0, vec![measured("clipped:td.price")]),
+                (1, vec![measured("overlap:button.pay")]),
+            ],
+            phone_layout: layout,
+            ..Default::default()
+        };
+        let mut first = phone(vec![(0, vec![measured("overflow:table.cart")])]);
+        guard_layout(&dir, &journey, &mut first);
+        assert!(first.passed, "{:?}", first.failure);
+        let mut narrow = phone(vec![(
+            0,
+            vec![
+                measured("overflow:table.cart"),
+                measured("offscreen:button.pay"),
+            ],
+        )]);
+        guard_layout(&dir, &journey, &mut narrow);
+        assert!(!narrow.passed && narrow.layout_new.len() == 1 && narrow.layout_new[0].phone);
+        assert!(
+            narrow
+                .failure
+                .as_deref()
+                .unwrap()
+                .contains("after “open http://shop.test/cart” at 390 px wide, outside the window"),
+            "{:?}",
+            narrow.failure
+        );
+        super::accept_layout(&dir, "Checkout", &narrow.layout_new, &[]);
+        let mut accepted = phone(vec![(
+            0,
+            vec![
+                measured("overflow:table.cart"),
+                measured("offscreen:button.pay"),
+            ],
+        )]);
+        guard_layout(&dir, &journey, &mut accepted);
+        assert!(
+            accepted.passed,
+            "accepted at the phone's width: {:?}",
+            accepted.failure
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_step_whose_queries_jump_fails() {
+        use super::{Outcome, Step, StepQueries, Target, accept_layout, fix_prompt, guard, jumped};
+        assert!(jumped(5, 120) && jumped(0, 20) && jumped(100, 250));
+        assert!(!jumped(5, 15) && !jumped(40, 70) && !jumped(0, 19));
+        let dir = std::env::temp_dir().join(format!("elyra-query-guard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let journey = super::Journey {
+            name: "Orders".into(),
+            description: String::new(),
+            steps: vec![
+                Step::Open("http://shop.test/orders".into()),
+                Step::Expect(Target {
+                    selector: None,
+                    text: Some("Orders".into()),
+                }),
+            ],
+            phone: false,
+        };
+        let replay = |count: usize, repeated: Option<(&str, usize)>| Outcome {
+            passed: true,
+            steps_run: 2,
+            queries: vec![StepQueries {
+                step: 0,
+                count,
+                repeated: repeated.map(|(shape, n)| (shape.to_string(), n)),
+            }],
+            ..Default::default()
+        };
+        let mut first = replay(5, None);
+        guard(&dir, &journey, &mut first);
+        assert!(first.passed);
+        let mut more = replay(9, None);
+        guard(&dir, &journey, &mut more);
+        assert!(more.passed, "a few more isn't news");
+        let mut n_plus_one = replay(120, Some(("select * from customers where id = ?", 115)));
+        guard(&dir, &journey, &mut n_plus_one);
+        assert!(!n_plus_one.passed);
+        assert_eq!(
+            (
+                n_plus_one.query_jumps[0].before,
+                n_plus_one.query_jumps[0].after
+            ),
+            (5, 120)
+        );
+        assert_eq!(
+            n_plus_one.failure.as_deref(),
+            Some(
+                "the database queries jumped: after “open http://shop.test/orders”, 120 queries instead of 5 (`select * from customers where id = ?` 115×)"
+            )
+        );
+        let prompt = fix_prompt("Orders", &n_plus_one, 1, 2);
+        assert!(
+            prompt.contains("N+1") && prompt.contains("115×"),
+            "{prompt}"
+        );
+        // Fewer becomes the new count; an accepted jump does too.
+        let mut fewer = replay(3, None);
+        guard(&dir, &journey, &mut fewer);
+        let mut back = replay(40, None);
+        guard(&dir, &journey, &mut back);
+        assert!(!back.passed, "measured against 3 now");
+        accept_layout(&dir, "Orders", &[], &back.query_jumps);
+        let mut accepted = replay(40, None);
+        guard(&dir, &journey, &mut accepted);
+        assert!(accepted.passed);
         std::fs::remove_dir_all(&dir).unwrap();
     }
     use super::{Journey, Step, Target, file_name, load_all, rebase, save};
@@ -523,6 +827,7 @@ mod tests {
             name: "x".into(),
             description: String::new(),
             steps: vec![Step::Click(text("Go"))],
+            phone: true,
         };
         assert!(journey.validate().unwrap_err().contains("opening a page"));
         journey.steps.insert(0, Step::Open("http://a.test/".into()));

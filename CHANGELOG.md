@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Journeys guard against N+1 queries and phone layouts.** In an app Elyra
+  Grove runs, a journey replay counts the database queries each step's requests
+  make, and fails when a step's count jumps (5 became 120), naming the query
+  repeated most; the agent is told to load the relation up front. After every
+  step the page is also measured at a phone's width (390 px), so a change that
+  breaks the mobile layout fails the journey too, without doing its steps
+  twice. See [The query guard](docs/browser.md#the-query-guard).
 - **Invariants: rules that get checked.** A rule in AGENTS.md can be forgotten;
   an invariant in `.elyra/invariants` is checked after every turn that changes
   the files it covers, in milliseconds and without a model: a regular
