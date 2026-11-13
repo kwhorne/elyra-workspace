@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.19.1
+
+Fixes from a review of what came since 1.17: testing the tests no longer
+overlaps the next turn's checks, invariants hold against a turn that edits
+them, and the settings for what happens after a turn have a page of their own.
 
 - **Testing the tests is lighter and safer.** A new message stops it, so its
   test runs never overlap the next turn's checks (a shared test database made
