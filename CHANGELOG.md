@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Test the tests: the mutation gate.** Once the checks pass after a turn,
+  Elyra makes up to four small changes to the conditions in the lines the
+  instruction added (a flipped comparison, `&&` for `||`, a dropped `!`), one
+  at a time in a temporary copy, and runs the checks again. A change they still
+  pass with is a line no test guards: the conversation shows it, and **Ask for
+  tests** has the agent add tests that catch it, after which the same changes
+  are tried again. No model is asked; only for checks under 90 seconds. See
+  [Test the tests](docs/context-and-goals.md#test-the-tests).
 - **Cross-examine a plan before any code is written.** A plan waiting for
   approval has **Cross-examine ▾**: another agent gets the request, the plan and
   where the names in it are defined, checks it against the code in a read-only

@@ -89,6 +89,8 @@ pub struct Preferences {
     /// Have this agent cross-examine every plan before it is approved
     /// (`ProviderKind::as_str`; empty: only on request).
     pub cross_examine_with: String,
+    /// Small changes the mutation gate tries after green checks (0: off).
+    pub mutation_changes: u32,
 }
 
 /// How to launch one provider.
@@ -218,6 +220,7 @@ impl Default for Preferences {
             auto_route: false,
             stuck_agents: "ask".into(),
             cross_examine_with: String::new(),
+            mutation_changes: 4,
         }
     }
 }

@@ -162,6 +162,32 @@ pub enum ProposalOutcome {
     Dismissed,
 }
 
+/// A small change Elyra made to a line a turn wrote, to see whether the
+/// tests notice (the mutation gate).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MutantResult {
+    /// Repository-relative.
+    pub path: String,
+    pub line: usize,
+    /// The line as written, trimmed.
+    pub code: String,
+    /// What was changed: "`>` → `<=`".
+    pub change: String,
+    /// The checks failed with it (None: not run).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caught: Option<bool>,
+}
+
+/// Where the mutation gate stands.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum GateState {
+    Running,
+    Done,
+    Stopped,
+    Failed { reason: String },
+}
+
 /// One thing another agent found wrong with a plan.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Objection {
@@ -408,6 +434,17 @@ pub enum ItemContent {
         detail: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         outcome: Option<StuckOutcome>,
+    },
+    /// After green checks, the lines the instruction added were changed one
+    /// small way at a time and the checks run again: what they didn't catch
+    /// isn't guarded by a test.
+    MutationGate {
+        command: String,
+        mutants: Vec<MutantResult>,
+        state: GateState,
+        /// The agent was asked for tests that catch what got through.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        asked: bool,
     },
     /// Another agent cross-examined a plan before any code was written, in
     /// a read-only side chat.

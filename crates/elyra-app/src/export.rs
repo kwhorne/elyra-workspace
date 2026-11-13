@@ -58,6 +58,13 @@ pub fn markdown(title: &str, items: &[elyra_core::TranscriptItem]) -> String {
                     out.push_str(&format!("> - {}\n", objection.point));
                 }
             }
+            ItemContent::MutationGate { mutants, .. } => {
+                let caught = mutants.iter().filter(|m| m.caught == Some(true)).count();
+                out.push_str(&format!(
+                    "\n> Tested the tests: {caught} of {} changes caught\n",
+                    mutants.len()
+                ));
+            }
             ItemContent::Stuck { reason, .. } => {
                 out.push_str(&format!("\n> Going in circles: {reason}\n"))
             }

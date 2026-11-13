@@ -462,6 +462,8 @@ fn render_item(
                                 "Sent the agent at it again".to_string()
                             } else if text.starts_with(crate::cross_examine::REVISE_START) {
                                 "Sent the objections you took to the agent".to_string()
+                            } else if text.starts_with(crate::mutation::ASK_START) {
+                                "Asked the agent for tests that catch the changes".to_string()
                             } else {
                                 format!("Sent the failures to the agent · {label}")
                             },
@@ -1000,6 +1002,12 @@ fn render_item(
             cx,
         ),
         ItemContent::Bisect { command, verdict } => bisect_card(command, verdict, cx),
+        ItemContent::MutationGate {
+            command,
+            mutants,
+            state,
+            asked,
+        } => mutation_card(id, command, mutants, state, *asked, session.running, cx),
         ItemContent::CrossExamination {
             request_id,
             examiner,
@@ -2456,6 +2464,180 @@ fn plan_card(
         );
     }
     card.into_any_element()
+}
+
+/// The mutation gate: small changes to the lines the instruction added, and
+/// whether the checks caught each.
+fn mutation_card(
+    id: ItemId,
+    command: &str,
+    mutants: &[elyra_core::MutantResult],
+    state: &elyra_core::GateState,
+    asked: bool,
+    running: bool,
+    cx: &Context<ThreadView>,
+) -> AnyElement {
+    use elyra_core::GateState;
+    let muted = cx.theme().muted_foreground;
+    let caught = mutants.iter().filter(|m| m.caught == Some(true)).count();
+    let missed = mutants.iter().filter(|m| m.caught == Some(false)).count();
+    let total = mutants.len();
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let (title, color) = match state {
+        GateState::Running => (
+            format!(
+                "Testing the tests: {total} small change{} to the new lines…",
+                plural(total)
+            ),
+            muted,
+        ),
+        GateState::Done if missed == 0 => (
+            format!("The tests caught all {total} change{}", plural(total)),
+            cx.theme().success,
+        ),
+        GateState::Done => (
+            format!(
+                "The tests missed {missed} of {total} change{}",
+                plural(total)
+            ),
+            cx.theme().warning,
+        ),
+        GateState::Stopped => (
+            format!("Testing the tests was stopped ({caught} caught, {missed} missed)"),
+            muted,
+        ),
+        GateState::Failed { .. } => ("Couldn't test the tests".to_string(), muted),
+    };
+    let mono = cx.theme().mono_font_family.clone();
+    v_flex()
+        .w_full()
+        .p_2()
+        .gap_1()
+        .rounded_md()
+        .border_1()
+        .border_color(if missed > 0 && !asked {
+            cx.theme().warning
+        } else {
+            cx.theme().border
+        })
+        .child(
+            h_flex()
+                .gap_2()
+                .text_sm()
+                .map(|this| match state {
+                    GateState::Running => this.child(Spinner::new().small()),
+                    GateState::Done if missed == 0 => {
+                        this.child(Icon::new(IconName::CircleCheck).small().text_color(color))
+                    }
+                    GateState::Done => {
+                        this.child(Icon::new(IconName::TriangleAlert).small().text_color(color))
+                    }
+                    _ => this.child(Icon::new(IconName::FlaskConical).small().text_color(muted)),
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(title),
+                )
+                .when(matches!(state, GateState::Running), |this| {
+                    this.child(
+                        Button::new(SharedString::from(format!("mutation-stop-{id}")))
+                            .xsmall()
+                            .ghost()
+                            .label("Stop")
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.session.update(cx, |session, cx| session.stop_mutation(cx))
+                            })),
+                    )
+                }),
+        )
+        .when_some(
+            match state {
+                GateState::Failed { reason } => Some(reason.clone()),
+                _ => None,
+            },
+            |this, reason| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .whitespace_normal()
+                        .text_color(muted)
+                        .child(reason),
+                )
+            },
+        )
+        .children(mutants.iter().map(|mutant| {
+            let (icon, color) = match mutant.caught {
+                Some(true) => (IconName::CircleCheck, cx.theme().success),
+                Some(false) => (IconName::CircleX, cx.theme().warning),
+                None => (IconName::CircleDashed, muted),
+            };
+            v_flex()
+                .gap_0p5()
+                .text_xs()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Icon::new(icon).xsmall().text_color(color))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_color(muted)
+                                .child(format!("{}:{}", mutant.path, mutant.line)),
+                        )
+                        .child(div().flex_none().text_color(color).child(match mutant.caught {
+                            Some(true) => format!("{}: caught", mutant.change),
+                            Some(false) => format!("{}: no test failed", mutant.change),
+                            None => mutant.change.clone(),
+                        })),
+                )
+                .child(
+                    div()
+                        .pl_5()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .font_family(mono.clone())
+                        .child(mutant.code.clone()),
+                )
+                .into_any_element()
+        }))
+        .when(missed > 0, |this| {
+            this.child(if asked {
+                div()
+                    .text_xs()
+                    .text_color(muted)
+                    .child("Asked the agent for tests; this runs again once the checks pass.")
+                    .into_any_element()
+            } else {
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new(SharedString::from(format!("mutation-ask-{id}")))
+                            .small()
+                            .primary()
+                            .label("Ask for tests")
+                            .tooltip("Have the agent add tests that fail with these changes, without changing the code")
+                            .disabled(running)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.session
+                                    .update(cx, |session, cx| session.ask_for_tests(id, cx))
+                            })),
+                    )
+                    .child(div().flex_1().min_w_0().text_xs().whitespace_normal().text_color(muted).child(format!(
+                        "`{command}` still passed with {}.",
+                        if missed == 1 { "this change" } else { "these changes" }
+                    )))
+                    .into_any_element()
+            })
+        })
+        .into_any_element()
 }
 
 /// Another agent's objections to a plan, each to take or leave, and the

@@ -1023,6 +1023,20 @@ fn external_page() -> SettingPage {
                     .description(
                         "The output goes back to the agent this many times before the thread is handed to you. 0 only reports the failure.",
                     ),
+                )
+                .item(
+                    SettingItem::new(
+                        "Test the tests after green checks",
+                        number_field(
+                            number(0., 10., 1.),
+                            |p| p.mutation_changes as f64,
+                            |p, v| p.mutation_changes = v.max(0.).round() as u32,
+                        )
+                        .default_value(4.),
+                    )
+                    .description(
+                        "Once the checks pass (and took under 90 seconds), Elyra makes this many small changes to the lines the instruction added, such as a flipped comparison, and runs the checks again with each in a temporary copy. What they still pass with is code no test guards. 0 turns it off.",
+                    ),
                 ),
         )
         .group(

@@ -37,6 +37,7 @@ mod journeys;
 mod keep_test;
 mod leaderboard;
 mod lifecycle;
+mod mutation;
 mod onboarding;
 mod palette;
 mod phone;

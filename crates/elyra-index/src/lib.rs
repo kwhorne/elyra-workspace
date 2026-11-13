@@ -24,6 +24,8 @@ use streaming_iterator::StreamingIterator;
 use thiserror::Error;
 use tree_sitter::{Parser, Query, QueryCursor};
 
+pub mod mutate;
+
 const SCHEMA_VERSION: i64 = 1;
 /// Files larger than this are not parsed.
 pub const MAX_FILE_BYTES: u64 = 1_000_000;

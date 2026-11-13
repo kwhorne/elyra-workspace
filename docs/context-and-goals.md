@@ -140,6 +140,33 @@ tries it.
 
 The command applies to every thread in the project. Empty turns it off.
 
+### Test the tests
+
+Green checks say the code passes the tests, not that the tests would notice if
+it were wrong. Agents often write tests for the happy path only, so half the
+conditions they add could be turned around without a test failing. So once the
+checks pass after a turn, Elyra tests the tests, without asking a model:
+
+- It finds the conditions in the lines the instruction added (with tree-sitter,
+  in Rust, TypeScript, JavaScript, Python, Go, PHP and C) and picks up to four
+  small changes, spread over the files: a flipped comparison (`>` to `<=`,
+  `===` to `!==`), `&&` for `||`, a dropped `!` or `not`, `true` for `false`.
+  Test files are left alone.
+- It runs the check command with each change in turn, in a temporary copy of
+  the folder as the turn left it (your files aren't touched). A run that takes
+  over three times as long as the checks did counts as caught.
+- **The tests caught all 4 changes**, or **The tests missed 1 of 4 changes**
+  with the line and the change that got through (*`&&` → `||`: no test
+  failed*). **Ask for tests** has the agent add tests that fail with those
+  changes, without changing the code (*Asked the agent for tests that catch the
+  changes*). Once its checks pass, the same changes are tried again, so you see
+  whether the new tests catch them. **Stop** stops it.
+
+It only runs when the checks took under 90 seconds, since they run once per
+change, and not for Red's tests in a duel. **Settings → Agents & MCP → Test the
+tests after green checks** sets how many changes are tried (4 by default; 0
+turns it off).
+
 ### When an agent goes in circles
 
 Some turns never get to the checks: the agent runs the same failing command

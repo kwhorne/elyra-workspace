@@ -94,6 +94,13 @@ def rich_items():
         {"kind": "check", "command": "vendor/bin/pint --test && php artisan test --parallel --stop-on-failure", "passed": False,
          "exit_code": 1, "duration_ms": 41200, "output": "FAILED  Tests\\Feature\\OrderApiTest > it returns 422 without an address\nExpected 422, got 500."},
         {"kind": "notice", "text": "The checks still fail after 2 automatic fixes; over to you.", "is_error": True},
+        {"kind": "mutation_gate", "command": "php artisan test --parallel", "state": {"state": "done"}, "mutants": [
+            {"path": "app/Http/Controllers/OrderController.php", "line": 42, "code": "if ($customer->address === null && ! $request->boolean('draft')) {",
+             "change": "`===` → `!==`", "caught": True},
+            {"path": "app/Http/Controllers/OrderController.php", "line": 42, "code": "if ($customer->address === null && ! $request->boolean('draft')) {",
+             "change": "`&&` → `||`", "caught": False},
+            {"path": "app/Models/Order.php", "line": 88, "code": "return $this->total >= 500;", "change": "`>=` → `<`", "caught": True},
+            {"path": "app/Models/Order.php", "line": 91, "code": "return true;", "change": "`true` → `false`", "caught": True}]},
         {"kind": "check", "command": "vendor/bin/pint --test && php artisan test --parallel --stop-on-failure", "passed": True,
          "duration_ms": 39800, "output": "Tests: 214 passed"},
     ]

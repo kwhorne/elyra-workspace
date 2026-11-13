@@ -1030,6 +1030,25 @@ def another_agent_cross_examines_the_plan(world, project):
     world.tool("interrupt_thread", thread_id=thread)
 
 
+@scenario(check='python3 -B -c "import rules; assert rules.free(600)"')
+def the_tests_are_tested(world, project):
+    rule = "def free(total): return total > 500 and total != 999"
+    thread = world.new_thread(project, f"[write rules.py] {rule}")
+    world.wait(thread)
+
+    def gate():
+        cards = [i for i in world.items(thread) if i["kind"] == "mutation_gate"]
+        return cards[0] if cards and cards[0]["state"]["state"] != "running" else None
+    card = wait_for("the mutation gate", gate, 60)
+    expect(card["state"]["state"] == "done", str(card))
+    results = sorted((m["change"], m["caught"]) for m in card["mutants"])
+    # The check only tries 600: making `and` an `or` goes unnoticed.
+    expect(results == [("`!=` → `==`", True), ("`>` → `<=`", True), ("`and` → `or`", False)], str(results))
+    expect(all(m["path"] == "rules.py" and m["line"] == 1 for m in card["mutants"]), str(card["mutants"]))
+    path = os.path.join(world.projects[project]["path"], "rules.py")
+    expect(open(path).read().strip() == rule, "the project's own file is untouched")
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]
