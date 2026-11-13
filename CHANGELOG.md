@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.18.1
+
+A fix for the checks Elyra runs in temporary checkouts, which in JavaScript
+and Python projects ran without their dependencies; and testing the tests now
+reaches Red vs. Blue and the Changes tab.
 
 - **Dependencies in temporary checkouts and worktrees.** Who broke it?, Keep as
   test and Test the tests run the checks in a temporary checkout. Its linked
