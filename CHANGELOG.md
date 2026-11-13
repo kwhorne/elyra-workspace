@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.19.0
+
+Rules that get checked, and guards that see more of the code: invariants run
+after every turn without a model, journeys catch N+1 queries and broken phone
+layouts, and the symbol index reads Vue, Svelte and Blade templates.
 
 - **Journeys guard against N+1 queries and phone layouts.** In an app Elyra
   Grove runs, a journey replay counts the database queries each step's requests
