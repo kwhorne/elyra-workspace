@@ -163,7 +163,9 @@ checks pass after a turn, Elyra tests the tests, without asking a model:
   whether the new tests catch them. **Stop** stops it.
 
 It only runs when the checks took under 90 seconds, since they run once per
-change, and not for Red's tests in a duel. **Settings → Agents & MCP → Test the
+change. In a [duel](projects-and-threads.md#red-vs-blue) it tests Red's tests
+against all of Blue's code, and what gets through goes to Red for one more
+round instead of **Ask for tests**. **Settings → Agents & MCP → Test the
 tests after green checks** sets how many changes are tried (4 by default; 0
 turns it off).
 

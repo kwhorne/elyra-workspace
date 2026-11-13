@@ -31,23 +31,6 @@ pub struct Candidate {
     pub mutated: String,
 }
 
-/// Whether a path is a test (changing tests doesn't test them).
-pub fn is_test(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    let name = lower.rsplit('/').next().unwrap_or(&lower);
-    lower.split('/').any(|part| {
-        matches!(
-            part,
-            "test" | "tests" | "spec" | "specs" | "__tests__" | "testdata" | "fixtures"
-        )
-    }) || name.starts_with("test_")
-        || name.contains("_test.")
-        || name.contains(".test.")
-        || name.contains(".spec.")
-        || name.contains("test.php")
-        || name.ends_with("tests.rs")
-}
-
 /// Pick up to `max` changes on the lines added between `before` and `after`
 /// (commits of the repository at `root`): first the most telling change on
 /// each line, taking turns between files, then more on the same lines.
@@ -64,7 +47,8 @@ pub fn choose(
         .map(|(path, _)| path)
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
-        .filter(|path| !is_test(path))
+        // Changing a test doesn't test it.
+        .filter(|path| !crate::keep_test::is_test(path))
         .collect();
     let mut per_file: BTreeMap<String, (String, Vec<elyra_index::mutate::Mutant>)> =
         BTreeMap::new();
@@ -249,30 +233,9 @@ pub fn ask_prompt(command: &str, mutants: &[MutantResult]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ASK_START, ask_prompt, choose, is_test, take_turns};
+    use super::{ASK_START, ask_prompt, choose, take_turns};
     use elyra_core::MutantResult;
     use std::process::Command;
-
-    #[test]
-    fn leaves_tests_alone() {
-        for path in [
-            "tests/Feature/CartTest.php",
-            "src/cart_test.go",
-            "web/cart.test.ts",
-            "app/cart.spec.js",
-            "test_cart.py",
-            "crates/core/tests/store.rs",
-        ] {
-            assert!(is_test(path), "{path}");
-        }
-        for path in [
-            "app/Http/CartController.php",
-            "src/contest.rs",
-            "src/attest.py",
-        ] {
-            assert!(!is_test(path), "{path}");
-        }
-    }
 
     #[test]
     fn files_take_turns() {

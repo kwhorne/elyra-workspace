@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Red vs. Blue: Red's tests are tested.** Once Blue wins a duel, the
+  mutation gate runs on all the code Blue wrote. Small changes to it that
+  Red's tests still pass with go back to Red for one more round: tests that
+  fail with them and pass with Blue's code. Elyra locks them with the others and
+  tests the tests again, and both threads say whether they now catch the
+  changes. See [Red vs. Blue](docs/projects-and-threads.md#red-vs-blue).
+
 ## 1.18.0
 
 Proof, not a feeling, around what agents write: another agent cross-examines

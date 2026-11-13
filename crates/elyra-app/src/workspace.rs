@@ -412,7 +412,7 @@ impl Workspace {
                     SessionEvent::TurnStarted => this.picture_page_before(id, cx),
                     SessionEvent::TurnCompleted => this.picture_page_after(id, cx),
                     SessionEvent::SiteReady(url) => this.open_site(id, url, window, cx),
-                    SessionEvent::NeedsAttention => {}
+                    SessionEvent::NeedsAttention | SessionEvent::TestsTested => {}
                 }
                 if let SessionEvent::TurnCompleted = event {
                     if let Some(changes) = this.changes_views.get(&id) {
@@ -1022,7 +1022,8 @@ impl Workspace {
             SessionEvent::TurnStarted
             | SessionEvent::SiteReady(_)
             | SessionEvent::Streamed
-            | SessionEvent::FilesChanged => {
+            | SessionEvent::FilesChanged
+            | SessionEvent::TestsTested => {
                 return;
             }
         };

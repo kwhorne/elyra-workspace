@@ -308,7 +308,8 @@ fn on_session_event(
         SessionEvent::TurnStarted
         | SessionEvent::SiteReady(_)
         | SessionEvent::Streamed
-        | SessionEvent::FilesChanged => {}
+        | SessionEvent::FilesChanged
+        | SessionEvent::TestsTested => {}
     }
 }
 

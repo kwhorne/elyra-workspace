@@ -7,6 +7,11 @@
 //! sure a test is wrong, it challenges it (the gateway's `challenge_test`):
 //! Red answers, and may change it.
 //!
+//! Once Blue is green, the mutation gate tests Red's tests against Blue's
+//! code: small changes to it the tests still pass with go back to Red for one
+//! more round (`Hardening`), whose new tests must pass with Blue's code as it
+//! is; then the gate runs again to see that they catch them.
+//!
 //! A duel is kept in the settings table (`duels`), so it carries on after a
 //! restart.
 
@@ -28,10 +33,14 @@ const KEY: &str = "duels";
 const MAX_TRIES: u32 = 3;
 const MAX_RESTORES: u32 = 3;
 pub const MAX_CHALLENGES: u32 = 3;
+/// Rounds Red gets for the changes to Blue's code its tests missed.
+const MAX_HARDENING: u32 = 1;
 
 /// The start of the messages Elyra sends (Blue's, for telling them apart).
 pub const RED: &str = "You are Red in a duel";
 pub const BLUE: &str = "You are Blue in a duel";
+/// The start of the message giving Red the changes its tests missed.
+pub const RED_MORE: &str = "Blue's code passes your tests";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,6 +51,8 @@ pub enum Phase {
     Implementing,
     /// The checks are green with Red's tests.
     Done,
+    /// Red adds tests for the changes to Blue's code its tests missed.
+    Hardening,
     /// It stopped (too many tries); the threads say why.
     Stopped,
 }
@@ -68,6 +79,9 @@ pub struct Duel {
     pub restores: u32,
     #[serde(default)]
     pub challenges: u32,
+    /// Rounds Red was given for what the mutation gate found.
+    #[serde(default)]
+    pub hardened: u32,
 }
 
 // ---- prompts ----------------------------------------------------------------------
@@ -86,6 +100,18 @@ pub fn blue_prompt(requirement: &str, tests: &[String]) -> String {
         tests
             .iter()
             .map(|t| format!("- {t}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
+/// Red's extra round: the changes to Blue's code the tests still passed with.
+pub fn harden_prompt(missed: &[elyra_core::MutantResult]) -> String {
+    format!(
+        "{RED_MORE}, and the checks are green. But Elyra changed Blue's code in small ways, one at a time, and your tests still passed with these:\n\n{}\n\nAdd tests that fail with each of these changes and pass with Blue's code as it is now. Only test files (Elyra puts anything else back); Blue's code stays as it is, so the new tests must pass now.",
+        missed
+            .iter()
+            .map(|m| format!("- {}:{} `{}`: {}", m.path, m.line, m.code, m.change))
             .collect::<Vec<_>>()
             .join("\n")
     )
@@ -145,14 +171,16 @@ impl Global for Watching {}
 pub fn init(app: Entity<AppState>, cx: &mut App) {
     cx.set_global(Watching::default());
     for duel in all(&app.read(cx).store) {
-        if matches!(duel.phase, Phase::Specifying | Phase::Implementing)
-            && let Some(red) = app.update(cx, |app, cx| app.session(duel.red, cx))
+        if matches!(
+            duel.phase,
+            Phase::Specifying | Phase::Implementing | Phase::Hardening
+        ) && let Some(red) = app.update(cx, |app, cx| app.session(duel.red, cx))
         {
             red.update(cx, |red, _| red.skip_checks = true);
         }
         match duel.phase {
             Phase::Specifying => watch(&app, duel.red, cx),
-            Phase::Implementing => {
+            Phase::Implementing | Phase::Hardening => {
                 watch(&app, duel.red, cx);
                 if let Some(blue) = duel.blue {
                     watch(&app, blue, cx);
@@ -172,6 +200,10 @@ fn watch(app: &Entity<AppState>, thread: ThreadId, cx: &mut App) {
     };
     let app = app.clone();
     let subscription = cx.subscribe(&session, move |session, event: &SessionEvent, cx| {
+        if matches!(event, SessionEvent::TestsTested) {
+            tests_tested(&app, thread, cx);
+            return;
+        }
         if !matches!(event, SessionEvent::TurnCompleted) {
             return;
         }
@@ -243,6 +275,7 @@ pub fn start(
         tries: 0,
         restores: 0,
         challenges: 0,
+        hardened: 0,
     };
     save(&app.read(cx).store, &duel);
     watch(app, thread.id, cx);
@@ -259,6 +292,7 @@ fn turn_ended(app: &Entity<AppState>, thread: ThreadId, cx: &mut App) {
     match duel.phase {
         Phase::Specifying if duel.red == thread => red_done(app, duel, cx),
         Phase::Implementing if duel.blue == Some(thread) => blue_done(app, duel, cx),
+        Phase::Hardening if duel.red == thread => red_hardened(app, duel, cx),
         _ => {}
     }
 }
@@ -565,6 +599,199 @@ fn blue_done(app: &Entity<AppState>, mut duel: Duel, cx: &mut App) {
                 );
                 notice(&app, blue, text.clone(), cx);
                 notice(&app, duel.red, text, cx);
+                // The mutation gate may have finished first.
+                tests_tested(&app, blue, cx);
+            }
+        });
+    })
+    .detach();
+}
+
+/// The mutation gate ran on Blue's code: what got through goes back to Red
+/// for a round; after it, say whether the new tests catch it.
+fn tests_tested(app: &Entity<AppState>, blue: ThreadId, cx: &mut App) {
+    let Some(mut duel) = of_thread(&app.read(cx).store, blue) else {
+        return;
+    };
+    if duel.blue != Some(blue) || duel.phase != Phase::Done {
+        return;
+    }
+    let Some(session) = app.update(cx, |app, cx| app.session(blue, cx)) else {
+        return;
+    };
+    let Some((card, mutants)) = session.read(cx).tested_tests() else {
+        return;
+    };
+    let missed: Vec<elyra_core::MutantResult> = mutants
+        .iter()
+        .filter(|m| m.caught == Some(false))
+        .cloned()
+        .collect();
+    if duel.hardened > 0 {
+        let text = if missed.is_empty() {
+            format!(
+                "Red's tests now catch all {} changes to Blue's code.",
+                mutants.len()
+            )
+        } else {
+            format!(
+                "Red's tests still miss {} of {} changes to Blue's code; that's left to you.",
+                missed.len(),
+                mutants.len()
+            )
+        };
+        notice(app, blue, text.clone(), cx);
+        notice(app, duel.red, text, cx);
+        return;
+    }
+    if missed.is_empty() || duel.hardened >= MAX_HARDENING {
+        return;
+    }
+    duel.hardened += 1;
+    duel.tries = 0;
+    duel.phase = Phase::Hardening;
+    save(&app.read(cx).store, &duel);
+    session.update(cx, |session, cx| session.handed_over(card, cx));
+    notice(
+        app,
+        blue,
+        format!(
+            "Red's tests missed {} of {} changes to your code: Red gets a round to add tests for them.",
+            missed.len(),
+            mutants.len()
+        ),
+        cx,
+    );
+    send(app, duel.red, harden_prompt(&missed), cx);
+}
+
+/// Red's extra round ended: new tests only, and they must pass with Blue's
+/// code; then they are locked with the others and the gate runs again.
+fn red_hardened(app: &Entity<AppState>, mut duel: Duel, cx: &mut App) {
+    let (Some(red), Some(blue)) = (
+        app.update(cx, |app, cx| app.session(duel.red, cx)),
+        duel.blue,
+    ) else {
+        return;
+    };
+    let (before, dir) = {
+        let red = red.read(cx);
+        (last_checkpoint(red), red.working_dir())
+    };
+    let command = app
+        .read(cx)
+        .project(duel.project)
+        .and_then(|p| p.check_command.clone())
+        .filter(|c| !c.trim().is_empty());
+    let (Some(before), Some(command)) = (before, command) else {
+        return;
+    };
+    busy(duel.id, true, cx);
+    let refname = format!("refs/elyra/duel/{}/tests", duel.id.simple());
+    let job = cx.background_executor().spawn(async move {
+        let root = elyra_git::repo_root(&dir)?;
+        let (tests, others) = keep_tests_only(&root, &before)?;
+        if tests.is_empty() {
+            return anyhow::Ok(RedCheck {
+                tests,
+                others,
+                passed: None,
+                locked: None,
+            });
+        }
+        let outcome = crate::checks::run(&dir, &command, &Arc::new(AtomicBool::new(false)));
+        let locked = outcome
+            .passed
+            .then(|| elyra_git::checkpoint::create(&root, &refname, "elyra: duel tests").ok())
+            .flatten();
+        // Tests that fail with Blue's code are taken back after the last try.
+        Ok(RedCheck {
+            tests,
+            others,
+            passed: Some(outcome.passed),
+            locked,
+        })
+    });
+    let app = app.clone();
+    cx.spawn(async move |cx| {
+        let checked = job.await;
+        cx.update(|cx| {
+            busy(duel.id, false, cx);
+            let checked = match checked {
+                Ok(checked) => checked,
+                Err(err) => {
+                    notice(&app, duel.red, format!("The duel couldn't check the new tests: {err:#}"), cx);
+                    return;
+                }
+            };
+            if !checked.others.is_empty() {
+                notice(
+                    &app,
+                    duel.red,
+                    format!(
+                        "Put back what isn't a test (Red writes tests only): {}.",
+                        checked.others.join(", ")
+                    ),
+                    cx,
+                );
+            }
+            let retry = match checked.passed {
+                None => Some("You didn't add or change any test files. Add tests that catch the changes listed (only test files).".to_string()),
+                Some(false) => Some(format!(
+                    "Your new tests ({}) fail with Blue's code as it is. They should pass with it and fail only with the changes listed: fix the tests, not the code.",
+                    checked.tests.join(", ")
+                )),
+                Some(true) => None,
+            };
+            if let Some(retry) = retry {
+                duel.tries += 1;
+                if duel.tries >= MAX_TRIES {
+                    duel.phase = Phase::Done;
+                    save(&app.read(cx).store, &duel);
+                    // Leave Blue's green state as it was.
+                    if let Some(locked) = duel.locked.clone() {
+                        let (dir, tests) = (red.read(cx).working_dir(), checked.tests.clone());
+                        cx.background_executor()
+                            .spawn(async move {
+                                if let Ok(root) = elyra_git::repo_root(&dir) {
+                                    for path in &tests {
+                                        let _ = put_back(&root, &locked, path);
+                                    }
+                                }
+                            })
+                            .detach();
+                    }
+                    let text = format!("After {MAX_TRIES} tries Red has no new tests that pass with Blue's code; they were put back, and the duel ends as it was.");
+                    notice(&app, duel.red, text.clone(), cx);
+                    notice(&app, blue, text, cx);
+                } else {
+                    save(&app.read(cx).store, &duel);
+                    send(&app, duel.red, retry, cx);
+                }
+                return;
+            }
+            let Some(locked) = checked.locked else {
+                notice(&app, duel.red, "The duel couldn't lock the new tests.".into(), cx);
+                return;
+            };
+            let mut tests = duel.tests.clone();
+            for test in checked.tests {
+                if !tests.contains(&test) {
+                    tests.push(test);
+                }
+            }
+            duel.tests = tests;
+            duel.locked = Some(locked);
+            duel.phase = Phase::Done;
+            save(&app.read(cx).store, &duel);
+            let text = format!(
+                "Red's new tests pass with Blue's code and are locked with the others ({}). Testing the tests again.",
+                duel.tests.join(", ")
+            );
+            notice(&app, duel.red, text.clone(), cx);
+            notice(&app, blue, text, cx);
+            if let Some(session) = app.update(cx, |app, cx| app.session(blue, cx)) {
+                session.update(cx, |session, cx| session.test_the_tests(cx));
             }
         });
     })
@@ -834,8 +1061,32 @@ pub fn start_dialog(app: Entity<AppState>, project: ProjectId, window: &mut Wind
 
 #[cfg(test)]
 mod tests {
-    use super::{BLUE, Duel, Phase, RED, blue_prompt, last_checks_passed, red_prompt};
+    use super::{
+        BLUE, Duel, Phase, RED, RED_MORE, blue_prompt, harden_prompt, last_checks_passed,
+        red_prompt,
+    };
     use elyra_core::{ItemContent, ProviderKind, TranscriptItem};
+
+    #[test]
+    fn red_gets_what_its_tests_missed() {
+        let missed = |change: &str| elyra_core::MutantResult {
+            path: "app/Shipping.php".into(),
+            line: 12,
+            code: "return $total > 500 && ! $order->isPickup();".into(),
+            change: change.into(),
+            caught: Some(false),
+        };
+        let text = harden_prompt(&[missed("`&&` → `||`"), missed("drop `!`")]);
+        assert!(text.starts_with(RED_MORE));
+        assert!(text.contains(
+            "- app/Shipping.php:12 `return $total > 500 && ! $order->isPickup();`: `&&` → `||`\n- app/Shipping.php:12"
+        ));
+        assert!(text.contains("pass with Blue's code as it is now"));
+        // Duels saved before the extra round still load.
+        let old = r#"[{"id":"7f1d3c4e-0000-4000-8000-000000000001","project":"7f1d3c4e-0000-4000-8000-000000000002","requirement":"r","red":"7f1d3c4e-0000-4000-8000-000000000003","blue_provider":"claude","phase":"done"}]"#;
+        let duels: Vec<Duel> = serde_json::from_str(old).unwrap();
+        assert_eq!((duels[0].phase, duels[0].hardened), (Phase::Done, 0));
+    }
 
     #[test]
     fn red_writes_tests_and_blue_the_code() {
@@ -866,6 +1117,7 @@ mod tests {
             tries: 0,
             restores: 0,
             challenges: 0,
+            hardened: 0,
         };
         let json = serde_json::to_string(&vec![duel.clone()]).unwrap();
         assert_eq!(

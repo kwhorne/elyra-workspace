@@ -20,6 +20,8 @@ What it does depends on a tag in the prompt:
   [replace PATH] OLD => NEW  replace the first OLD in PATH with NEW
   [plan]   present a plan (ExitPlanMode) and say what the answer was
   a cross-examination of a plan: reply with two objections as JSON
+  a duel over "[harden]": Red tests rules.free(600), Blue writes a rule with
+           three conditions, and Red's extra round tests rules.free(100)
   [thrash] set value.txt to 99, run the same failing test three times, then
            keep the turn open until the client cancels it (going in circles)
   Keep the error … as a regression test: write tests/regression.sh, which
@@ -126,6 +128,19 @@ def prompt(rid, params):
             "sessionUpdate": "tool_call_update", "toolCallId": "edit-1", "status": "completed"}}})
         say(sid, "Edited " + edit.group(1) + ".")
         return end(rid)
+    harden = {
+        "You are Red in a duel": ("tests/test_rules.py", "import rules\nassert rules.free(600)\n"),
+        "You are Blue in a duel": ("rules.py", "def free(total):\n    return total > 500 and total != 999\n"),
+        "Blue's code passes your tests": ("tests/test_rules_more.py", "import rules\nassert not rules.free(100)\n"),
+    }
+    for start, (name, content) in harden.items():
+        if text.startswith(start) and ("[harden]" in text or start.startswith("Blue's")):
+            path = os.path.join(state["cwd"], name)
+            os.makedirs(os.path.dirname(path) or state["cwd"], exist_ok=True)
+            with open(path, "w") as f:
+                f.write(content)
+            say(sid, "Wrote " + name + ".")
+            return end(rid)
     duel = {
         "You are Red in a duel": [("tests/feature.sh", "grep -q done feature.txt\n"), ("notes.txt", "not a test\n")],
         "You are Blue in a duel": [("tests/feature.sh", "exit 0\n")],

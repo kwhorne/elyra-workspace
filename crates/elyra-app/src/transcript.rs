@@ -2613,7 +2613,7 @@ fn mutation_card(
                 div()
                     .text_xs()
                     .text_color(muted)
-                    .child("Asked the agent for tests; this runs again once the checks pass.")
+                    .child("Asked for tests that catch these; this runs again once they pass.")
                     .into_any_element()
             } else {
                 h_flex()

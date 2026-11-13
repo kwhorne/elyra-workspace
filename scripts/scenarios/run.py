@@ -1049,6 +1049,31 @@ def the_tests_are_tested(world, project):
     expect(open(path).read().strip() == rule, "the project's own file is untouched")
 
 
+@scenario(check='for t in tests/test_*.py; do PYTHONPATH=. python3 -B "$t" || exit 1; done')
+def red_gets_a_round_for_what_its_tests_missed(world, project):
+    text = world.tool("start_duel", project=project, requirement="[harden] Free shipping above 500.",
+                      red="acp", blue="acp")
+    red = json.loads(text)["red_thread_id"]
+
+    def notices(thread):
+        return [i["text"] for i in world.items(thread) if i["kind"] == "notice"]
+    wait_for("the second mutation gate", lambda: any("now catch all" in n for n in notices(red)), 120)
+    with world.db() as db:
+        blue = db.execute("SELECT id FROM threads WHERE title LIKE 'Blue · code%'").fetchall()[-1][0]
+        duels = json.loads(db.execute("SELECT value FROM settings WHERE key = 'duels'").fetchone()[0])
+    gates = [i for i in world.items(blue) if i["kind"] == "mutation_gate"]
+    expect(len(gates) == 2, f"tested twice: {gates}")
+    missed = [m["change"] for m in gates[0]["mutants"] if m["caught"] is False]
+    expect(missed == ["`and` → `or`"], f"Red's first tests miss `and` → `or`: {missed}")
+    expect(gates[0].get("asked") is True, "it went to Red, not to Blue")
+    expect(all(m["caught"] for m in gates[1]["mutants"]), f"caught now: {gates[1]['mutants']}")
+    asked = [i["text"] for i in world.items(red) if i["kind"] == "user" and i["text"].startswith("Blue's code passes your tests")]
+    expect(asked and "`and` → `or`" in asked[0], f"Red got the change: {asked}")
+    duel = next(d for d in duels if d["red"] == red)
+    expect(duel["phase"] == "done" and duel["hardened"] == 1, str(duel))
+    expect(sorted(duel["tests"]) == ["tests/test_rules.py", "tests/test_rules_more.py"], str(duel["tests"]))
+
+
 def main():
     wanted = set(sys.argv[1:])
     chosen = [s for s in SCENARIOS if not wanted or s[0] in wanted]

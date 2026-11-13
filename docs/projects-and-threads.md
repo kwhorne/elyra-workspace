@@ -203,6 +203,14 @@ agents catch more. The project needs a check command (Context tab).
    why it stands (*DISAGREED*). Blue gets the answer. At most three per duel.
 4. **The duel is won** when Blue's code passes Red's tests and the checks are
    green; both threads say so. Review and merge the worktree's branch as usual.
+5. **Red's tests are tested.** [Test the tests](context-and-goals.md#test-the-tests)
+   then runs on all the code Blue wrote in the duel. When small changes to it
+   get through (a flipped comparison the tests still pass with), they go to Red,
+   not Blue, for one more round: Red adds tests that fail with those changes and
+   pass with Blue's code as it is. Elyra checks that they pass, locks them with
+   the others, and tests the tests again; both threads say whether the new
+   tests catch the changes. New tests that still fail with Blue's code after
+   three tries are put back, and the duel stays as Blue won it.
 
 Both threads are named after the requirement (*Red · tests · …* and
 *Blue · code · …*), and each step leaves a notice in them. Agents can start a

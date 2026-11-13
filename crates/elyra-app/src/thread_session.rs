@@ -28,6 +28,9 @@ pub enum SessionEvent {
     /// thread's own view redraws for it; observers of the session aren't
     /// notified (it happens many times a second).
     Streamed,
+    /// The mutation gate finished testing the tests (a duel hands what got
+    /// through to Red).
+    TestsTested,
 }
 
 /// One thread's live state: transcript, in-flight streaming text, queued
@@ -2364,7 +2367,7 @@ impl ThreadSession {
     /// The checks passed in this turn: change the lines the instruction
     /// added one small way at a time, in a temporary checkout, and see
     /// whether they still pass (Settings → Test the tests after green checks).
-    fn test_the_tests(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn test_the_tests(&mut self, cx: &mut Context<Self>) {
         let changes = crate::preferences::Preferences::global(cx).mutation_changes as usize;
         if changes == 0 || self.skip_checks || self.stopped || self.mutation_cancel.is_some() {
             return;
@@ -2398,19 +2401,26 @@ impl ThreadSession {
             return;
         }
         // The folder before the instruction (its fixes and asked-for tests
-        // belong to it).
-        let Some(before) = self
-            .items
-            .iter()
-            .rev()
-            .find_map(|item| match &item.content {
-                ItemContent::User {
-                    text, checkpoint, ..
-                } if crate::checks::fix_prompt_label(text).is_none() => Some(checkpoint.clone()),
-                _ => None,
-            })
-            .flatten()
-        else {
+        // belong to it); for Blue in a duel, before the duel's code.
+        let blue = self.app.upgrade().is_some_and(|app| {
+            crate::duel::of_thread(&app.read(cx).store, self.thread.id)
+                .is_some_and(|duel| duel.blue == Some(self.thread.id))
+        });
+        let instruction = |item: &&TranscriptItem| match &item.content {
+            ItemContent::User { text, .. } => {
+                blue || crate::checks::fix_prompt_label(text).is_none()
+            }
+            _ => false,
+        };
+        let found = if blue {
+            self.items.iter().find(instruction)
+        } else {
+            self.items.iter().rev().find(instruction)
+        };
+        let Some(before) = found.and_then(|item| match &item.content {
+            ItemContent::User { checkpoint, .. } => checkpoint.clone(),
+            _ => None,
+        }) else {
             return;
         };
         let cancel = Arc::new(AtomicBool::new(false));
@@ -2477,13 +2487,14 @@ impl ThreadSession {
         else {
             return;
         };
+        let mut done = false;
         match caught {
             Ok(caught) => {
-                let all = caught.len() == mutants.len();
+                done = caught.len() == mutants.len();
                 for (mutant, caught) in mutants.iter_mut().zip(caught) {
                     mutant.caught = Some(caught);
                 }
-                *state = if all {
+                *state = if done {
                     elyra_core::GateState::Done
                 } else {
                     elyra_core::GateState::Stopped
@@ -2496,7 +2507,39 @@ impl ThreadSession {
             }
         }
         self.persist_item(index, cx);
+        if done {
+            cx.emit(SessionEvent::TestsTested);
+        }
         cx.notify();
+    }
+
+    /// The last mutation gate that ran to the end: its card and results.
+    pub fn tested_tests(&self) -> Option<(ItemId, Vec<elyra_core::MutantResult>)> {
+        let item = self
+            .items
+            .iter()
+            .rev()
+            .find(|item| matches!(item.content, ItemContent::MutationGate { .. }))?;
+        match &item.content {
+            ItemContent::MutationGate {
+                mutants,
+                state: elyra_core::GateState::Done,
+                ..
+            } => Some((item.id, mutants.clone())),
+            _ => None,
+        }
+    }
+
+    /// What got through went elsewhere (to Red in a duel): no more asking here.
+    pub fn handed_over(&mut self, card: ItemId, cx: &mut Context<Self>) {
+        let Some(index) = self.items.iter().position(|item| item.id == card) else {
+            return;
+        };
+        if let ItemContent::MutationGate { asked, .. } = &mut self.items[index].content {
+            *asked = true;
+            self.persist_item(index, cx);
+            cx.notify();
+        }
     }
 
     /// Stop the mutation gate.
