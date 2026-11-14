@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.19.2
+
+Journeys check the layout of their pages at the same widths every time,
+also when the Browser tab isn't on screen.
+
+- **The layout guard measures pages at a desktop's width and a phone's,
+  whether the Browser tab shows or not.** A journey replayed with the tab out
+  of sight, as it usually is after a turn, measured a page with no width: it
+  saved problems the page didn't have, which then hid real ones, and skipped
+  the phone's width. Now each step is measured at 1280 px and 390 px, and the
+  page is put back as it was. Layout files saved before are measured again,
+  once, as the pages are now (query counts are kept). See
+  [The layout guard](docs/browser.md#the-layout-guard).
+
 ## 1.19.1
 
 Fixes from a review of what came since 1.17: testing the tests no longer
