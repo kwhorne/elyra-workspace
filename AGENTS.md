@@ -44,5 +44,5 @@ For sessions, providers or the gateway: `cargo build -p elyra-app && scripts/sce
 (headless app + scripted agent; add a scenario for new behaviour).
 For UI changes, run the app with an isolated `ELYRA_HOME` and check it visually;
 `scripts/layout-check/check.py [--review]` screenshots the layouts that tend to break.
-For journeys, the layout guard or the web view: `scripts/journey-check/check.py` replays a
-journey in the real app (with a window) against a local page.
+For journeys, page pictures or the web view: `scripts/browser-check/check.py` drives the
+thread's browser in the real app (with a window) against local pages.

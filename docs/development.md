@@ -92,21 +92,27 @@ screenshots before fixing. Run it after layout changes.
 The scenes include Settings at the After each turn page
 (`ELYRA_OPEN_PANEL=settings:<page>` opens Settings at a page, counted from 0).
 
-### Journey check
+### Browser check
 
 ```console
-cargo build -p elyra-app && scripts/journey-check/check.py
+cargo build -p elyra-app && scripts/browser-check/check.py
 ```
 
 The scenarios run headless, so they have no web pages.
-[`scripts/journey-check/check.py`](../scripts/journey-check/check.py) starts
-the app with a window (`ELYRA_NO_ACTIVATE`, so it never takes focus), serves a
-small page from this Mac, and replays a journey against it: once with the
-thread's Browser tab on screen and once out of sight, as after a turn. It
-checks that the first replay saves a clean layout measured at 1280 px and
-390 px, that a page broken only on a phone fails at 390 px and one broken on a
-desktop fails at 1280 px, and that the page gets its own width back. Run it
-after changes to journeys, the layout guard or the web view.
+[`scripts/browser-check/check.py`](../scripts/browser-check/check.py) starts
+the app with a window (`ELYRA_NO_ACTIVATE`, so it never takes focus), serves
+small pages from this Mac and checks what the thread's browser does with
+them, with its Browser tab on screen and out of sight (as after a turn):
+
+- journeys: the first replay saves a clean layout measured at 1280 px and
+  390 px, a page broken only on a phone fails at 390 px and one broken on a
+  desktop at 1280 px, and the page gets its own width back;
+- pictures of the page before and after a turn are taken, the same size,
+  also when the project replays its journeys after the turn;
+- agents read the page's console errors and failed requests.
+
+`BROWSER_CHECK_KEEP=1` keeps the app's home, with the pictures. Run it after
+changes to journeys, the layout guard, page pictures or the web view.
 
 GitHub Actions runs the same checks and the scenarios
 ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) on every push to
