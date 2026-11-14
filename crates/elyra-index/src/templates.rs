@@ -70,7 +70,7 @@ fn blocks(source: &str, tag: &str) -> Vec<Block> {
             at = after;
             continue;
         }
-        let Some(content) = lower[after..].find('>').map(|i| after + i + 1) else {
+        let Some(content) = tag_end(&lower, after) else {
             break;
         };
         let end = lower[content..]
@@ -91,6 +91,22 @@ fn blocks(source: &str, tag: &str) -> Vec<Block> {
         at = close;
     }
     found
+}
+
+/// Where the tag whose attributes start at `from` ends (just past its `>`):
+/// a `>` inside a quoted attribute doesn't end it (Vue's
+/// `generic="T extends Record<string, unknown>"`).
+fn tag_end(source: &str, from: usize) -> Option<usize> {
+    let mut quote = None;
+    for (i, byte) in source.as_bytes()[from..].iter().enumerate() {
+        match (quote, byte) {
+            (None, b'"' | b'\'') => quote = Some(*byte),
+            (Some(q), _) if q == *byte => quote = None,
+            (None, b'>') => return Some(from + i + 1),
+            _ => {}
+        }
+    }
+    None
 }
 
 /// `source` with the bytes outside `keep` turned into spaces (newlines
@@ -499,6 +515,27 @@ function save() { api.store(selected.value) }
         );
         assert_eq!(Template::from_path(Path::new("app/Order.php")), None);
         assert_eq!(studly("order-line_item"), "OrderLineItem");
+    }
+
+    #[test]
+    fn a_generic_component_s_script_starts_after_its_tag() {
+        // Vue 3.3: a `>` inside the `generic` attribute doesn't close the tag.
+        let vue = "<script setup lang=\"ts\" generic=\"T extends Record<string, unknown>, K extends keyof T\">\nconst props = defineProps<{ rows: T[] }>()\nfunction sortBy(key: K) {}\n</script>\n\n<template><div /></template>\n";
+        let (language, code) = script(Template::Vue, vue).unwrap();
+        assert_eq!(language, crate::Language::TypeScript);
+        assert_eq!(
+            code.lines().next().unwrap().trim(),
+            "",
+            "the tag isn't code"
+        );
+        assert!(code.contains("function sortBy(key: K)"));
+        let found = extract(Template::Vue, "src/DataTable.vue", vue);
+        let definitions: Vec<(&str, u32)> = found
+            .definitions
+            .iter()
+            .map(|d| (d.name.as_str(), d.line))
+            .collect();
+        assert!(definitions.contains(&("sortBy", 3)), "{definitions:?}");
     }
 
     #[test]

@@ -133,12 +133,14 @@ repository's `.elyra/invariants`, so your team and other tools have it too:
 ```
 
 - `paths`: the files it applies to, a glob (`**/` any folders, `*`, `{ts,tsx}`);
-  left out, all files.
+  left out, all files. Elyra's own files in `.elyra/` (the invariants
+  themselves, journeys) never count.
 - `require`: a regular expression each of those files must match.
 - `forbid`: one no line a turn **adds** to them may match (lines already there
   don't count).
 - `command`: a shell command that must succeed, run at the top of the project
-  with the files in `ELYRA_FILES`, one per line (under a minute).
+  with the files in `ELYRA_FILES`, one per line (under a minute). What it
+  starts is stopped with it, and what it leaves running once it ends.
 
 After every turn that changed files, the invariants covering what the message
 changed (its automatic fixes included) are checked, in milliseconds and without a

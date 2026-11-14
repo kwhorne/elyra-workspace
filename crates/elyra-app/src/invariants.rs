@@ -29,6 +29,9 @@ pub const DIR: &str = ".elyra/invariants";
 pub const FIX_START: &str = "The project's invariants broke with your changes:";
 /// How long a `command` may take.
 const COMMAND_LIMIT: Duration = Duration::from_secs(60);
+/// How long a command's output may stay open after it ended (something it
+/// left running still holding it) before what it left is stopped.
+const OUTPUT_GRACE: Duration = Duration::from_secs(2);
 
 /// Whether the folder (a project's or a worktree's top) keeps invariants.
 /// Only looks at the disk, so it can be asked on the main thread.
@@ -206,6 +209,13 @@ fn glob(paths: &str) -> Result<Option<regex::Regex>, String> {
         .map_err(|err| format!("`{paths}`: {err}"))
 }
 
+/// Whether an invariant whose glob is `glob` covers `path`. Elyra's own
+/// files (the invariants themselves, journeys) never are: a `forbid: "TODO"`
+/// for every file would otherwise find itself.
+fn covers(glob: Option<&regex::Regex>, path: &str) -> bool {
+    !path.starts_with(".elyra/") && glob.is_none_or(|g| g.is_match(path))
+}
+
 /// A file a turn changed: its path in the repository and the lines it added
 /// (line number, text).
 pub type Changed = (String, Vec<(usize, String)>);
@@ -247,7 +257,7 @@ pub fn check(
         };
         let files: Vec<&Changed> = changed
             .iter()
-            .filter(|(path, _)| glob.as_ref().is_none_or(|g| g.is_match(path)))
+            .filter(|(path, _)| covers(glob.as_ref(), path))
             .collect();
         if files.is_empty() {
             continue;
@@ -330,6 +340,11 @@ fn check_one(
 /// Run an invariant's command in `root` with `ELYRA_FILES`: Err with the end
 /// of its output when it fails or takes too long.
 fn run(root: &Path, command: &str, files: &str) -> Result<(), String> {
+    run_within(root, command, files, COMMAND_LIMIT)
+}
+
+fn run_within(root: &Path, command: &str, files: &str, limit: Duration) -> Result<(), String> {
+    use std::os::unix::process::CommandExt as _;
     let child = Command::new("/bin/sh")
         .arg("-c")
         .arg(format!("exec 2>&1\n{command}"))
@@ -339,27 +354,37 @@ fn run(root: &Path, command: &str, files: &str) -> Result<(), String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        // Its own process group, so what it starts can be stopped with it.
+        .process_group(0)
         .spawn();
     let mut child = child.map_err(|err| format!("`{command}` couldn't start: {err}"))?;
+    let group = child.id();
     let mut stdout = child.stdout.take().expect("piped stdout");
-    let reader = std::thread::spawn(move || {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut output = Vec::new();
         let _ = stdout.read_to_end(&mut output);
-        output
+        let _ = tx.send(output);
     });
     let started = Instant::now();
     let status = loop {
         if let Ok(Some(status)) = child.try_wait() {
             break Some(status);
         }
-        if started.elapsed() > COMMAND_LIMIT {
-            let _ = child.kill();
+        if started.elapsed() > limit {
+            stop_group(group);
             let _ = child.wait();
             break None;
         }
         std::thread::sleep(Duration::from_millis(20));
     };
-    let output = String::from_utf8_lossy(&reader.join().unwrap_or_default()).to_string();
+    // The output ends when everything holding it has; what the command left
+    // running (`server &`) is stopped rather than waited for.
+    let output = rx.recv_timeout(OUTPUT_GRACE).unwrap_or_else(|_| {
+        stop_group(group);
+        rx.recv_timeout(OUTPUT_GRACE).unwrap_or_default()
+    });
+    let output = String::from_utf8_lossy(&output).to_string();
     let tail = crate::checks::tail(output.trim(), 1_500);
     match status {
         Some(status) if status.success() => Ok(()),
@@ -377,9 +402,18 @@ fn run(root: &Path, command: &str, files: &str) -> Result<(), String> {
         )),
         None => Err(format!(
             "`{command}` took longer than {} s",
-            COMMAND_LIMIT.as_secs()
+            limit.as_secs()
         )),
     }
+}
+
+/// Stop every process in the group `group` (a command and what it started).
+fn stop_group(group: u32) {
+    let _ = Command::new("/bin/kill")
+        .args(["-KILL", "--", &format!("-{group}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// Where a proposed invariant doesn't hold in the code as it is: every
@@ -398,7 +432,7 @@ pub fn try_on(root: &Path, invariant: &Invariant) -> Vec<BrokenInvariant> {
             continue;
         };
         let path = relative.to_string_lossy().replace('\\', "/");
-        if path.starts_with(".git/") || !glob.as_ref().is_none_or(|g| g.is_match(&path)) {
+        if path.starts_with(".git/") || !covers(glob.as_ref(), &path) {
             continue;
         }
         files.push((path, Vec::new()));
@@ -493,7 +527,8 @@ pub fn fix_prompt(broken: &[BrokenInvariant], attempt: u32, attempts: u32) -> St
 #[cfg(test)]
 mod tests {
     use super::{
-        check, file_name, fix_prompt, glob, load, load_as_of, prompt, save, try_on, validate,
+        check, file_name, fix_prompt, glob, load, load_as_of, prompt, run_within, save, try_on,
+        validate,
     };
     use elyra_core::Invariant;
 
@@ -597,6 +632,60 @@ mod tests {
             [".elyra/invariants/api-controllers-scope-queries-to-the-tenant.json"]
         );
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn invariants_for_every_file_leave_elyras_own_alone() {
+        let root =
+            std::env::temp_dir().join(format!("elyra-invariants-own-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "fn main() {}\n").unwrap();
+        let mut todos = invariant("");
+        todos.name = "No TODOs".into();
+        (todos.require, todos.forbid) = (None, Some("TODO".into()));
+        todos.why = "finish it or file an issue".into();
+        save(&root, &todos).unwrap();
+        // Its own file says TODO, but it isn't code.
+        assert!(try_on(&root, &todos).is_empty());
+        let changed = vec![
+            (
+                ".elyra/invariants/no-todos.json".to_string(),
+                vec![(3, "\"forbid\": \"TODO\",".to_string())],
+            ),
+            ("src/lib.rs".to_string(), vec![(1, "// TODO".to_string())]),
+        ];
+        let (_, broken) = check(&root, &[todos.clone()], &changed);
+        let paths: Vec<_> = broken.iter().filter_map(|b| b.path.as_deref()).collect();
+        assert_eq!(paths, ["src/lib.rs"]);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_command_that_leaves_something_running_doesnt_hang() {
+        let root = std::env::temp_dir();
+        // Too slow: stopped with what it started, though that holds the output.
+        let started = std::time::Instant::now();
+        let slow = run_within(
+            &root,
+            "sleep 30 &\necho waiting\nsleep 30",
+            "",
+            std::time::Duration::from_secs(1),
+        );
+        assert!(slow.unwrap_err().contains("took longer than 1 s"));
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
+        // Done, but a server it started still holds the output.
+        let started = std::time::Instant::now();
+        assert_eq!(
+            run_within(
+                &root,
+                "sleep 30 &\necho started",
+                "",
+                std::time::Duration::from_secs(20)
+            ),
+            Ok(())
+        );
+        assert!(started.elapsed().as_secs() < 10, "{:?}", started.elapsed());
     }
 
     #[test]
