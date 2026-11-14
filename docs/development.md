@@ -66,7 +66,7 @@ window many times a second:
   value in a field, or load it in the background (`Store::open_read_only` gives a
   second connection for slow reads off the main thread).
 - The thread view draws only the visible rows (`list` with `ListState`); the
-  heavy views are drawn from cache (`cached` in `workspace.rs`) and must
+  heavy views are drawn from cache (`cached` in `workspace/render.rs`) and must
   `cx.notify()` when what they show changes.
 - Streamed text is a `SessionEvent::Streamed` for the thread's own view, not a
   notify that wakes every observer of the session.
