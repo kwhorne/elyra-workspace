@@ -6,7 +6,8 @@
 //!
 //! After every step, the page's layout is measured as well (the page wider
 //! than the window, controls outside it or covering each other, text cut
-//! off), at the browser's width and at a phone's ([`PHONE_WIDTH`]). In an app
+//! off), at a desktop's width ([`DESKTOP_WIDTH`]) and at a phone's
+//! ([`PHONE_WIDTH`]), whether the Browser tab is on screen or not. In an app
 //! Elyra Grove runs, the database queries of the step's requests are counted
 //! too. The first replay saves how it looks and how many queries each step
 //! makes in `.elyra/journeys/layout/<name>.json`; later replays report only
@@ -22,6 +23,8 @@ use std::path::{Path, PathBuf};
 
 /// Where a project keeps its journeys.
 pub const DIR: &str = ".elyra/journeys";
+/// The width pages are measured at, in points (a laptop's browser window).
+pub const DESKTOP_WIDTH: f64 = 1280.;
 /// The width pages are also measured at, in points (an iPhone's).
 pub const PHONE_WIDTH: f64 = 390.;
 
@@ -241,15 +244,18 @@ pub struct Measured {
     pub detail: String,
 }
 
-/// What agent-act.js `layout()` answered.
-pub fn parse_layout(json: &str) -> Vec<Measured> {
+/// What agent-act.js `layout()` answered: the problems, and how wide the
+/// page was laid out (0 when it had no size).
+pub fn parse_layout(json: &str) -> (Vec<Measured>, f64) {
     #[derive(Deserialize)]
     struct Answer {
         #[serde(default)]
         issues: Vec<Measured>,
+        #[serde(default)]
+        width: f64,
     }
     serde_json::from_str::<Answer>(json)
-        .map(|a| a.issues)
+        .map(|a| (a.issues, a.width))
         .unwrap_or_default()
 }
 
@@ -258,6 +264,11 @@ pub fn parse_layout(json: &str) -> Vec<Measured> {
 /// How a journey's pages looked: per step, what it does and its problems' keys.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 struct Baseline {
+    /// The width the layout was measured at; a baseline without it (from
+    /// before pages were measured at [`DESKTOP_WIDTH`], however wide the
+    /// browser was, or not at all when it wasn't on screen) is measured anew.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    width: Option<u32>,
     steps: Vec<BaselineStep>,
 }
 
@@ -315,6 +326,16 @@ pub fn guard(dir: &Path, journey: &Journey, outcome: &mut Outcome) {
     };
     let saved = read_baseline(dir, &journey.name);
     let mut baseline = saved.clone().unwrap_or_default();
+    // Layout measured some other way: how it looks now is how it looks.
+    let remeasure = saved.is_some() && baseline.width != Some(DESKTOP_WIDTH as u32);
+    if remeasure {
+        for step in &mut baseline.steps {
+            step.phone_keys = None;
+        }
+    }
+    if !outcome.layout.is_empty() || !outcome.phone_layout.is_empty() {
+        baseline.width = Some(DESKTOP_WIDTH as u32);
+    }
     let mut new = Vec::new();
     let mut jumps = Vec::new();
     let slot = |baseline: &mut Baseline, index: usize| -> bool {
@@ -357,7 +378,7 @@ pub fn guard(dir: &Path, journey: &Journey, outcome: &mut Outcome) {
     for (index, measured) in &outcome.layout {
         let keys: Vec<String> = measured.iter().map(|m| m.key.clone()).collect();
         let known = &mut baseline.steps[*index];
-        if fresh_steps.contains(index) {
+        if remeasure || fresh_steps.contains(index) {
             known.keys = keys;
             continue;
         }
@@ -399,7 +420,7 @@ pub fn guard(dir: &Path, journey: &Journey, outcome: &mut Outcome) {
         }
     }
     baseline.steps.truncate(journey.steps.len());
-    if saved.is_none() {
+    if saved.is_none() || remeasure {
         outcome.layout_saved = Some(
             outcome
                 .layout
@@ -705,6 +726,67 @@ mod tests {
             "accepted at the phone's width: {:?}",
             accepted.failure
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_layout_saved_at_another_width_is_measured_again() {
+        use super::{Measured, Outcome, Step, Target, guard};
+        let dir = std::env::temp_dir().join(format!("elyra-layout-width-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".elyra/journeys/layout")).unwrap();
+        let journey = super::Journey {
+            name: "Cart".into(),
+            description: String::new(),
+            steps: vec![
+                Step::Open("http://shop.test/cart".into()),
+                Step::Expect(Target {
+                    selector: Some("#total".into()),
+                    text: None,
+                }),
+            ],
+            phone: true,
+        };
+        // Saved by an older version, with the Browser tab out of sight: a
+        // page with no width, everything outside it.
+        std::fs::write(
+            dir.join(".elyra/journeys/layout/cart.json"),
+            r#"{"steps": [{"step": "open http://shop.test/cart", "keys": ["overflow:page", "offscreen:button.pay"], "phone_keys": ["overflow:page"], "queries": 4}]}"#,
+        )
+        .unwrap();
+        let measured = |key: &str| Measured {
+            key: key.into(),
+            kind: key.split(':').next().unwrap().into(),
+            element: key.into(),
+            detail: String::new(),
+        };
+        let replay = |desktop: Vec<Measured>, phone: Vec<Measured>| Outcome {
+            passed: true,
+            steps_run: 2,
+            layout: vec![(0, desktop)],
+            phone_layout: vec![(0, phone)],
+            ..Default::default()
+        };
+        // Measured again, as it is now.
+        let mut again = replay(vec![measured("clipped:td.price")], vec![]);
+        guard(&dir, &journey, &mut again);
+        assert!(again.passed && again.layout_saved == Some(1), "{again:?}");
+        let saved = std::fs::read_to_string(dir.join(".elyra/journeys/layout/cart.json")).unwrap();
+        assert!(saved.contains("\"width\": 1280") && !saved.contains("overflow:page"));
+        assert!(
+            saved.contains("\"queries\": 4"),
+            "query counts are kept: {saved}"
+        );
+        // From then on, what the old file hid is caught.
+        let mut broken = replay(
+            vec![
+                measured("clipped:td.price"),
+                measured("offscreen:button.pay"),
+            ],
+            vec![measured("overflow:page")],
+        );
+        guard(&dir, &journey, &mut broken);
+        assert!(!broken.passed && broken.layout_new.len() == 2, "{broken:?}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

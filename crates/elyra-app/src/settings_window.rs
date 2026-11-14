@@ -7,7 +7,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::h_flex;
 use gpui_kit::component::setting::{
-    NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
+    NumberFieldOptions, SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings,
 };
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, TitleBar, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -114,6 +114,19 @@ pub fn open(cx: &mut App) {
 }
 
 struct SettingsView;
+
+/// Development: `ELYRA_OPEN_PANEL=settings:<page>` opens Settings at that
+/// page (from 0), for screenshots without input.
+fn start_page() -> SelectIndex {
+    let page = std::env::var("ELYRA_OPEN_PANEL")
+        .ok()
+        .and_then(|spec| spec.strip_prefix("settings:")?.parse().ok())
+        .unwrap_or(0);
+    SelectIndex {
+        page_ix: page,
+        group_ix: None,
+    }
+}
 
 fn options(
     values: impl IntoIterator<Item = (String, String)>,
@@ -1501,10 +1514,11 @@ impl Render for SettingsView {
                 ),
             )
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(Settings::new("elyra-settings").pages(Self::pages(cx))),
+                div().flex_1().min_h_0().child(
+                    Settings::new("elyra-settings")
+                        .pages(Self::pages(cx))
+                        .default_selected_index(start_page()),
+                ),
             )
     }
 }

@@ -783,14 +783,11 @@ pub async fn replay(
         if let Err(why) = result {
             return fail(index, step, why);
         }
-        // How the page looks now, for the layout guard: as it is, and at a
-        // phone's width.
-        layout.push((index, measure_layout(thread, cx).await));
-        if journey.phone
-            && let Some(measured) = measure_at_phone_width(thread, cx).await
-        {
-            phone_layout.push((index, measured));
-        }
+        // How the page looks now, for the layout guard: at a desktop's
+        // width, and at a phone's.
+        let (desktop, phone) = measure_widths(thread, journey.phone, cx).await;
+        layout.extend(desktop.map(|measured| (index, measured)));
+        phone_layout.extend(phone.map(|measured| (index, measured)));
         if let Some(site) = site.clone() {
             let since = mark;
             let (count, repeated, newest) = cx
@@ -839,34 +836,58 @@ fn step_queries(site: &str, since: u64) -> (usize, Option<(String, usize)>, u64)
     (count, crate::grove::most_repeated(&sql), newest)
 }
 
-/// The page's layout problems at a phone's width: the web view narrowed for
-/// a moment, measured and put back. None when it is that narrow already.
-async fn measure_at_phone_width(
+/// The page's layout problems at [`DESKTOP_WIDTH`] and, when `phone`, at
+/// [`PHONE_WIDTH`]: the web view resized for a moment (on screen or not, so
+/// the result doesn't depend on how wide the Browser tab is, or whether it
+/// shows), measured and put back. None where the page didn't take the width.
+///
+/// [`DESKTOP_WIDTH`]: crate::journeys::DESKTOP_WIDTH
+/// [`PHONE_WIDTH`]: crate::journeys::PHONE_WIDTH
+async fn measure_widths(
     thread: ThreadId,
+    phone: bool,
     cx: &mut AsyncApp,
-) -> Option<Vec<crate::journeys::Measured>> {
-    let page = cx.update(|cx| browser_of(thread, cx).and_then(|b| b.read(cx).web_view()))?;
-    if !page.narrow_to(crate::journeys::PHONE_WIDTH) {
-        return None;
-    }
-    // Let the page lay itself out at the new width (media queries, resize
-    // handlers).
-    cx.background_executor()
-        .timer(Duration::from_millis(300))
-        .await;
-    let measured = measure_layout(thread, cx).await;
+) -> (
+    Option<Vec<crate::journeys::Measured>>,
+    Option<Vec<crate::journeys::Measured>>,
+) {
+    use crate::journeys::{DESKTOP_WIDTH, PHONE_WIDTH};
+    let Some(page) = cx.update(|cx| browser_of(thread, cx).and_then(|b| b.read(cx).web_view()))
+    else {
+        return (None, None);
+    };
+    let mut at = async |width: f64| {
+        page.resize_for_measuring(width);
+        // Let the page lay itself out at the new width (media queries,
+        // resize handlers).
+        cx.background_executor()
+            .timer(Duration::from_millis(300))
+            .await;
+        let (measured, laid_out) = measure_layout(thread, cx).await;
+        if (laid_out - width).abs() > 2. {
+            log::warn!("measuring a journey's layout: the page is {laid_out} px wide, not {width}");
+            return None;
+        }
+        Some(measured)
+    };
+    let desktop = at(DESKTOP_WIDTH).await;
+    let phone = if phone { at(PHONE_WIDTH).await } else { None };
     page.restore_width();
     cx.background_executor()
         .timer(Duration::from_millis(150))
         .await;
-    Some(measured)
+    (desktop, phone)
 }
 
-/// The page's layout problems now (agent-act.js `layout()`).
-async fn measure_layout(thread: ThreadId, cx: &mut AsyncApp) -> Vec<crate::journeys::Measured> {
+/// The page's layout problems now, and how wide it is laid out
+/// (agent-act.js `layout()`).
+async fn measure_layout(
+    thread: ThreadId,
+    cx: &mut AsyncApp,
+) -> (Vec<crate::journeys::Measured>, f64) {
     let page = cx.update(|cx| browser_of(thread, cx).and_then(|b| b.read(cx).web_view()));
     let Some(page) = page else {
-        return Vec::new();
+        return Default::default();
     };
     let (tx, rx) = async_channel::bounded::<Option<String>>(1);
     page.agent_act("layout()", move |json| {

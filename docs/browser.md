@@ -122,7 +122,9 @@ read, edit and commit with the code.
 ### The layout guard
 
 A journey checks that a flow works, not that it still looks right. So after
-every step, the replay also measures the page's layout, without a model:
+every step, the replay also measures the page's layout, without a model, at a
+desktop's width (1280 px) however wide the Browser tab is, and whether it is on
+screen or not (a replay after a turn usually runs out of sight):
 
 - the page wider than the window (a horizontal scrollbar),
 - buttons, links and fields partly outside the window,
@@ -139,14 +141,14 @@ intended, **Accept this layout** stops reporting those. Commit the layout file
 with the journey, so everyone compares with the same.
 
 **At a phone's width.** After each step the page is also measured 390 px wide,
-as on an iPhone: the browser narrows for a moment, the page lays itself out at
-that width (its media queries and resize handlers run), and it is measured and
-put back. The steps aren't done twice, so a journey that places an order still
+as on an iPhone: the page is resized for a moment, lays itself out at that width
+(its media queries and resize handlers run), and is measured and put back. The steps aren't done twice, so a journey that places an order still
 places one. A problem found there says so (*after "open …" at 390 px wide, the
 page is too wide: table.orders*). The first replay that measures a phone's width
 saves how it looks there, also for a journey whose layout was saved before. A
-journey with `"phone": false` in its file is measured at the browser's width
-only.
+journey with `"phone": false` in its file is measured at the desktop width only.
+A layout file saved before 1.19.2 (measured at whatever width the Browser tab
+had) is measured again, once, as it is now.
 
 ### The query guard
 

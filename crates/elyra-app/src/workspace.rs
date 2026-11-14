@@ -331,6 +331,10 @@ impl Workspace {
             }
             self.open_files_sheet(window, cx);
         }
+        // `settings` or `settings:<page>`: the Settings window.
+        if std::env::var("ELYRA_OPEN_PANEL").is_ok_and(|spec| spec.starts_with("settings")) {
+            crate::settings_window::open(cx);
+        }
         // Development: open an address in the active thread's browser.
         if let (Ok(url), Some(id)) = (std::env::var("ELYRA_BROWSER_URL"), self.active) {
             self.open_in_browser(id, &url, window, cx);

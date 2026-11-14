@@ -377,8 +377,8 @@ pub fn configuration() -> Retained<WKWebViewConfiguration> {
 pub struct WebView {
     view: Retained<ElyraWebView>,
     last_frame: Cell<Option<Bounds<Pixels>>>,
-    /// Its frame before [`WebView::narrow_to`].
-    narrowed: Cell<Option<NSRect>>,
+    /// Its frame before [`WebView::resize_for_measuring`].
+    resized: Cell<Option<NSRect>>,
 }
 
 impl WebView {
@@ -406,30 +406,33 @@ impl WebView {
         Self {
             view,
             last_frame: Cell::new(None),
-            narrowed: Cell::new(None),
+            resized: Cell::new(None),
         }
     }
 
-    /// Make the page `width` points wide for a moment (to see it at a phone's
-    /// width), keeping where it is; false when it isn't wider already.
+    /// Lay the page out `width` points wide for a moment, to measure it at a
+    /// desktop's or a phone's width, whether the Browser tab is on screen or
+    /// not (a page that never was has no size; it gets a window's height).
     /// [`WebView::restore_width`] puts it back, as does a new frame.
-    pub fn narrow_to(&self, width: f64) -> bool {
-        if self.narrowed.get().is_some() {
-            return true;
+    pub fn resize_for_measuring(&self, width: f64) {
+        let frame = match self.resized.get() {
+            Some(frame) => frame,
+            None => {
+                let frame = self.view.frame();
+                self.resized.set(Some(frame));
+                frame
+            }
+        };
+        let mut sized = frame;
+        sized.size.width = width;
+        if sized.size.height < 100. {
+            sized.size.height = 800.;
         }
-        let frame = self.view.frame();
-        if frame.size.width <= width || !self.is_attached() {
-            return false;
-        }
-        self.narrowed.set(Some(frame));
-        let mut narrow = frame;
-        narrow.size.width = width;
-        self.view.setFrame(narrow);
-        true
+        self.view.setFrame(sized);
     }
 
     pub fn restore_width(&self) {
-        if let Some(frame) = self.narrowed.take() {
+        if let Some(frame) = self.resized.take() {
             self.view.setFrame(frame);
         }
     }
@@ -457,7 +460,7 @@ impl WebView {
         if self.last_frame.get() == Some(bounds) {
             return;
         }
-        self.narrowed.set(None);
+        self.resized.set(None);
         self.last_frame.set(Some(bounds));
         self.view.setFrame(host.native_frame(bounds));
     }

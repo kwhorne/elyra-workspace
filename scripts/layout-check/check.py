@@ -53,6 +53,9 @@ SCENES = [
     ("panel-stats", (1100, 720), "1,1,changes", "rich", {"ELYRA_OPEN_PANEL": "stats"}, {}),
     ("panel-review", (1100, 720), "1,1,changes", "rich", {"ELYRA_OPEN_PANEL": "review"}, {}),
     ("panel-search", (1100, 720), "1,1,changes", "rich", {"ELYRA_OPEN_PANEL": "search"}, {}),
+    # Settings → After each turn (page 5); the main window smaller, so the
+    # Settings window is the one captured.
+    ("settings-after-each-turn", (820, 520), "1,1,changes", "rich", {"ELYRA_OPEN_PANEL": "settings:5"}, {}),
 ]
 
 
