@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.19.4
+
+Fixes from a review of the code since 1.17: invariants that found themselves
+or could hang, and Vue components with generic types.
+
+- **An invariant for every file leaves Elyra's own files alone.** One with
+  `forbid: "TODO"` and no `paths` found the word in its own file in
+  `.elyra/invariants`, after a turn and when proposed. Nothing in `.elyra/`
+  counts now.
+- **An invariant's command can't hang the turn.** One that took too long was
+  stopped, but what it had started kept running and the turn kept waiting for
+  its output; one that left a process running (`server &`) did the same. What
+  a command starts is now stopped with it, and what it leaves running is
+  stopped two seconds after it ends. See
+  [Invariants](docs/context-and-goals.md#invariants-rules-that-get-checked).
+- **Vue components with generic types are read.** In
+  `<script setup lang="ts" generic="T extends Record<string, unknown>">`, the
+  `>` in the attribute ended the tag, so the rest of it was read as code and
+  the symbol index could miss the component's functions.
+
 ## 1.19.3
 
 Nothing changes in how Elyra works; this release is about keeping it easy to
