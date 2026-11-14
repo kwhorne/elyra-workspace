@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.19.3
+
+Nothing changes in how Elyra works; this release is about keeping it easy to
+change safely.
+
+- The four largest source files (the thread's session, its view, the
+  transcript and the main window) are split into smaller modules, moved as
+  they were.
+- A new check drives the thread's browser in the real app against local
+  pages: journeys and their layout guard with the Browser tab on screen and
+  out of sight, pictures of the page before and after a turn, and the page's
+  errors as agents read them. It would have caught the layout guard's bug
+  fixed in 1.19.2. See
+  [Browser check](docs/development.md#browser-check).
+
 ## 1.19.2
 
 Journeys check the layout of their pages at the same widths every time,
