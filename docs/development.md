@@ -89,6 +89,25 @@ Claude Code (`claude -p`, if installed) reads the screenshots and writes
 clipping, overflow, alignment, contrast. The review is advice; look at the
 screenshots before fixing. Run it after layout changes.
 
+The scenes include Settings at the After each turn page
+(`ELYRA_OPEN_PANEL=settings:<page>` opens Settings at a page, counted from 0).
+
+### Journey check
+
+```console
+cargo build -p elyra-app && scripts/journey-check/check.py
+```
+
+The scenarios run headless, so they have no web pages.
+[`scripts/journey-check/check.py`](../scripts/journey-check/check.py) starts
+the app with a window (`ELYRA_NO_ACTIVATE`, so it never takes focus), serves a
+small page from this Mac, and replays a journey against it: once with the
+thread's Browser tab on screen and once out of sight, as after a turn. It
+checks that the first replay saves a clean layout measured at 1280 px and
+390 px, that a page broken only on a phone fails at 390 px and one broken on a
+desktop fails at 1280 px, and that the page gets its own width back. Run it
+after changes to journeys, the layout guard or the web view.
+
 GitHub Actions runs the same checks and the scenarios
 ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) on every push to
 `main` and every pull request; clippy runs with `-D warnings`.

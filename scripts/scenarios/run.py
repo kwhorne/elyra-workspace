@@ -99,10 +99,13 @@ class World:
                                "instructions": instructions}
         return path
 
-    def start(self):
+    def start(self, window=False):
+        """Start the app: headless, or with a window that never takes focus
+        (ELYRA_NO_ACTIVATE; web pages need one)."""
         log = open(os.path.join(self.dir, "app.log"), "a")
         env = dict(
-            os.environ, ELYRA_HOME=self.home, ELYRA_HEADLESS="1", RUST_LOG="info",
+            os.environ, ELYRA_HOME=self.home, RUST_LOG="info",
+            **({"ELYRA_NO_ACTIVATE": "1"} if window else {"ELYRA_HEADLESS": "1"}),
             # Fake tools (gh) first on the PATH the app takes from its login shell.
             SHELL=os.path.join(HERE, "login-shell"),
             SCENARIO_PATH=os.path.join(HERE, "bin") + os.pathsep + os.environ.get("PATH", ""),
