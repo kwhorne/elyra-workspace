@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.19.5
+
+A security update of the database library; nothing changes in how Elyra
+works.
+
+- **SQLite is updated** (rusqlite 0.43, libsqlite3-sys 0.40), past a
+  vulnerability in the SQLite that the earlier version bundled
+  (RUSTSEC-2026-0459). The database's format is unchanged.
+
 ## 1.19.4
 
 Fixes from a review of the code since 1.17: invariants that found themselves
