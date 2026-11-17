@@ -1,11 +1,12 @@
-# Build, sign, notarize and publish a release when a version tag is pushed:
+# Build, sign and notarize a release in CI, by hand only ("Run workflow").
+# Releases are published from a Mac with scripts/release-macos.sh (see
+# docs/development.md); pushing a version tag no longer starts this.
 #
-#   git tag -a v0.1.4 -m "Elyra Workspace 0.1.4" && git push origin v0.1.4
-#
-# The tag must match the version in Cargo.toml, and CHANGELOG.md must have a
-# "## <version>" section (it becomes the release notes). Running the workflow
-# by hand ("Run workflow") builds and notarizes without publishing; the DMG is
-# attached to the run as an artifact.
+# Run on a branch, it builds and notarizes without publishing; the DMG is
+# attached to the run as an artifact. Run on a version tag, it also publishes
+# the release: the tag must match the version in Cargo.toml, and CHANGELOG.md
+# must have a "## <version>" section (it becomes the release notes). It signs
+# as GETS AS (7G383N3VY7), with the certificate in the secrets below.
 #
 # Repository secrets:
 #   MACOS_CERTIFICATE_P12       base64 of the "Developer ID Application" certificate
@@ -17,8 +18,6 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:

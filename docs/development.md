@@ -206,8 +206,8 @@ prints it). Another test upgrades a database from every earlier version.
 
 ## Releasing
 
-Releases are built by GitHub Actions ([`.github/workflows/release.yml`](../.github/workflows/release.yml))
-when a version tag is pushed:
+Releases are built, signed and notarized on a Mac with Knut Horne's team
+(52AT44QFCM), and published from there:
 
 1. Bump `version` in `Cargo.toml` and add a `## <version>` section to
    [CHANGELOG.md](../CHANGELOG.md). Commit and push.
@@ -215,18 +215,22 @@ when a version tag is pushed:
    ```console
    git tag -a v0.1.4 -m "Elyra Workspace 0.1.4" && git push origin v0.1.4
    ```
+3. Build, sign and notarize (see [Releasing from a Mac](#releasing-from-a-mac)):
+   ```console
+   scripts/release-macos.sh       # -> target/release/dist/Elyra-Workspace-<version>-arm64.dmg
+   ```
+4. Publish the DMG and its `.sha256` with `gh release create v<version> …
+   --title "Elyra Workspace <version>" --notes-file <notes> --verify-tag`. The
+   notes are the ones the release workflow's *Publish release* step writes: a
+   download line with the SHA-256, then the changelog section.
 
-The workflow:
+Installed copies from 0.1.2 on update themselves.
 
-1. checks that the tag matches `Cargo.toml` and that the changelog has the section
-2. runs the tests on an Apple Silicon runner
-3. builds the app, signs it with the Developer ID, and notarizes and staples the
-   app and the DMG
-4. publishes the GitHub release with the DMG, its SHA-256 and the changelog section
-   as notes
-
-Installed copies from 0.1.2 on update themselves. **Run workflow** builds and
-notarizes without publishing; the DMG is attached to the run.
+The release workflow ([`.github/workflows/release.yml`](../.github/workflows/release.yml))
+runs only by hand (**Run workflow**), signing as GETS AS (7G383N3VY7) with the
+secrets below. On a branch it builds and notarizes without publishing and
+attaches the DMG to the run; on a version tag it also checks the tag against
+`Cargo.toml` and the changelog, and publishes the release.
 
 The in-app updater looks for exactly these release assets:
 `Elyra-Workspace-<version>-arm64.dmg` and `Elyra-Workspace-<version>-arm64.dmg.sha256`.
@@ -259,7 +263,7 @@ scripts/release-macos.sh       # -> target/release/dist/Elyra-Workspace-<version
 ```
 
 This signs and notarizes with Knut Horne's team (52AT44QFCM). To use GETS AS
-instead, as the release workflow does:
+instead, as the release workflow does when run by hand:
 
 ```console
 CODESIGN_IDENTITY="Developer ID Application: GETS AS (7G383N3VY7)" \
@@ -267,9 +271,7 @@ CODESIGN_IDENTITY="Developer ID Application: GETS AS (7G383N3VY7)" \
 ```
 
 Official copies accept updates signed by either team (`RELEASE_TEAMS` in
-`crates/elyra-app/src/updates.rs`). Then publish the DMG and its `.sha256` with
-`gh release create v<version> … --verify-tag` and the notes the workflow would
-write.
+`crates/elyra-app/src/updates.rs`).
 
 `SKIP_NOTARIZE=1` signs without notarizing. In CI the script takes
 `NOTARY_APPLE_ID`, `NOTARY_PASSWORD` and `NOTARY_TEAM_ID` instead of a keychain
